@@ -4,10 +4,7 @@ import * as path from 'path';
 
 import { normalizeProjectPath } from '../../../../../core/src/normalizeProjectPath.js';
 import type { AgentEvent, HookProvider } from '../../../../../core/src/provider.js';
-import {
-  BASH_COMMAND_DISPLAY_MAX_LENGTH,
-  TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
-} from '../../../constants.js';
+import { TASK_DESCRIPTION_DISPLAY_MAX_LENGTH } from '../../../constants.js';
 import {
   areHooksInstalled as installerAreHooksInstalled,
   installHooks as installerInstallHooks,
@@ -24,6 +21,21 @@ import {
 
 // ── formatToolStatus: moved from src/transcriptParser.ts ──
 
+/** Leading `VAR=value` assignments, with quoted or `$(...)` values. */
+const LEADING_ASSIGNMENTS =
+  /^\s*(?:[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\]|\\.)*"|'[^']*'|\$\([^)]*\)|\\[\s\S]|[^\s"'$;&|\\])*\s+)*/;
+
+/** Program a shell command runs, without its arguments. The status text is
+ *  broadcast to every connected client, and arguments routinely carry tokens,
+ *  passwords and hostnames. Leading assignments are skipped for the same
+ *  reason; when they don't parse cleanly (unbalanced quote, nested `$(`), the
+ *  next word may be part of a secret, so a generic label is shown instead. */
+function programName(command: string): string {
+  const program = command.replace(LEADING_ASSIGNMENTS, '').split(/\s+/)[0] ?? '';
+  if (/["'`$()=]/.test(program)) return 'command';
+  return path.basename(program);
+}
+
 export function formatToolStatus(toolName: string, input?: unknown): string {
   const inp = (input ?? {}) as Record<string, unknown>;
   const base = (p: unknown) => (typeof p === 'string' ? path.basename(p) : '');
@@ -34,10 +46,8 @@ export function formatToolStatus(toolName: string, input?: unknown): string {
       return `Editing ${base(inp.file_path)}`;
     case 'Write':
       return `Writing ${base(inp.file_path)}`;
-    case 'Bash': {
-      const cmd = (inp.command as string) || '';
-      return `Running: ${cmd.length > BASH_COMMAND_DISPLAY_MAX_LENGTH ? cmd.slice(0, BASH_COMMAND_DISPLAY_MAX_LENGTH) + '\u2026' : cmd}`;
-    }
+    case 'Bash':
+      return `Running: ${programName(typeof inp.command === 'string' ? inp.command : '')}`;
     case 'Glob':
       return 'Searching files';
     case 'Grep':

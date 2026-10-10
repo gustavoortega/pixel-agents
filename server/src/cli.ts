@@ -70,7 +70,8 @@ export function parseArgs(argv: string[]): CliArgs {
 
 Options:
   --port, -p <number>   Port to listen on (default: OS-assigned ephemeral port)
-  --host <string>       Host to bind to (default: 127.0.0.1)
+  --host <string>       Host to bind to (default: 127.0.0.1; loopback binds only
+                        accept loopback Host headers, use 0.0.0.0 behind a tunnel)
   --help                Show this help message`);
       process.exit(0);
     }
@@ -296,10 +297,9 @@ async function main(): Promise<void> {
     // The URL the operator opens has to be REACHABLE (a wildcard bind address
     // is a bind target, not an address you can browse to — `--host 0.0.0.0`
     // used to print a dead `http://0.0.0.0:PORT`) and has to carry the token,
-    // which is what makes the session it loads privileged enough to approve a
-    // hook install (see standaloneTokenValid in httpServer.ts). Under `--host
-    // 0.0.0.0` the office stays readable from the LAN at this machine's own
-    // address; only the consent-bearing toggle needs the token.
+    // which /ws requires to connect at all (see standaloneTokenValid in
+    // httpServer.ts). Under `--host 0.0.0.0` a LAN viewer opens this machine's
+    // own address with the same `?token=`.
     const displayHost =
       args.host === '0.0.0.0' || args.host === '::' || args.host === '' ? '127.0.0.1' : args.host;
     console.log(

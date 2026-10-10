@@ -1,4 +1,3 @@
-import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import * as crypto from 'crypto';
@@ -67,7 +66,27 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
     bodyLimit: MAX_HOOK_BODY_SIZE,
   });
 
-  await app.register(fastifyCors, { origin: true });
+  const host = options.host ?? '127.0.0.1';
+  // DNS rebinding: a page on evil.com resolved to 127.0.0.1 reaches us with
+  // `Host: evil.com:PORT`. On a loopback bind the only legitimate Host values
+  // are loopback names, so refuse the rest before any route (static, health,
+  // /ws) answers. A LAN bind (--host 0.0.0.0) is reachable under names we
+  // cannot enumerate, so it relies on the /ws token alone. Hostname-based
+  // forwarders (Codespaces, tunnels) land here too, hence the hint.
+  if (isLoopbackHost(host)) {
+    app.addHook('onRequest', async (request, reply) => {
+      if (!isLoopbackHost(hostnameOf(request.headers.host))) {
+        const address = app.server.address();
+        const port = typeof address === 'object' ? (address?.port ?? 0) : 0;
+        reply
+          .code(403)
+          .send(
+            `Forbidden Host. Open http://127.0.0.1:${port.toString()}/ or start with --host 0.0.0.0.`,
+          );
+      }
+    });
+  }
+
   await app.register(fastifyWebsocket);
 
   // Static SPA serving (standalone mode only)
@@ -90,7 +109,7 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
 
   // ── Listen ──────────────────────────────────────────────────
 
-  await app.listen({ host: options.host ?? '127.0.0.1', port: options.port ?? 0 });
+  await app.listen({ host, port: options.port ?? 0 });
   const address = app.server.address();
   const port = typeof address === 'object' ? (address?.port ?? 0) : 0;
 
@@ -144,11 +163,12 @@ function registerHookRoute(app: FastifyInstance, options: HttpServerOptions): vo
 
 function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions): void {
   app.get('/ws', { websocket: true }, (socket, request) => {
-    // CONNECTION gate. Embedded (VS Code) requires the Bearer token. Standalone
-    // requires a same-origin handshake instead (isAllowedWebSocketOrigin), so a
-    // non-browser local client with no Origin can still watch the office. What
-    // may be DONE over an accepted connection is a separate question, decided
-    // below.
+    // CONNECTION gate. Both modes require the out-of-band token: embedded as the
+    // Bearer header it was handed in-process, standalone as the `?token=` the
+    // CLI printed in the local URL and the SPA forwards on this handshake. The
+    // broadcast stream carries tool activity and folder names, so watching the
+    // office is as sensitive as acting on it. Origin is checked first only to
+    // give cross-origin pages a distinct close code.
     if (options.embedded) {
       if (!timingSafeStringEqual(request.headers.authorization ?? '', `Bearer ${options.token}`)) {
         socket.close(WS_CLOSE_UNAUTHORIZED, 'unauthorized');
@@ -157,14 +177,10 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
     } else if (!isAllowedWebSocketOrigin(request.headers.origin, request.headers.host)) {
       socket.close(WS_CLOSE_FORBIDDEN_ORIGIN, 'forbidden origin');
       return;
+    } else if (!standaloneTokenValid(request.url, options.token)) {
+      socket.close(WS_CLOSE_UNAUTHORIZED, 'unauthorized');
+      return;
     }
-
-    // Both modes prove privilege with the SAME out-of-band secret, differently
-    // carried: embedded sends the Bearer token it was handed in-process;
-    // standalone sends the `?token=` the CLI printed in the local URL and the
-    // SPA forwarded on this handshake. Nothing about a network POSITION is
-    // consulted, because every position is reproducible by a forwarder.
-    const privileged = options.embedded || standaloneTokenValid(request.url, options.token);
 
     const { store } = options;
 
@@ -210,7 +226,8 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
           cache: options.assetCache ?? null,
           onSetHooksEnabled: options.onSetHooksEnabled,
           onReloadAssets: options.onReloadAssets,
-          privileged,
+          // Every accepted socket proved the token above.
+          privileged: true,
         });
       } catch {
         // Malformed JSON, ignore
@@ -235,14 +252,13 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
  * bound to with zero configuration, and treats `localhost` and `127.0.0.1`
  * correctly (a browser derives both headers from the URL that loaded the SPA).
  *
- * A missing Origin still connects: non-browser local clients send none, and the
- * standalone server's read surface is deliberately open to whatever address it
- * was told to bind (`--host 0.0.0.0` exposes the SPA to the LAN by design).
+ * A missing Origin passes here (non-browser clients send none); the token check
+ * after it still applies.
  *
- * This gate is NOT sufficient for privileged actions and never was. Both header
- * values are attacker-supplied, so a DNS-rebound page (`evil.com` → 127.0.0.1)
- * sends `Origin: http://evil.com:PORT` AND `Host: evil.com:PORT` and passes
- * equality. See standaloneTokenValid for what actually guards consent.
+ * This gate is NOT sufficient on its own. Both header values are
+ * attacker-supplied, so a DNS-rebound page (`evil.com` → 127.0.0.1) sends
+ * `Origin: http://evil.com:PORT` AND `Host: evil.com:PORT` and passes equality.
+ * The loopback Host hook and standaloneTokenValid are what stop it.
  */
 export function isAllowedWebSocketOrigin(
   origin: string | undefined,
@@ -258,10 +274,10 @@ export function isAllowedWebSocketOrigin(
 }
 
 /**
- * Whether this socket may send PRIVILEGED messages — the ones that reach
- * outside `~/.pixel-agents/`. Today that is `setHooksEnabled`, which grants
- * durable, machine-wide consent to modify `~/.claude/settings.json` and
- * installs (or removes) a 12-event hook set.
+ * Whether a standalone handshake carries the server token. Required to
+ * connect at all: the socket both streams agent activity and accepts
+ * `setHooksEnabled`, which grants durable, machine-wide consent to modify
+ * `~/.claude/settings.json` and installs (or removes) a 12-event hook set.
  *
  * The handshake must carry the server token in its `?token=` query. That token
  * is minted at startup (server.ts), printed by the CLI inside the LOCAL url it
@@ -279,11 +295,6 @@ export function isAllowedWebSocketOrigin(
  * address and Host/Origin are all carried BY the channel a proxy speaks, so the
  * gate must ride something the channel never carries — an out-of-band secret
  * the operator's own URL delivers and the forwarded attacker never sees.
- *
- * A tokenless client is not locked out of Pixel Agents — it connects and
- * watches the office exactly as before (the connection gate,
- * isAllowedWebSocketOrigin, is separate and unchanged). It simply cannot
- * approve a change to a file in someone's home directory.
  */
 function standaloneTokenValid(url: string | undefined, expected: string): boolean {
   // Defensive: an empty configured token would otherwise privilege every
@@ -302,6 +313,22 @@ function standaloneTokenValid(url: string | undefined, expected: string): boolea
 }
 
 // ── Auth Helper ────────────────────────────────────────────────
+
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+function isLoopbackHost(hostname: string): boolean {
+  return LOOPBACK_HOSTNAMES.has(hostname.toLowerCase());
+}
+
+/** Hostname part of a `Host` header, without the port. */
+function hostnameOf(hostHeader: string | undefined): string {
+  if (!hostHeader) return '';
+  try {
+    return new URL(`http://${hostHeader}`).hostname;
+  } catch {
+    return '';
+  }
+}
 
 /** Constant-time string compare, length-guarded (timingSafeEqual throws on a
  *  length mismatch). One implementation for all three token comparisons. */
