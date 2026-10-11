@@ -6,7 +6,9 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { HUE_LOCKED } from '../../core/src/assets/skinTones.js';
+import { characterAnimation } from '../src/office/engine/characters.js';
 import { OfficeState } from '../src/office/engine/officeState.js';
+import { seatedBubbleOffsetPx, seatedDrawOffsetPx } from '../src/office/seatDraw.js';
 import { getCharacterSprites } from '../src/office/sprites/spriteData.js';
 import type { OfficeLayout, PlacedFurniture } from '../src/office/types.js';
 import { Direction, TileType } from '../src/office/types.js';
@@ -90,6 +92,21 @@ describe('helper placement', () => {
     const dist = Math.max(Math.abs(sub.tileCol - 5), Math.abs(sub.tileRow - 3));
     expect(dist).toBeGreaterThanOrEqual(2);
     expect(sub.tileCol).not.toBe(5);
+  });
+});
+
+describe('a helper with no seat', () => {
+  it('stands at work: no sit offset, the standing frame, however long it runs', () => {
+    const os = office([chair('parent', 5, 3)]);
+    os.addAgent(1, 0, 0, 'parent', true);
+    const sub = os.characters.get(os.addSubagent(1, 'tool-1'))!;
+    os.setAgentActive(sub.id, true);
+    for (let i = 0; i < 40; i++) os.update(0.1);
+    expect(sub.seatId).toBeNull();
+    expect(sub.isActive).toBe(true);
+    expect(seatedDrawOffsetPx(sub)).toBe(0);
+    expect(seatedBubbleOffsetPx(sub)).toBe(0);
+    expect(characterAnimation(sub)).toEqual({ set: 'walk', index: 1 });
   });
 });
 

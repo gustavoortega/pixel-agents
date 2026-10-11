@@ -58,7 +58,9 @@ describe('OfficeState hero companion', () => {
     buildDynamicCatalog({
       catalog: [
         entry('DESK_FRONT', 'desks', 3, 2, { backgroundTiles: 1 }),
+        // A seat facing down meets a PC shown from behind.
         entry('PC_FRONT_OFF', 'electronics', 1, 2, {
+          orientation: 'back',
           backgroundTiles: 1,
           canPlaceOnSurfaces: true,
         }),
@@ -117,7 +119,7 @@ describe('OfficeState hero companion', () => {
     expect(os.companions.has(1)).toBe(false);
   });
 
-  it('puts a seated hero companion on the desk, one tile right of the monitor', () => {
+  it('puts a seated hero companion on its desk, on the first free cell beside the monitor', () => {
     const os = office();
     addAgent(os, 1, 5, 'chair');
     addAgent(os, 2, 1, null);

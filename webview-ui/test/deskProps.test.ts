@@ -4,12 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import {
-  companionDeskTile,
-  deskSlots,
-  pcForSeat,
-  propPlacements,
-} from '../src/office/flair/deskProps.js';
+import { deskSlots, pcForSeat, propPlacements } from '../src/office/flair/deskProps.js';
 import { Direction } from '../src/office/types.js';
 
 describe('desk prop unlocks', () => {
@@ -34,7 +29,7 @@ describe('deskSlots', () => {
   const across = { col: 1, row: 0 };
   const desk = (cols: number[]) => new Map(cols.map((c) => [`${c},3`, 48]));
 
-  it('never offers the PC or the companion cell', () => {
+  it('never offers the PC, and runs nearest first, left before right', () => {
     const slots = deskSlots({
       pc,
       across,
@@ -43,8 +38,7 @@ describe('deskSlots', () => {
     });
     const keys = slots.map((t) => `${t.col},${t.row}`);
     expect(keys).not.toContain('5,3');
-    expect(keys).not.toContain(`${companionDeskTile(pc).col},3`);
-    expect(keys).toEqual(['4,3', '3,3', '7,3', '2,3', '8,3']);
+    expect(keys).toEqual(['4,3', '6,3', '3,3', '7,3', '2,3', '8,3']);
   });
 
   it('skips cells that are not desk, other electronics and blocked cells', () => {
@@ -63,7 +57,7 @@ describe('deskSlots', () => {
     const slots = deskSlots({
       pc,
       across,
-      deskTiles: desk([3, 4, 5, 6]),
+      deskTiles: desk([3, 4, 5]),
       electronicsTiles: new Set(['5,3']),
       seat: { col: 4, row: 3 },
     });

@@ -112,15 +112,10 @@ export function pcForSeat(seats: readonly PcSeat[], pcs: readonly PcItem[]): Map
   return out;
 }
 
-/** The desk tile a companion takes: one tile right of the monitor. */
-export function companionDeskTile(pc: Tile): Tile {
-  return { col: pc.col + 1, row: pc.row };
-}
-
 /**
- * Desk surface cells a prop may stand on: the desk run through the monitor along the desk's
- * width, nearest first (left before right), minus the monitor, the companion's cell and any
- * other electronics. A gap in the desk ends the run on that side.
+ * Desk surface cells a prop or the hero's companion may stand on: the desk run through the
+ * monitor along the desk's width, nearest first (left before right), minus the monitor, the seat's
+ * own line and any other electronics. The companion takes the first; props take the rest.
  */
 export function deskSlots(input: {
   pc: Tile;
@@ -134,14 +129,12 @@ export function deskSlots(input: {
   seat?: Tile;
 }): Tile[] {
   const { pc, across, deskTiles, electronicsTiles, blocked, seat } = input;
-  const companion = companionDeskTile(pc);
   const out: Tile[] = [];
   for (let d = 1; d <= DESK_PROP_REACH_TILES; d++) {
     for (const sign of [-1, 1]) {
       const t = { col: pc.col + across.col * d * sign, row: pc.row + across.row * d * sign };
       if (!deskTiles.has(key(t))) continue;
-      if (electronicsTiles.has(key(t)) || key(t) === key(companion) || blocked?.has(key(t)))
-        continue;
+      if (electronicsTiles.has(key(t)) || blocked?.has(key(t))) continue;
       // Slots run along the desk, so the one cell in the seat's own line is right in front of it.
       if (seat && (across.col !== 0 ? t.col === seat.col : t.row === seat.row)) continue;
       out.push(t);

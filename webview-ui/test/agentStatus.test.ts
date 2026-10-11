@@ -36,7 +36,8 @@ test('a launched terminal starts working, an external or restored agent starts i
   os.addAgent(1);
   os.addAgent(2, undefined, undefined, undefined, true, undefined, undefined, false);
   assert.equal(os.characters.get(1)?.isActive, true);
-  assert.equal(os.characters.get(1)?.state, CharacterState.TYPE);
+  // no seat in this room, so the working agent stands rather than types over bare floor
+  assert.equal(os.characters.get(1)?.state, CharacterState.IDLE);
   assert.equal(os.characters.get(2)?.isActive, false);
   assert.equal(os.characters.get(2)?.state, CharacterState.IDLE);
 });
