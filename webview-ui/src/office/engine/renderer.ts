@@ -30,6 +30,8 @@ import {
   COMPANION_DESK_Z_OFFSET,
   COMPANION_FEET_INSET_PX,
   DELETE_BUTTON_BG,
+  DESK_PROP_FEET_INSET_PX,
+  DESK_PROP_Z_OFFSET,
   FALLBACK_FLOOR_COLOR,
   GHOST_BORDER_HOVER_FILL,
   GHOST_BORDER_HOVER_STROKE,
@@ -70,9 +72,11 @@ import {
 } from '../flair/accessories.js';
 import type { Companion } from '../flair/companion.js';
 import { companionHoverOffsetPx, getCompanionSprite } from '../flair/companion.js';
+import type { DeskPropKind } from '../flair/deskProps.js';
 import { bookPlacement, mugPlacement } from '../flair/idleProps.js';
 import { characterFlair, characterOutline } from '../flair/modelFlair.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
+import { type FxRenderState, renderFx } from '../fx/fxRender.js';
 import { areaSignRect } from '../labelLayout.js';
 import type { GlowFixtures, GlowSource, Lighting } from '../lighting.js';
 import { glowDraws } from '../lighting.js';
@@ -86,6 +90,7 @@ import {
   getCarpetPaletteKey,
   hasCarpetSprites,
 } from '../sprites/carpetTiles.js';
+import { deskPropSprite } from '../sprites/deskPropSprites.js';
 import { getGlowSprite } from '../sprites/glowSprites.js';
 import { getMonitorOverlay } from '../sprites/monitorSprites.js';
 import { getPetSprites } from '../sprites/petSpriteData.js';
@@ -188,6 +193,14 @@ export interface ModelLookRenderState {
   companions: Iterable<Companion>;
   /** Wall-clock ms, for the sparkle twinkle and the flying companions' bob. */
   nowMs: number;
+}
+
+/** A level prop standing on a desk tile; zY is the sort depth of that desk. */
+export interface DeskPropDraw {
+  kind: DeskPropKind;
+  col: number;
+  row: number;
+  zY: number;
 }
 
 // ── Render functions ────────────────────────────────────────────
@@ -472,6 +485,7 @@ export function renderScene(
   hoveredAgentId: number | null,
   pets: Pet[] = [],
   look?: ModelLookRenderState,
+  deskProps: readonly DeskPropDraw[] = [],
 ): void {
   const drawables: ZDrawable[] = [];
 
@@ -509,6 +523,23 @@ export function renderScene(
         },
       });
     }
+  }
+
+  // Level props: on the desk surface, just in front of the desk like a desk companion
+  for (const p of deskProps) {
+    const cached = getCachedSprite(deskPropSprite(p.kind), zoom);
+    const px = Math.round(
+      offsetX + (p.col * TILE_SIZE + (TILE_SIZE - cached.width / zoom) / 2) * zoom,
+    );
+    const py = Math.round(
+      offsetY + ((p.row + 1) * TILE_SIZE - DESK_PROP_FEET_INSET_PX) * zoom - cached.height,
+    );
+    drawables.push({
+      zY: p.zY + DESK_PROP_Z_OFFSET,
+      draw: (c) => {
+        c.drawImage(cached, px, py);
+      },
+    });
   }
 
   // Characters
@@ -1348,6 +1379,8 @@ export function renderFrame(
   look?: ModelLookRenderState,
   isEditingAreas?: boolean,
   lightingState?: LightingRenderState,
+  fx?: FxRenderState,
+  deskProps?: readonly DeskPropDraw[],
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -1410,6 +1443,7 @@ export function renderFrame(
     hoveredId,
     pets ?? [],
     look,
+    deskProps,
   );
 
   // Monitor, lamp and window glows: light on top of the scene, under the bubbles
@@ -1419,6 +1453,8 @@ export function renderFrame(
 
   // Speech bubbles (always on top of characters)
   renderBubbles(ctx, characters, offsetX, offsetY, zoom, tripwires, look?.nowMs);
+  // XP pops, level-ups and mood weather ride above the bubbles
+  if (fx) renderFx(ctx, fx, characters, offsetX, offsetY, zoom);
   // Pet heart bubbles (same overlay pass)
   if (pets && pets.length > 0) {
     renderPetBubbles(ctx, pets, offsetX, offsetY, zoom);
