@@ -1,5 +1,6 @@
 {
   "id": "POT",
+  "density": 2,
   "name": "Pot",
   "category": "decor",
   "type": "asset",

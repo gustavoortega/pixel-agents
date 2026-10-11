@@ -1,5 +1,6 @@
 {
   "id": "COFFEE",
+  "density": 2,
   "name": "Coffee",
   "category": "misc",
   "type": "asset",

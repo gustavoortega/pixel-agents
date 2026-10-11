@@ -1,5 +1,6 @@
 {
   "id": "CUSHIONED_CHAIR",
+  "density": 2,
   "name": "Cushioned Chair",
   "category": "chairs",
   "type": "group",

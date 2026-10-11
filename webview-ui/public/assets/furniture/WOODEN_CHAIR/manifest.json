@@ -1,5 +1,6 @@
 {
   "id": "WOODEN_CHAIR",
+  "density": 2,
   "name": "Wooden Chair",
   "category": "chairs",
   "type": "group",

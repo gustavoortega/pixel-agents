@@ -1,5 +1,6 @@
 {
   "id": "TABLE_FRONT",
+  "density": 2,
   "name": "Table",
   "category": "desks",
   "type": "asset",

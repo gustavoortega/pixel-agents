@@ -1,5 +1,6 @@
 {
   "id": "SOFA",
+  "density": 2,
   "name": "Sofa",
   "category": "chairs",
   "type": "group",

@@ -1,5 +1,6 @@
 {
   "id": "SMALL_TABLE",
+  "density": 2,
   "name": "Small Table",
   "category": "desks",
   "type": "group",

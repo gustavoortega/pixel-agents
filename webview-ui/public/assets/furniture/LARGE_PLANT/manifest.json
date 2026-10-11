@@ -1,5 +1,6 @@
 {
   "id": "LARGE_PLANT",
+  "density": 2,
   "name": "Large Plant",
   "category": "decor",
   "type": "asset",

@@ -1,5 +1,6 @@
 {
   "id": "FLOOR_LAMP",
+  "density": 2,
   "name": "Floor Lamp",
   "category": "decor",
   "type": "asset",

@@ -1,5 +1,6 @@
 {
   "id": "CUSHIONED_BENCH",
+  "density": 2,
   "name": "Cushioned Bench",
   "category": "chairs",
   "type": "asset",

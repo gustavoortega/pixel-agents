@@ -1,5 +1,6 @@
 {
   "id": "COFFEE_TABLE",
+  "density": 2,
   "name": "Coffee Table",
   "category": "desks",
   "type": "asset",

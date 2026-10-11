@@ -1,5 +1,6 @@
 {
   "id": "CACTUS",
+  "density": 2,
   "name": "Cactus",
   "category": "decor",
   "type": "asset",

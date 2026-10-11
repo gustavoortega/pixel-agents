@@ -1,5 +1,6 @@
 {
   "id": "DESK",
+  "density": 2,
   "name": "Desk",
   "category": "desks",
   "type": "group",

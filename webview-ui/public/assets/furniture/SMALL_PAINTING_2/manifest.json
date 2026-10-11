@@ -1,5 +1,6 @@
 {
   "id": "SMALL_PAINTING_2",
+  "density": 2,
   "name": "Small Painting",
   "category": "wall",
   "type": "asset",
