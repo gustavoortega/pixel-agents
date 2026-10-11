@@ -47,6 +47,8 @@ import {
   IDLE_GLYPH_SHADOW_COLOR,
   MONITOR_ON_TYPE_PREFIX,
   MONITOR_SCREEN_RECT,
+  NIGHT_DARKEN_ALPHA,
+  NIGHT_DARKEN_COLOR,
   ROTATE_BUTTON_BG,
   SEAT_AVAILABLE_COLOR,
   SEAT_BUSY_COLOR,
@@ -184,8 +186,8 @@ export interface LightingRenderState {
   fixtures: GlowFixtures;
   /** Window light shafts for the current hour (empty at night). */
   shafts: readonly Shaft[];
-  /** The windows are dark: night pools and fairy lights are on. */
-  night: boolean;
+  /** Alpha of the night darkening pass (nightDarkness); 0 by day. Night pools and fairy lights scale with it. */
+  darkness: number;
   /** Tile of each lit PC, the ones showing ON frames. */
   monitors: readonly FixturePoint[];
   /** Wall-clock ms, for the fairy-light twinkle. */
@@ -1345,6 +1347,26 @@ function renderShafts(
   ctx.restore();
 }
 
+/** Multiply the map by the night color at `alpha`; nothing outside the map rect is touched. */
+function renderNightDarkening(
+  ctx: CanvasRenderingContext2D,
+  alpha: number,
+  zoom: number,
+  offsetX: number,
+  offsetY: number,
+  cols: number,
+  rows: number,
+): void {
+  if (alpha <= 0) return;
+  const s = TILE_SIZE * zoom;
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = NIGHT_DARKEN_COLOR;
+  ctx.fillRect(offsetX, offsetY, cols * s, rows * s);
+  ctx.restore();
+}
+
 /** Paint glow sprites with `screen` inside the map rect. */
 function paintGlows(
   ctx: CanvasRenderingContext2D,
@@ -1444,11 +1466,11 @@ export function renderFrame(
     renderCarpetLayer(ctx, carpetTiles, cols, rows, offsetX, offsetY, zoom);
   }
 
-  // Window light shafts and night pools on the floor, under everything that stands in them
+  // Window light shafts on the floor, under everything that stands in them
   const night = lightingState
     ? nightLightDraws({
         enabled: cozyLighting,
-        night: lightingState.night,
+        strength: lightingState.darkness / NIGHT_DARKEN_ALPHA,
         fixtures: lightingState.fixtures,
         monitors: lightingState.monitors,
         nowMs: lightingState.nowMs,
@@ -1461,7 +1483,6 @@ export function renderFrame(
     : { pools: [], fairy: [] };
   if (lightingState && cozyLighting) {
     renderShafts(ctx, lightingState.shafts, zoom, offsetX, offsetY);
-    paintGlows(ctx, night.pools, zoom, offsetX, offsetY, cols, rows);
   }
 
   // Area overlay (translucent color wash) — above carpets, below seat indicators. Editing only.
@@ -1503,6 +1524,13 @@ export function renderFrame(
     look,
     deskProps,
   );
+
+  // Night: one multiply darkens the whole scene, then the pools and glows light it back up.
+  // Bubbles and everything after stay outside the darkening.
+  if (lightingState && cozyLighting) {
+    renderNightDarkening(ctx, lightingState.darkness, zoom, offsetX, offsetY, cols, rows);
+    paintGlows(ctx, night.pools, zoom, offsetX, offsetY, cols, rows);
+  }
 
   // Monitor, lamp and window glows: light on top of the scene, under the bubbles
   if (lightingState) {

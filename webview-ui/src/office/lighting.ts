@@ -25,8 +25,14 @@ import {
   LIGHT_GOLDEN_START_MIN,
   LIGHT_NIGHT_START_MIN,
   LIGHT_PHASES,
+  NIGHT_DARKEN_ALPHA,
+  NIGHT_RAMP_MIN,
+  POOL_FAIRY_BAND_HEIGHT_TILES,
+  POOL_FAIRY_BAND_TOP_TILES,
+  POOL_FAIRY_BAND_WIDTH_TILES,
   POOL_LAMP_CENTER_ROWS,
   POOL_LAMP_RADIUS_TILES,
+  POOL_MONITOR_DOWN_TILES,
   POOL_MONITOR_RADIUS_TILES,
   TILE_SIZE,
 } from '../constants.js';
@@ -65,6 +71,21 @@ export function isNightPhase(hour: number, minute: number): boolean {
   return lightingFor(hour, minute).phase === 'night';
 }
 
+/**
+ * Alpha of the canvas darkening pass at a local time: NIGHT_DARKEN_ALPHA throughout the night
+ * phase, ramping linearly to 0 over NIGHT_RAMP_MIN before it starts and after it ends, so the
+ * map never snaps dark. The phase stays the single definition of night; only the ramp is added.
+ */
+export function nightDarkness(hour: number, minute: number): number {
+  if (isNightPhase(hour, minute)) return NIGHT_DARKEN_ALPHA;
+  const t = hour * 60 + minute;
+  const intoDusk = t - (LIGHT_NIGHT_START_MIN - NIGHT_RAMP_MIN);
+  if (intoDusk > 0) return NIGHT_DARKEN_ALPHA * Math.min(1, intoDusk / NIGHT_RAMP_MIN);
+  const sinceDawn = t - LIGHT_DAWN_START_MIN;
+  if (sinceDawn < NIGHT_RAMP_MIN) return NIGHT_DARKEN_ALPHA * (1 - sinceDawn / NIGHT_RAMP_MIN);
+  return 0;
+}
+
 /** Sun glyph from dawn to the end of the golden hour, moon otherwise. */
 export function isDaytime(hour: number, minute: number): boolean {
   return lightingFor(hour, minute).phase !== 'night';
@@ -76,7 +97,7 @@ export function clockLabel(hour: number, minute: number): string {
 
 // ── Glow placement ──────────────────────────────────────────────
 
-export type GlowKind = 'monitor' | 'lamp' | 'lampPool' | 'monitorPool' | 'fairy';
+export type GlowKind = 'monitor' | 'lamp' | 'lampPool' | 'monitorPool' | 'fairyBand' | 'fairy';
 
 /** A seated agent's monitor: the seat tile, the way it faces, and whether it is working. */
 export interface GlowSource {
@@ -122,11 +143,18 @@ const RADIUS_TILES: Record<GlowKind, number> = {
   lamp: GLOW_LAMP_RADIUS_TILES,
   lampPool: POOL_LAMP_RADIUS_TILES,
   monitorPool: POOL_MONITOR_RADIUS_TILES,
+  fairyBand: 0,
   fairy: FAIRY_GLOW_RADIUS_TILES,
 };
 
 /** Size of the cached sprite for a glow kind, in device px. */
 export function glowSize(kind: GlowKind, zoom: number): { w: number; h: number } {
+  if (kind === 'fairyBand') {
+    return {
+      w: POOL_FAIRY_BAND_WIDTH_TILES * TILE_SIZE * zoom,
+      h: POOL_FAIRY_BAND_HEIGHT_TILES * TILE_SIZE * zoom,
+    };
+  }
   const radius = RADIUS_TILES[kind] * TILE_SIZE * zoom;
   return { w: 2 * radius, h: 2 * radius };
 }
@@ -232,14 +260,15 @@ function twinkle(i: number, nowMs: number): number {
 }
 
 /**
- * The night lights, only while `night` holds (isNightPhase) and the setting is on:
- * floor pools under every floor lamp and every active monitor (`pools`, painted on the floor under
- * the furniture), and a twinkling glow on each fairy-light bulb (`fairy`, painted over the scene).
+ * The night lights, only while `strength` (nightDarkness / NIGHT_DARKEN_ALPHA, 0..1) is above 0
+ * and the setting is on: pools under every floor lamp, every active monitor and every fairy
+ * strand (`pools`), and a twinkling glow on each fairy-light bulb (`fairy`). Both are painted
+ * with `screen` AFTER the darkening multiply, at `strength`, so they fade in with the dusk ramp.
  * `monitors` is the tile of each lit PC, the same set that shows the ON frames.
  */
 export function nightLightDraws(input: {
   enabled: boolean;
-  night: boolean;
+  strength: number;
   fixtures: GlowFixtures;
   monitors: readonly FixturePoint[];
   nowMs: number;
@@ -249,10 +278,11 @@ export function nightLightDraws(input: {
   cols: number;
   rows: number;
 }): { pools: GlowDraw[]; fairy: GlowDraw[] } {
-  const { enabled, night, fixtures, monitors, nowMs, zoom, offsetX, offsetY, cols, rows } = input;
+  const { enabled, strength, fixtures, monitors, nowMs, zoom, offsetX, offsetY, cols, rows } =
+    input;
   const pools: GlowDraw[] = [];
   const fairy: GlowDraw[] = [];
-  if (!enabled || !night) return { pools, fairy };
+  if (!enabled || strength <= 0) return { pools, fairy };
   const s = TILE_SIZE * zoom;
   const map: PxRect = { x: offsetX, y: offsetY, w: cols * s, h: rows * s };
   const at = (out: GlowDraw[], kind: GlowKind, cx: number, cy: number, alpha: number): void => {
@@ -267,11 +297,27 @@ export function nightLightDraws(input: {
       'lampPool',
       offsetX + (lamp.col + 0.5) * s,
       offsetY + (lamp.row + POOL_LAMP_CENTER_ROWS) * s,
-      1,
+      strength,
     );
   }
   for (const m of monitors) {
-    at(pools, 'monitorPool', offsetX + (m.col + 0.5) * s, offsetY + (m.row + 0.5) * s, 1);
+    at(
+      pools,
+      'monitorPool',
+      offsetX + (m.col + 0.5) * s,
+      offsetY + (m.row + 0.5 + POOL_MONITOR_DOWN_TILES) * s,
+      strength,
+    );
+  }
+  for (const strand of fixtures.fairyLights) {
+    const { h } = glowSize('fairyBand', zoom);
+    at(
+      pools,
+      'fairyBand',
+      offsetX + (strand.col + POOL_FAIRY_BAND_WIDTH_TILES / 2) * s,
+      offsetY + (strand.row + POOL_FAIRY_BAND_TOP_TILES) * s + h / 2,
+      strength,
+    );
   }
   for (const strand of fixtures.fairyLights) {
     FAIRY_BULBS.forEach((b, i) => {
@@ -280,7 +326,7 @@ export function nightLightDraws(input: {
         'fairy',
         offsetX + (strand.col * TILE_SIZE + b.x) * zoom,
         offsetY + (strand.row * TILE_SIZE + b.y) * zoom,
-        twinkle(i, nowMs),
+        twinkle(i, nowMs) * strength,
       );
     });
   }

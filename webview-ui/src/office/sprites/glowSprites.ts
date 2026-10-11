@@ -11,7 +11,11 @@ function buildGlow(kind: GlowKind, zoom: number): HTMLCanvasElement {
   canvas.height = h;
   const ctx = canvas.getContext('2d')!;
   const colors = GLOW_COLORS[kind];
-  const gradient = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+  // The fairy band fades down the wall; every other glow is round.
+  const gradient =
+    kind === 'fairyBand'
+      ? ctx.createLinearGradient(0, 0, 0, h)
+      : ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
   gradient.addColorStop(0, colors.core);
   gradient.addColorStop(1, colors.edge);
   ctx.fillStyle = gradient;

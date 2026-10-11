@@ -494,7 +494,8 @@ export const LIGHT_NIGHT_START_MIN = 20 * 60;
  *  multipliers on the cached glow sprites; 0 means that glow is not drawn in that phase. */
 export const LIGHT_PHASES = {
   night: {
-    tint: { color: '#2a3570', alpha: 0.24 },
+    // No DOM tint at night: the canvas darkening pass (NIGHT_DARKEN_*) is the only darkening.
+    tint: null,
     monitorGlow: 0.75,
     lampGlow: 0.6,
   },
@@ -519,15 +520,28 @@ export const GLOW_DOWN_OFFSET_TILES = 0.5;
 export const GLOW_COLORS = {
   monitor: { core: 'rgba(207, 232, 255, 0.4)', edge: 'rgba(207, 232, 255, 0)' },
   lamp: { core: 'rgba(255, 200, 110, 0.55)', edge: 'rgba(255, 200, 110, 0)' },
-  lampPool: { core: 'rgba(255, 200, 120, 0.35)', edge: 'rgba(255, 200, 120, 0)' },
-  monitorPool: { core: 'rgba(120, 255, 200, 0.25)', edge: 'rgba(120, 255, 200, 0)' },
+  lampPool: { core: 'rgba(255, 200, 120, 0.55)', edge: 'rgba(255, 200, 120, 0)' },
+  monitorPool: { core: 'rgba(120, 255, 200, 0.35)', edge: 'rgba(120, 255, 200, 0)' },
+  fairyBand: { core: 'rgba(255, 220, 150, 0.3)', edge: 'rgba(255, 220, 150, 0)' },
   fairy: { core: 'rgba(255, 224, 150, 0.8)', edge: 'rgba(255, 224, 150, 0)' },
 } as const;
 /** Night pools on the floor: radius in tiles around a floor lamp's base and an active monitor. */
-export const POOL_LAMP_RADIUS_TILES = 3;
+export const POOL_LAMP_RADIUS_TILES = 4;
 /** A lamp pool is centered on the middle of the lamp's base tile, this many tiles below its top. */
 export const POOL_LAMP_CENTER_ROWS = 1.5;
-export const POOL_MONITOR_RADIUS_TILES = 2;
+export const POOL_MONITOR_RADIUS_TILES = 2.5;
+/** A monitor pool is centered this many tiles below the monitor's tile center (on the desk and the floor in front). */
+export const POOL_MONITOR_DOWN_TILES = 1;
+/** Fairy-light pool: a soft band along the wall under the string, as tall as this and as wide as the strand. */
+export const POOL_FAIRY_BAND_HEIGHT_TILES = 1.5;
+export const POOL_FAIRY_BAND_WIDTH_TILES = 4;
+/** The band starts this far below the strand's top edge (under the sagging wire). */
+export const POOL_FAIRY_BAND_TOP_TILES = 0.5;
+/** Night darkening: the whole map is multiplied by this color at this alpha in the night phase,
+ *  ramped linearly over NIGHT_RAMP_MIN before the phase starts and after it ends. */
+export const NIGHT_DARKEN_COLOR = '#262c5c';
+export const NIGHT_DARKEN_ALPHA = 0.42;
+export const NIGHT_RAMP_MIN = 60;
 /** Fairy-light bulb glow: radius in tiles, twinkle period, and the dimmest a bulb gets (share of
  *  full strength). Each bulb runs the same wave at its own phase. */
 export const FAIRY_GLOW_RADIUS_TILES = 0.5;
