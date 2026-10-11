@@ -307,6 +307,91 @@ function largePainting(): Canvas {
   return c;
 }
 
+
+// ---------------------------------------------------------------------------
+// Light fixtures: window, floor lamp, fairy lights
+// ---------------------------------------------------------------------------
+
+/** Wall window, 2x2 tiles: wood frame, daylight sky, far hills, a cross mullion and a sill. */
+function windowPane(): Canvas {
+  const c = new Canvas(32, 32);
+  box(c, 1, 3, 30, 26, '#8a5a32', '#3b2412');
+  rect(c, 3, 5, 26, 22, '#8fc4ea');
+  // sky bands, lighter toward the horizon
+  rect(c, 3, 5, 26, 6, '#7fb6e2');
+  rect(c, 3, 17, 26, 6, '#b8dcf2');
+  // sun glint and a cloud
+  rect(c, 22, 8, 3, 3, '#fff1b8');
+  rect(c, 6, 10, 6, 2, '#ffffff');
+  rect(c, 8, 9, 4, 1, '#ffffff');
+  // ground, then two tones of hills
+  rect(c, 3, 23, 26, 4, '#6b9a52');
+  for (let x = 3; x < 29; x++) {
+    const far = 4 + Math.round(2 * Math.sin(x / 3.6) + Math.cos(x / 5.3));
+    rect(c, x, 23 - far, 1, far, '#6b9a52');
+    const near = 2 + Math.round(Math.sin(x / 2.4 + 1));
+    rect(c, x, 27 - near, 1, near, '#4f8a45');
+  }
+  // cross mullion
+  rect(c, 15, 5, 2, 22, '#7a4b2b');
+  rect(c, 3, 15, 26, 2, '#7a4b2b');
+  rect(c, 15, 5, 1, 22, '#9b6338');
+  rect(c, 3, 15, 26, 1, '#9b6338');
+  // glass sheen
+  rect(c, 4, 6, 1, 8, '#ffffff66');
+  rect(c, 18, 6, 1, 8, '#ffffff66');
+  // frame highlight and sill
+  rect(c, 2, 4, 28, 1, '#c18a52');
+  box(c, 0, 28, 32, 3, '#9b6338', '#3b2412');
+  rect(c, 1, 29, 30, 1, '#c18a52');
+  rect(c, 1, 31, 30, 1, '#00000033');
+  return c;
+}
+
+/** Floor lamp, 1x2 tiles: warm shade on a thin pole over a round base. */
+function floorLamp(): Canvas {
+  const c = new Canvas(16, 32);
+  const shade = [
+    '...OOOOOOOO...',
+    '..OyyyyyyyyO..',
+    '..OyYYYYYYyO..',
+    '.OyYYYYYYYYyO.',
+    '.OyYYYYYYYYyO.',
+    '.OyYYYYYYYYyO.',
+    '.OOOOOOOOOOOO.',
+  ];
+  c.stamp(shade, { O: '#3b2412', y: '#e8c27a', Y: '#fff1b8' }, 1, 2);
+  // bulb glow under the shade
+  rect(c, 6, 9, 4, 1, '#fff1b8');
+  // pole
+  rect(c, 7, 10, 2, 17, '#3b2412');
+  rect(c, 7, 10, 1, 17, '#7a4b2b');
+  // base
+  box(c, 3, 27, 10, 3, '#7a4b2b', '#3b2412');
+  rect(c, 4, 28, 8, 1, '#9b6338');
+  rect(c, 3, 30, 10, 1, '#00000033');
+  return c;
+}
+
+/** Fairy lights, 4x1 tiles: a sagging wire with warm bulbs every 8 px. */
+function fairyLights(): Canvas {
+  const c = new Canvas(64, 16);
+  const BULBS = ['#ffd166', '#ff8fab', '#8fd67a', '#8fc4ea'];
+  const sag = (x: number): number => 1 + Math.round(4 * Math.sin((Math.PI * x) / 63));
+  for (let x = 0; x < 64; x++) {
+    c.set(x, sag(x), '#4a3020');
+  }
+  for (let i = 0; i < 8; i++) {
+    const x = 3 + i * 8;
+    const y = sag(x) + 1;
+    const col = BULBS[i % BULBS.length];
+    rect(c, x, y, 2, 3, col);
+    c.set(x, y, '#ffffffaa');
+    rect(c, x, y + 3, 2, 1, '#00000033');
+  }
+  return c;
+}
+
 // ---------------------------------------------------------------------------
 
 export function buildDecor(out: SpriteSet): void {
@@ -328,4 +413,7 @@ export function buildDecor(out: SpriteSet): void {
   out['SMALL_PAINTING/SMALL_PAINTING.png'] = smallPainting(1);
   out['SMALL_PAINTING_2/SMALL_PAINTING_2.png'] = smallPainting(2);
   out['LARGE_PAINTING/LARGE_PAINTING.png'] = largePainting();
+  out['WINDOW/WINDOW.png'] = windowPane();
+  out['FLOOR_LAMP/FLOOR_LAMP.png'] = floorLamp();
+  out['FAIRY_LIGHTS/FAIRY_LIGHTS.png'] = fairyLights();
 }

@@ -16,6 +16,7 @@ import {
   layoutLabels,
   type Rect,
 } from '../src/office/labelLayout.js';
+import { compactLabelMaxWidth } from '../src/office/toolUtils.js';
 
 const L = 18; // COMPACT_LABEL_LINE_HEIGHT_PX
 const item = (id: number, x: number, patch: Partial<LabelItem> = {}): LabelItem => ({
@@ -55,6 +56,23 @@ test('layoutLabels: labels on one tile stack, and the one pushed past 3 lines di
     .map((it) => rectOf(it, out.get(it.id)!.dy));
   for (let i = 0; i < shown.length; i++)
     for (let j = i + 1; j < shown.length; j++) assert.equal(overlap(shown[i]!, shown[j]!), false);
+});
+
+test('layoutLabels: plates above the head are pushed up, away from the face', () => {
+  const items = [1, 2].map((id) => item(id, 100, { grow: 'up' }));
+  const out = layoutLabels(items, []);
+  assert.equal(out.get(1)?.dy, 0);
+  assert.equal(out.get(2)?.dy, -(L + 2));
+});
+
+test('layoutLabels: pods 2.5 tiles apart keep their plates apart at zoom 3 and 4', () => {
+  for (const zoom of [3, 4]) {
+    const pitch = 2.5 * 16 * zoom;
+    const w = compactLabelMaxWidth(zoom, 1);
+    const items = [0, 1, 2, 3].map((i) => item(i, 100 + i * pitch, { w, col: i * 2.5 }));
+    const out = layoutLabels(items, []);
+    for (const it of items) assert.deepEqual(out.get(it.id), { dy: 0, dim: false }, `zoom ${zoom}`);
+  }
 });
 
 test('layoutLabels: a label over a room sign is moved below it', () => {

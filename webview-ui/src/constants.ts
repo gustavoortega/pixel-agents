@@ -222,17 +222,28 @@ export const AUTO_ON_SIDE_DEPTH = 2;
 export const CHARACTER_HIT_HALF_WIDTH = 8;
 export const CHARACTER_HIT_HEIGHT = 24;
 export const TOOL_OVERLAY_VERTICAL_OFFSET = 32;
-/** Seat pitch in tiles: compact labels may not be wider than one seat's slot minus a gap. */
-export const COMPACT_LABEL_SEAT_PITCH_TILES = 4;
+/** Seat pitch in tiles: a nameplate may not be wider than one pod's slot minus a gap. The layout
+ *  validator guarantees pods sit at least this far apart, so neighbouring plates never overlap. */
+export const COMPACT_LABEL_SEAT_PITCH_TILES = 2.5;
 export const COMPACT_LABEL_GAP_PX = 8;
-/** Below this width a compact label is just a marker (it would be a few letters of ellipsis). */
+/** Below this width a nameplate is just a marker (it would be a few letters of ellipsis). */
 export const COMPACT_LABEL_MIN_WIDTH_PX = 90;
-/** One text line of a compact label, CSS px; the layout pass stacks colliding labels by this. */
+/** Unit of the label layout's displacement budget (LABEL_LAYOUT_MAX_DISPLACEMENT_LINES of these), CSS px. */
 export const COMPACT_LABEL_LINE_HEIGHT_PX = 18;
-/** Clear space between the character's feet and the compact label, CSS px. */
+/** Clear space between the character's feet and a plate placed below them, CSS px. */
 export const COMPACT_LABEL_FEET_GAP_PX = 2;
-/** Pixel-style drop shadow keeping the bare compact label legible on any floor colour. */
-export const COMPACT_LABEL_TEXT_SHADOW = '1px 1px 0 rgba(0, 0, 0, 0.9)';
+/** World px between the head top and a plate placed above it: room for the bubble, the idle
+ *  glyph and the tripwire beacon, which are drawn on the canvas right above the head. */
+export const NAMEPLATE_HEAD_CLEARANCE_PX = 16;
+/** Nameplate box, CSS px. Line 1 is the badge + member name, line 2 the session label. */
+export const NAMEPLATE_LINE1_PX = 20;
+export const NAMEPLATE_LINE2_PX = 16;
+export const NAMEPLATE_PAD_Y_PX = 2;
+export const NAMEPLATE_BORDER_PX = 3;
+/** Hard shadow under the plate (matches --brand-shadow) and the gap before the tripwire pill. */
+export const NAMEPLATE_SHADOW_PX = 4;
+export const NAMEPLATE_PILL_HEIGHT_PX = 18;
+export const NAMEPLATE_PILL_GAP_PX = 2;
 /** Extra clearance a displaced label keeps from what it was pushed off, CSS px. */
 export const LABEL_LAYOUT_PAD_PX = 2;
 /** A label pushed further than this many lines stays put and dims instead. */
@@ -241,7 +252,14 @@ export const LABEL_LAYOUT_DIM_OPACITY = 0.35;
 /** Room sign plate: padding and per-glyph width estimate (no measureText, so it stays pure). */
 export const AREA_SIGN_PADDING_PX = 2;
 export const AREA_SIGN_GLYPH_WIDTH_EM = 0.4;
-export const AREA_SIGN_PLATE_COLOR = 'rgba(0, 0, 0, 0.7)';
+/** Wooden plaque: plate, 1-zoom-px border, top highlight and cream text. */
+export const AREA_SIGN_PLATE_COLOR = '#7a4b2b';
+export const AREA_SIGN_BORDER_COLOR = '#3b2412';
+export const AREA_SIGN_HIGHLIGHT_COLOR = '#9b6338';
+export const AREA_SIGN_TEXT_COLOR = '#fff4dc';
+/** Area-color dot before the label, and the gap after it, in world px. */
+export const AREA_SIGN_DOT_PX = 3;
+export const AREA_SIGN_DOT_GAP_PX = 2;
 /** Thin usage bar along the bottom of a room sign: track colour and height in world px. */
 export const AREA_SIGN_USAGE_TRACK_COLOR = 'rgba(255, 255, 255, 0.18)';
 export const AREA_SIGN_USAGE_BAR_HEIGHT_PX = 1;
@@ -387,3 +405,73 @@ export const COMPANION_FEET_INSET_PX = 2;
 export const COMPANION_TRAIL_LENGTH = 2;
 /** Outline of the legendary label plate shimmers once per this many seconds. */
 export const RARITY_SHIMMER_SEC = 2.4;
+
+// ── Cozy look: shadows ──────────────────────────────────────────
+/** Oval under every character. Sub-agents and companions get the small one. */
+export const SHADOW_COLOR = 'rgba(40, 20, 10, 0.28)';
+export const SHADOW_SIZE_PX = { w: 12, h: 4 } as const;
+export const SHADOW_SMALL_SIZE_PX = { w: 8, h: 3 } as const;
+/** Sorts just under the rarity outline (-OUTLINE_Z_SORT_OFFSET), so the oval is never over a body. */
+export const SHADOW_Z_SORT_OFFSET = 0.002;
+
+// ── Cozy look: lighting ─────────────────────────────────────────
+/** Local-time phases, in minutes after midnight. Dawn 06:00-06:59, golden hour 16:00-19:59,
+ *  night 20:00-05:59, plain daylight otherwise. */
+export const LIGHT_DAWN_START_MIN = 6 * 60;
+export const LIGHT_DAY_START_MIN = 7 * 60;
+export const LIGHT_GOLDEN_START_MIN = 16 * 60;
+export const LIGHT_NIGHT_START_MIN = 20 * 60;
+/** Tint over the map (DOM, soft-light) and the glow strengths, per phase. Strengths are 0..1
+ *  multipliers on the cached glow sprites; 0 means that glow is not drawn in that phase. */
+export const LIGHT_PHASES = {
+  night: {
+    tint: { color: '#2a3570', alpha: 0.24 },
+    monitorGlow: 0.75,
+    lampGlow: 0.6,
+    windowShaft: 0,
+  },
+  dawn: {
+    tint: { color: '#ffb0a0', alpha: 0.15 },
+    monitorGlow: 0.4,
+    lampGlow: 0.3,
+    windowShaft: 0,
+  },
+  day: { tint: null, monitorGlow: 0.3, lampGlow: 0, windowShaft: 0.18 },
+  golden: {
+    tint: { color: '#ff9a3c', alpha: 0.28 },
+    monitorGlow: 0.45,
+    lampGlow: 0.35,
+    windowShaft: 0.3,
+  },
+} as const;
+/** Glow radii in tiles, and how far below its anchor tile a monitor glow is centered so it
+ *  lights the face or the desk without painting the wall row above. */
+export const GLOW_MONITOR_RADIUS_TILES = 2;
+export const GLOW_LAMP_RADIUS_TILES = 2.5;
+export const GLOW_DOWN_OFFSET_TILES = 0.5;
+/** Window light shaft, in tiles: width, and length from the window's bottom edge downward. */
+export const GLOW_SHAFT_WIDTH_TILES = 3;
+export const GLOW_SHAFT_LENGTH_TILES = 4;
+/** Radial glow gradient stops (centre, edge) per kind; the shaft is a vertical gradient. */
+export const GLOW_COLORS = {
+  monitor: { core: 'rgba(130, 255, 200, 0.45)', edge: 'rgba(130, 255, 200, 0)' },
+  lamp: { core: 'rgba(255, 200, 110, 0.55)', edge: 'rgba(255, 200, 110, 0)' },
+  shaft: { core: 'rgba(255, 190, 110, 0.5)', edge: 'rgba(255, 190, 110, 0)' },
+} as const;
+/** Furniture ids that emit light. */
+export const LIGHT_FIXTURE_WINDOW = 'WINDOW';
+export const LIGHT_FIXTURE_LAMP = 'FLOOR_LAMP';
+/** Footprint of the window (tiles) and the lamp head's height above the lamp's top tile, world px. */
+export const WINDOW_FOOTPRINT_W_TILES = 2;
+export const WINDOW_FOOTPRINT_H_TILES = 2;
+export const LAMP_HEAD_OFFSET_PX = 6;
+/** HUD clock refresh, ms. */
+export const HUD_CLOCK_REFRESH_MS = 15_000;
+
+// ── Cozy look: camera fit ───────────────────────────────────────
+/** Margin around the occupied seats, in tiles, that auto-fit keeps in view. */
+export const FIT_MARGIN_TILES = 3;
+/** Auto-fit never zooms below this unless the whole map needs less. */
+export const FIT_MIN_ZOOM = 4;
+/** Centre moves ease over this long; the integer zoom never animates. */
+export const FIT_CENTER_EASE_MS = 300;

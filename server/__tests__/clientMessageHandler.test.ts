@@ -295,6 +295,25 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
     });
   });
 
+  // ── setCozyLighting ──────────────────────────────────────────
+
+  describe('setCozyLighting', () => {
+    const lightingOnConnect = () => {
+      sent = [];
+      handleClientMessage({ type: 'webviewReady' }, (m) => sent.push(m), ctx);
+      return (sent.find((m) => m.type === 'settingsLoaded') as { cozyLighting?: boolean })
+        .cozyLighting;
+    };
+
+    it('is on by default, persists a toggle, and settingsLoaded reports it', () => {
+      expect(lightingOnConnect()).toBe(true);
+
+      handleClientMessage({ type: 'setCozyLighting', enabled: false }, (m) => sent.push(m), ctx);
+      expect(store.getAdapter()!.getSetting('pixel-agents.cozyLighting', true)).toBe(false);
+      expect(lightingOnConnect()).toBe(false);
+    });
+  });
+
   // ── handleWebviewReady ordering ──────────────────────────────
 
   describe('handleWebviewReady ordering', () => {

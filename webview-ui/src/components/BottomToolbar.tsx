@@ -86,7 +86,7 @@ export function BottomToolbar({
   };
 
   return (
-    <div className="absolute bottom-10 left-10 z-20 flex items-center gap-4 pixel-panel p-4">
+    <div className="absolute bottom-10 left-10 z-20 flex items-center gap-6 brand-panel p-4">
       {/* Hide + Agent in standalone browser mode (no terminal to interact with) */}
       {!isBrowserRuntime && (
         <div
@@ -96,13 +96,8 @@ export function BottomToolbar({
           onMouseLeave={handleAgentLeave}
         >
           <Button
-            variant="accent"
+            variant={isFolderPickerOpen || isBypassMenuOpen ? 'brandActive' : 'brand'}
             onClick={handleAgentClick}
-            className={
-              isFolderPickerOpen || isBypassMenuOpen
-                ? 'bg-accent-bright'
-                : 'bg-accent hover:bg-accent-bright'
-            }
           >
             + Agent
           </Button>
@@ -125,21 +120,21 @@ export function BottomToolbar({
         </div>
       )}
       <Button
-        variant={isEditMode ? 'active' : 'default'}
+        variant={isEditMode ? 'brandActive' : 'brand'}
         onClick={onToggleEditMode}
         title="Edit office layout"
       >
         Layout
       </Button>
       <Button
-        variant={isUsageOpen ? 'active' : 'default'}
+        variant={isUsageOpen ? 'brandActive' : 'brand'}
         onClick={onToggleUsage}
         title="Token usage"
       >
         Usage
       </Button>
       <Button
-        variant={isSettingsOpen ? 'active' : 'default'}
+        variant={isSettingsOpen ? 'brandActive' : 'brand'}
         onClick={onToggleSettings}
         title="Settings"
       >

@@ -6,7 +6,9 @@ import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
 import { DebugView } from './components/DebugView.js';
 import { EditActionBar } from './components/EditActionBar.js';
+import { HudClock } from './components/HudClock.js';
 import { IntroBubble } from './components/IntroBubble.js';
+import { LightingTint } from './components/LightingTint.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { Tooltip } from './components/Tooltip.js';
@@ -18,6 +20,7 @@ import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
 import { useIntroTour } from './hooks/useIntroTour.js';
+import { AutoFit } from './office/camera.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { EditorState } from './office/editor/editorState.js';
@@ -62,6 +65,19 @@ function App() {
 
   const editor = useEditorActions(getOfficeState, editorState);
 
+  // Fit to activity: on at start, off after any manual zoom or pan, back on with the Fit button.
+  const [fitActive, setFitActive] = useState(true);
+  const [autoFit] = useState(() => new AutoFit(setFitActive));
+  const { handleZoomChange } = editor;
+  const handleManualZoom = useCallback(
+    (z: number) => {
+      autoFit.disable();
+      handleZoomChange(z);
+    },
+    [autoFit, handleZoomChange],
+  );
+  const handleFit = useCallback(() => autoFit.enable(), [autoFit]);
+
   const isEditDirty = useCallback(
     () => editor.isEditMode && editor.isDirty,
     [editor.isEditMode, editor.isDirty],
@@ -84,11 +100,12 @@ function App() {
     extensionVersion,
     watchAllSessions,
     setWatchAllSessions,
-    alwaysShowLabels,
     ghostHeadlessAgents,
     setGhostHeadlessAgents,
     showModelFlair,
     setShowModelFlair,
+    cozyLighting,
+    setCozyLighting,
     hooksEnabled,
     hooksInstalled,
     hooksStatusSeq,
@@ -112,7 +129,6 @@ function App() {
   const [isHooksInfoOpen, setIsHooksInfoOpen] = useState(false);
   const [hooksTooltipDismissed, setHooksTooltipDismissed] = useState(false);
   const [isDebugMode, setIsDebugMode] = useState(false);
-  const [alwaysShowOverlay, setAlwaysShowOverlay] = useState(false);
 
   const currentMajorMinor = toMajorMinor(extensionVersion);
 
@@ -125,19 +141,7 @@ function App() {
     transport.send({ type: 'setLastSeenVersion', version: currentMajorMinor });
   }, [currentMajorMinor]);
 
-  // Sync alwaysShowOverlay from persisted settings
-  useEffect(() => {
-    setAlwaysShowOverlay(alwaysShowLabels);
-  }, [alwaysShowLabels]);
-
   const handleToggleDebugMode = useCallback(() => setIsDebugMode((prev) => !prev), []);
-  const handleToggleAlwaysShowOverlay = useCallback(() => {
-    setAlwaysShowOverlay((prev) => {
-      const newVal = !prev;
-      transport.send({ type: 'setAlwaysShowLabels', enabled: newVal });
-      return newVal;
-    });
-  }, []);
 
   // Toggle "Display headless as ghosts". setGhostHeadlessAgents also updates the
   // renderer's module copy, so the office redraws on the next frame.
@@ -153,6 +157,13 @@ function App() {
     setShowModelFlair(next);
     transport.send({ type: 'setShowModelFlair', enabled: next });
   }, [showModelFlair, setShowModelFlair]);
+
+  // Toggle the lighting pass. setCozyLighting also updates the renderer's module copy (glows).
+  const handleToggleCozyLighting = useCallback(() => {
+    const next = !cozyLighting;
+    setCozyLighting(next);
+    transport.send({ type: 'setCozyLighting', enabled: next });
+  }, [cozyLighting, setCozyLighting]);
 
   const handleSelectAgent = useCallback((id: number) => {
     transport.send({ type: 'focusAgent', id });
@@ -206,11 +217,10 @@ function App() {
     transport.send({ type: 'setShowAreas', enabled: next });
   }, [showAreas, setShowAreas]);
 
-  // When AREA_PAINT is active in the editor, force the overlay on even if the
-  // user has toggled Show Areas off globally — they need to see what they're
-  // editing. The selected area's overlay is alpha-bumped via activeAreaLabel.
+  // The Area color wash is drawn only while the Areas tool is active, so someone painting
+  // sees what they are editing; Show Areas controls the room signs alone. The selected
+  // area's wash is alpha-bumped via activeAreaLabel.
   const isEditingAreas = editor.isEditMode && editorState.activeTool === EditTool.AREA_PAINT;
-  const effectiveShowAreas = isEditingAreas || showAreas;
   const activeAreaLabel = isEditingAreas ? editor.selectedAreaLabel : null;
 
   // e2e: register the component-scoped editor-action drivers + the effective
@@ -222,8 +232,9 @@ function App() {
     const hooks = (window.__pixelAgentsTestHooks ??= {});
     hooks.editorTileAction = (col, row) => editor.handleEditorTileAction(col, row);
     hooks.editorEraseAction = (col, row) => editor.handleEditorEraseAction(col, row);
-    hooks.getShowAreas = () => effectiveShowAreas;
-  }, [editor.handleEditorTileAction, editor.handleEditorEraseAction, effectiveShowAreas]);
+    // Room signs show with the setting or while editing areas.
+    hooks.getShowAreas = () => isEditingAreas || showAreas;
+  }, [editor.handleEditorTileAction, editor.handleEditorEraseAction, isEditingAreas, showAreas]);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -362,15 +373,33 @@ function App() {
         onDragMove={editor.handleDragMove}
         editorTick={editor.editorTick}
         zoom={editor.zoom}
-        onZoomChange={editor.handleZoomChange}
+        onZoomChange={handleManualZoom}
+        autoFit={autoFit}
+        onAutoZoom={handleZoomChange}
         panRef={editor.panRef}
-        showAreas={effectiveShowAreas}
+        showAreas={showAreas || isEditingAreas}
+        isEditingAreas={isEditingAreas}
         activeAreaLabel={activeAreaLabel}
       />
 
       {!isDebugMode ? (
         <>
-          <ZoomControls zoom={editor.zoom} onZoomChange={editor.handleZoomChange} />
+          {cozyLighting && (
+            <LightingTint
+              officeState={officeState}
+              containerRef={containerRef}
+              zoom={editor.zoom}
+              panRef={editor.panRef}
+            />
+          )}
+
+          <HudClock />
+          <ZoomControls
+            zoom={editor.zoom}
+            onZoomChange={handleManualZoom}
+            fitActive={fitActive}
+            onFit={handleFit}
+          />
 
           {/* Vignette overlay */}
           <div
@@ -452,7 +481,6 @@ function App() {
             panRef={editor.panRef}
             onCloseAgent={handleCloseAgent}
             onAckTripwire={handleAckTripwire}
-            alwaysShowOverlay={alwaysShowOverlay}
           />
         </>
       ) : (
@@ -561,12 +589,12 @@ function App() {
         onClose={() => setIsSettingsOpen(false)}
         isDebugMode={isDebugMode}
         onToggleDebugMode={handleToggleDebugMode}
-        alwaysShowOverlay={alwaysShowOverlay}
-        onToggleAlwaysShowOverlay={handleToggleAlwaysShowOverlay}
         ghostHeadlessAgents={ghostHeadlessAgents}
         onToggleGhostHeadlessAgents={handleToggleGhostHeadlessAgents}
         showModelFlair={showModelFlair}
         onToggleShowModelFlair={handleToggleShowModelFlair}
+        cozyLighting={cozyLighting}
+        onToggleCozyLighting={handleToggleCozyLighting}
         externalAssetDirectories={externalAssetDirectories}
         watchAllSessions={watchAllSessions}
         onToggleWatchAllSessions={() => {

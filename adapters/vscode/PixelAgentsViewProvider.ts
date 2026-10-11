@@ -73,6 +73,7 @@ import {
   CONFIG_KEY_TOKEN_BUDGET_5H,
   CONFIG_KEY_TOKEN_BUDGET_WEEK,
   GLOBAL_KEY_ALWAYS_SHOW_LABELS,
+  GLOBAL_KEY_COZY_LIGHTING,
   GLOBAL_KEY_GHOST_HEADLESS_AGENTS,
   GLOBAL_KEY_HOOKS_INFO_SHOWN,
   GLOBAL_KEY_LAST_SEEN_VERSION,
@@ -535,6 +536,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         this.adapter.setSetting(GLOBAL_KEY_ALWAYS_SHOW_LABELS, message.enabled);
       } else if (message.type === 'setShowModelFlair') {
         this.adapter.setSetting(GLOBAL_KEY_SHOW_MODEL_FLAIR, message.enabled);
+      } else if (message.type === 'setCozyLighting') {
+        this.adapter.setSetting(GLOBAL_KEY_COZY_LIGHTING, message.enabled);
       } else if (message.type === 'setGhostHeadlessAgents') {
         this.adapter.setSetting(GLOBAL_KEY_GHOST_HEADLESS_AGENTS, message.enabled);
       } else if (message.type === 'setHooksEnabled') {
@@ -646,6 +649,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           false,
         );
         const showModelFlair = this.adapter.getSetting<boolean>(GLOBAL_KEY_SHOW_MODEL_FLAIR, true);
+        const cozyLighting = this.adapter.getSetting<boolean>(GLOBAL_KEY_COZY_LIGHTING, true);
         this.runtime.watchAllSessions.current = watchAllSessions;
         // settingsLoaded.hooksEnabled stays a single boolean carrying the
         // CLAUDE provider's preference until the Settings UI grows a
@@ -663,6 +667,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           alwaysShowLabels,
           ghostHeadlessAgents,
           showModelFlair,
+          cozyLighting,
           hooksEnabled,
           hooksInfoShown,
           externalAssetDirectories: config.externalAssetDirectories,

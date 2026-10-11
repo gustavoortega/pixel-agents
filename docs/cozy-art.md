@@ -7,9 +7,10 @@ Generated files:
 - `webview-ui/public/assets/characters/char_0..5.png`: one chibi base, palette-swapped for hair, skin and outfit
 - `webview-ui/public/assets/floors/floor_0..8.png`, `walls/wall_0.png`, `carpets/carpet_0..2.png`
 - the desk, PC, chair, plant, bin, coffee, sofa, bookshelf, clock, whiteboard and painting PNGs under `webview-ui/public/assets/furniture/`
+- `WINDOW` (wall, 2x2), `FLOOR_LAMP` (decor, 1x2) and `FAIRY_LIGHTS` (wall, 4x1). Unlike the sprites above they are new ids: their `manifest.json` files are written by hand and committed next to the generated PNG, and `server/__tests__/cozyAssets.test.ts` checks each manifest against the PNG size. `FAIRY_LIGHTS` is a single static frame: the furniture animation cycle only runs for items on auto-on tiles, so a wall item cannot use it
 - `webview-ui/src/office/sprites/flair/anchors.json`: head and shoulder rows per direction and a per-frame bob, for accessories drawn over the characters
 
-Furniture manifests, ids, sizes and footprints are untouched. Pets and the furniture not listed above keep their previous art.
+`floor_0` is deliberately soft (luminance spread of at most 16 levels, half the old contrast) so the wood does not fight the sprites on it; the other floors are unchanged. Furniture manifests, ids, sizes and footprints of the pre-existing sprites are untouched. Pets and the furniture not listed above keep their previous art.
 
 ## Regenerate
 

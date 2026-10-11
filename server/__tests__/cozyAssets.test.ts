@@ -81,4 +81,43 @@ describe('cozy art pack', () => {
       expect(a.shoulderY).toBeGreaterThan(a.headTopY);
     }
   });
+  it('keeps floor_0 soft: luminance spread of at most 16 levels', () => {
+    // The floor is colorized at runtime from its luminance, so the spread IS the contrast.
+    const png = PNG.sync.read(
+      fs.readFileSync(path.join(runA, 'webview-ui/public/assets/floors/floor_0.png')),
+    );
+    const levels = new Set<number>();
+    for (let i = 0; i < png.data.length; i += 4) {
+      levels.add(png.data[i]);
+    }
+    expect(Math.max(...levels) - Math.min(...levels)).toBeLessThanOrEqual(16);
+  });
+
+  it.each([
+    ['WINDOW', 'wall', true, 0, 32, 32],
+    ['FLOOR_LAMP', 'decor', false, 1, 16, 32],
+    ['FAIRY_LIGHTS', 'wall', true, 0, 64, 16],
+  ])('ships %s with a manifest that matches its generated PNG', (id, category, onWalls, bg, w, h) => {
+    const dir = `webview-ui/public/assets/furniture/${id}`;
+    const manifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, dir, 'manifest.json'), 'utf8'));
+    expect(manifest).toMatchObject({
+      id,
+      category,
+      type: 'asset',
+      canPlaceOnWalls: onWalls,
+      canPlaceOnSurfaces: false,
+      backgroundTiles: bg,
+      width: w,
+      height: h,
+      footprintW: w / 16,
+      footprintH: h / 16,
+    });
+    const png = PNG.sync.read(fs.readFileSync(path.join(runA, dir, `${id}.png`)));
+    expect([png.width, png.height]).toEqual([w, h]);
+    let opaque = 0;
+    for (let i = 3; i < png.data.length; i += 4) {
+      if (png.data[i] > 0) opaque++;
+    }
+    expect(opaque, `${id} is not blank`).toBeGreaterThan(40);
+  });
 });

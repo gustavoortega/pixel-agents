@@ -8,8 +8,13 @@ import {
   AREA_LABEL_FONT_SIZE_PX,
   AREA_LABEL_MIN_FONT_SIZE_PX,
   AREA_OVERLAY_ALPHA,
+  AREA_SIGN_BORDER_COLOR,
+  AREA_SIGN_DOT_GAP_PX,
+  AREA_SIGN_DOT_PX,
+  AREA_SIGN_HIGHLIGHT_COLOR,
   AREA_SIGN_PADDING_PX,
   AREA_SIGN_PLATE_COLOR,
+  AREA_SIGN_TEXT_COLOR,
   AREA_SIGN_USAGE_BAR_HEIGHT_PX,
   AREA_SIGN_USAGE_TRACK_COLOR,
   BUBBLE_FADE_DURATION_SEC,
@@ -23,6 +28,7 @@ import {
   BUTTON_RADIUS_ZOOM_FACTOR,
   CARPET_DEFAULT_ACCENT_COLOR,
   CARPET_DEFAULT_COLOR,
+  CHARACTER_SITTING_OFFSET_PX,
   CHARACTER_Z_SORT_OFFSET,
   COMPANION_FEET_INSET_PX,
   DELETE_BUTTON_BG,
@@ -38,7 +44,6 @@ import {
   HEADLESS_CHARACTER_ALPHA,
   IDLE_GLYPH_COLOR,
   IDLE_GLYPH_SHADOW_COLOR,
-  OUTLINE_Z_SORT_OFFSET,
   ROTATE_BUTTON_BG,
   SEAT_AVAILABLE_COLOR,
   SEAT_BUSY_COLOR,
@@ -63,12 +68,16 @@ import { companionHoverOffsetPx, getCompanionSprite } from '../flair/companion.j
 import { characterFlair, characterOutline } from '../flair/modelFlair.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
 import { areaSignRect } from '../labelLayout.js';
+import type { GlowFixtures, GlowSource, Lighting } from '../lighting.js';
+import { glowDraws } from '../lighting.js';
 import { mapOffset } from '../projection.js';
+import { characterLayerZ, shadowSprite } from '../shadow.js';
 import {
   getCarpetJunctionSprite,
   getCarpetPaletteKey,
   hasCarpetSprites,
 } from '../sprites/carpetTiles.js';
+import { getGlowSprite } from '../sprites/glowSprites.js';
 import { getPetSprites } from '../sprites/petSpriteData.js';
 import {
   getCachedSprite,
@@ -131,6 +140,34 @@ export function setShowModelFlair(enabled: boolean): void {
 
 export function isShowModelFlairEnabled(): boolean {
   return showModelFlair;
+}
+
+/**
+ * "Cozy lighting": the monitor, lamp and window glows drawn on the canvas. The time-of-day
+ * tint is a DOM layer owned by React, which reads the same setting. Module state like the
+ * settings above; on by default.
+ */
+let cozyLighting = true;
+
+export function setCozyLighting(enabled: boolean): void {
+  cozyLighting = enabled;
+}
+
+export function isCozyLightingEnabled(): boolean {
+  return cozyLighting;
+}
+
+/** What the glow pass needs for one frame; built by the canvas from the office state and the clock. */
+export interface LightingRenderState {
+  lighting: Lighting;
+  sources: readonly GlowSource[];
+  fixtures: GlowFixtures;
+}
+
+/** The Area color wash is an editing aid: it shows only while the Areas tool is active.
+ *  The Show Areas setting is about room signs, which is the label pass. */
+export function shouldDrawAreaOverlay(isEditingAreas: boolean): boolean {
+  return isEditingAreas;
 }
 
 /** What the renderer needs to draw the model look; built per frame by the canvas. */
@@ -274,10 +311,27 @@ export function renderAreaOverlay(
   ctx.restore();
 }
 
+// Text widths by (label, zoom): measureText is the expensive call in the sign pass, which runs
+// every frame. The font loads asynchronously, so a width taken before it arrived is stale.
+const labelWidthCache = new Map<string, number>();
+if (typeof document !== 'undefined' && document.fonts) {
+  void document.fonts.ready.then(() => labelWidthCache.clear());
+}
+
+function measureLabel(ctx: CanvasRenderingContext2D, label: string, zoom: number): number {
+  const key = `${label}\u0000${zoom}`;
+  let width = labelWidthCache.get(key);
+  if (width === undefined) {
+    width = ctx.measureText(label).width;
+    labelWidthCache.set(key, width);
+  }
+  return width;
+}
+
 /**
- * Render a room sign for each Area, ABOVE characters/bubbles: a dark plate on
- * the wall row above the area with the label in the area's colour (placement
- * in `areaSignRect`, shared with the label layout so labels avoid the signs).
+ * Render a room sign for each Area, ABOVE characters/bubbles: a wooden plaque on the wall row
+ * above the area with the label in cream next to an area-color dot (placement in `areaSignRect`,
+ * shared with the label layout so labels avoid the signs).
  *
  * @internal
  */
@@ -296,6 +350,9 @@ export function renderAreaLabels(
 
   const fontSize = Math.max(AREA_LABEL_FONT_SIZE_PX * zoom, AREA_LABEL_MIN_FONT_SIZE_PX);
   const pad = AREA_SIGN_PADDING_PX * zoom;
+  const border = Math.max(1, zoom);
+  const dot = AREA_SIGN_DOT_PX * zoom;
+  const dotGap = AREA_SIGN_DOT_GAP_PX * zoom;
 
   ctx.save();
   ctx.font = `bold ${fontSize}px 'FS Pixel Sans'`;
@@ -307,26 +364,35 @@ export function renderAreaLabels(
     if (!rect) continue;
     const x = Math.round(offsetX + rect.x * zoom);
     const y = Math.round(offsetY + rect.y * zoom);
+    const plateW = Math.round(measureLabel(ctx, area.label, zoom) + 2 * pad + dot + dotGap);
+    const plateH = Math.round(rect.h * zoom);
 
     ctx.globalAlpha = 1;
+    ctx.fillStyle = AREA_SIGN_BORDER_COLOR;
+    ctx.fillRect(x, y, plateW, plateH);
     ctx.fillStyle = AREA_SIGN_PLATE_COLOR;
-    ctx.fillRect(x, y, Math.round(rect.w * zoom), Math.round(rect.h * zoom));
+    ctx.fillRect(x + border, y + border, plateW - 2 * border, plateH - 2 * border);
+    ctx.fillStyle = AREA_SIGN_HIGHLIGHT_COLOR;
+    ctx.fillRect(x + border, y + border, plateW - 2 * border, border);
+
+    ctx.fillStyle = area.color || AREA_LABEL_FALLBACK_COLOR;
+    ctx.fillRect(x + pad + border, y + Math.round((plateH - dot) / 2), dot, dot);
 
     ctx.globalAlpha = AREA_LABEL_ALPHA;
-    ctx.fillStyle = area.color || AREA_LABEL_FALLBACK_COLOR;
-    ctx.fillText(area.label, x + pad, y + Math.round((rect.h * zoom) / 2));
+    ctx.fillStyle = AREA_SIGN_TEXT_COLOR;
+    ctx.fillText(area.label, x + pad + border + dot + dotGap, y + Math.round(plateH / 2));
 
-    // Thin usage bar: this Area's share of the current 5-hour block, along the plate's bottom edge.
+    // Thin usage bar: this Area's share of the current 5-hour block, along the plaque's bottom edge.
     const share = areaUsage?.get(area.label);
     if (share !== undefined && share > 0) {
-      const plateW = Math.round(rect.w * zoom);
+      const innerW = plateW - 2 * border;
       const barH = Math.max(1, Math.round(AREA_SIGN_USAGE_BAR_HEIGHT_PX * zoom));
-      const barY = y + Math.round(rect.h * zoom) - barH;
+      const barY = y + plateH - border - barH;
       ctx.globalAlpha = 1;
       ctx.fillStyle = AREA_SIGN_USAGE_TRACK_COLOR;
-      ctx.fillRect(x, barY, plateW, barH);
+      ctx.fillRect(x + border, barY, innerW, barH);
       ctx.fillStyle = area.color || AREA_LABEL_FALLBACK_COLOR;
-      ctx.fillRect(x, barY, Math.max(1, Math.round(plateW * Math.min(1, share))), barH);
+      ctx.fillRect(x + border, barY, Math.max(1, Math.round(innerW * Math.min(1, share))), barH);
     }
   }
   ctx.restore();
@@ -469,6 +535,21 @@ export function renderScene(
       continue;
     }
 
+    // Soft oval under the feet, below the rarity outline and the body in the sort.
+    const layerZ = characterLayerZ(charZY);
+    {
+      const shadowCached = getCachedSprite(shadowSprite(ch.isSubagent), zoom);
+      const sit = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
+      const sx = Math.round(offsetX + ch.x * zoom - shadowCached.width / 2);
+      const sy = Math.round(offsetY + (ch.y + sit) * zoom - shadowCached.height / 2);
+      drawables.push({
+        zY: layerZ.shadow,
+        draw: (c) => {
+          c.drawImage(shadowCached, sx, sy);
+        },
+      });
+    }
+
     const flair = characterFlair(ch, look?.models ?? NO_MODELS, showModelFlair && !!look);
 
     // Outline: white for selected (full) or hovered (half), which beats the rarity color
@@ -485,7 +566,7 @@ export function renderScene(
       const olDrawX = drawX - zoom; // 1 sprite-pixel offset, scaled
       const olDrawY = drawY - zoom; // outline follows sitting offset via drawY
       drawables.push({
-        zY: charZY - OUTLINE_Z_SORT_OFFSET, // sort just before character
+        zY: layerZ.outline, // sort just before character
         draw: (c) => {
           c.save();
           c.globalAlpha = outlineAlpha;
@@ -556,8 +637,23 @@ export function renderScene(
       // Feet a touch above the tile's bottom edge; flying kinds hover above that
       const feetY = comp.y + TILE_SIZE / 2 - COMPANION_FEET_INSET_PX + hover;
       const drawY = Math.round(offsetY + feetY * zoom - cached.height);
+      const compZY = comp.y + TILE_SIZE / 2;
+      // Shadow stays on the ground under a flying companion, not under its hover height.
+      const shadowCached = getCachedSprite(shadowSprite(true), zoom);
+      const shX = Math.round(offsetX + comp.x * zoom - shadowCached.width / 2);
+      const shY = Math.round(
+        offsetY +
+          (comp.y + TILE_SIZE / 2 - COMPANION_FEET_INSET_PX) * zoom -
+          shadowCached.height / 2,
+      );
       drawables.push({
-        zY: comp.y + TILE_SIZE / 2,
+        zY: characterLayerZ(compZY).shadow,
+        draw: (c) => {
+          c.drawImage(shadowCached, shX, shY);
+        },
+      });
+      drawables.push({
+        zY: compZY,
         draw: (c) => {
           c.drawImage(cached, drawX, drawY);
         },
@@ -1062,6 +1158,42 @@ export interface SelectionRenderState {
   characters: Map<number, Character>;
 }
 
+/** Paint the glows with `screen` inside the map rect: one composite switch per frame, and
+ *  nothing can spill onto the transparent canvas around the map. */
+function renderGlows(
+  ctx: CanvasRenderingContext2D,
+  state: LightingRenderState,
+  zoom: number,
+  offsetX: number,
+  offsetY: number,
+  cols: number,
+  rows: number,
+): void {
+  const draws = glowDraws({
+    enabled: cozyLighting,
+    lighting: state.lighting,
+    sources: state.sources,
+    fixtures: state.fixtures,
+    zoom,
+    offsetX,
+    offsetY,
+    cols,
+    rows,
+  });
+  if (draws.length === 0) return;
+  const s = TILE_SIZE * zoom;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(offsetX, offsetY, cols * s, rows * s);
+  ctx.clip();
+  ctx.globalCompositeOperation = 'screen';
+  for (const d of draws) {
+    ctx.globalAlpha = d.alpha;
+    ctx.drawImage(getGlowSprite(d.kind, zoom), d.sx, d.sy, d.w, d.h, d.x, d.y, d.w, d.h);
+  }
+  ctx.restore();
+}
+
 export function renderFrame(
   ctx: CanvasRenderingContext2D,
   canvasWidth: number,
@@ -1086,6 +1218,8 @@ export function renderFrame(
   tripwires?: ReadonlyMap<number, { severity: TripwireSeverity }>,
   areaUsage?: ReadonlyMap<string, number>,
   look?: ModelLookRenderState,
+  isEditingAreas?: boolean,
+  lightingState?: LightingRenderState,
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -1106,8 +1240,8 @@ export function renderFrame(
     renderCarpetLayer(ctx, carpetTiles, cols, rows, offsetX, offsetY, zoom);
   }
 
-  // Area overlay (translucent color wash) — above carpets, below seat indicators
-  if (showAreas) {
+  // Area overlay (translucent color wash) — above carpets, below seat indicators. Editing only.
+  if (shouldDrawAreaOverlay(isEditingAreas ?? false)) {
     renderAreaOverlay(ctx, areaTiles, areas, cols, rows, offsetX, offsetY, zoom, activeAreaLabel);
   }
 
@@ -1144,6 +1278,11 @@ export function renderFrame(
     pets ?? [],
     look,
   );
+
+  // Monitor, lamp and window glows: light on top of the scene, under the bubbles
+  if (lightingState) {
+    renderGlows(ctx, lightingState, zoom, offsetX, offsetY, cols, rows);
+  }
 
   // Speech bubbles (always on top of characters)
   renderBubbles(ctx, characters, offsetX, offsetY, zoom, tripwires);

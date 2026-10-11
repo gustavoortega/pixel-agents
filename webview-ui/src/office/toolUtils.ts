@@ -7,6 +7,7 @@ import {
   TRIPWIRE_COLOR_LOW,
   TRIPWIRE_COLOR_MEDIUM,
 } from '../constants.js';
+import { Rarity } from './flair/modelFlair.js';
 
 /** Map status prefixes back to tool names for animation selection */
 const STATUS_TO_TOOL: Record<string, string> = {
@@ -103,13 +104,20 @@ export function compactLabelMaxWidth(zoom: number, dpr: number): number {
   );
 }
 
-export type OverlayLine =
-  | { kind: 'label'; text: string; suffix: string; badge?: string }
-  | { kind: 'tripwire'; text: string };
-
-/** Compact level badge shown before the session label. */
+/** Gold badge before the member name. */
 export function levelBadge(level: number): string {
-  return `Lv${level}`;
+  return `Lv ${level}`;
+}
+
+/** What a permanent nameplate shows. Line 1 is the badge + member name, line 2 the session
+ *  label; the rarity colors the plate's border and the tripwire is a pill under it. */
+export interface NameplateContent {
+  badge: string | null;
+  name: string;
+  sub: string | null;
+  /** Tiers 2-4 only: tier 1 and an unknown model keep the plain ink border. */
+  rarity: Rarity | null;
+  pill: string | null;
 }
 
 /** The roster member an agent plays, as last sent by the server. */
@@ -146,46 +154,52 @@ export function shouldShowXpPop(
 }
 
 export type OverlayContent =
-  { mode: 'full' } | { mode: 'marker' } | { mode: 'compact'; lines: OverlayLine[] };
+  { mode: 'full' } | { mode: 'marker' } | { mode: 'compact'; plate: NameplateContent | null };
 
 /**
- * What an agent's overlay shows. Hovered or selected -> today's full box.
- * Otherwise a one-line compact label (session label, " +N" for live
- * sub-agents, plus the tripwire line), or just a marker when there is no room.
+ * What an agent's overlay shows. Hovered or selected -> the full box. Otherwise the permanent
+ * nameplate (null when the agent has nothing to show yet), or just a marker when there is no room.
  */
 export function overlayContent(state: {
   expanded: boolean;
+  /** Session title or folder. */
   label: string | null;
   subCount: number;
   tripwire?: { ruleName: string; count: number } | null;
-  /** Roster level; the badge shows even when the agent has no label. */
+  /** Roster level and member name; the badge shows even when the agent has no label. */
   level?: number;
+  name?: string;
+  rarity?: Rarity;
   maxWidth: number;
 }): OverlayContent {
   if (state.expanded) return { mode: 'full' };
   if (state.maxWidth < COMPACT_LABEL_MIN_WIDTH_PX) return { mode: 'marker' };
-  const lines: OverlayLine[] = [];
-  if (state.label || state.level !== undefined) {
-    lines.push({
-      kind: 'label',
-      text: state.label ?? '',
-      suffix: state.subCount > 0 ? ` +${state.subCount}` : '',
-      ...(state.level !== undefined ? { badge: levelBadge(state.level) } : {}),
-    });
+  const badge = state.level !== undefined ? levelBadge(state.level) : null;
+  let name = state.name ?? '';
+  let sub = [state.label, state.subCount > 0 ? `+${state.subCount}` : ''].filter(Boolean).join(' ');
+  // No roster member yet: the session label takes the name line instead of leaving it empty.
+  if (!name && !badge && sub) {
+    name = sub;
+    sub = '';
   }
-  if (state.tripwire) {
-    lines.push({
-      kind: 'tripwire',
-      text: tripwireLabel(state.tripwire.ruleName, state.tripwire.count),
-    });
-  }
-  return { mode: 'compact', lines };
+  const pill = state.tripwire ? tripwireLabel(state.tripwire.ruleName, state.tripwire.count) : null;
+  if (!badge && !name && !sub && !pill) return { mode: 'compact', plate: null };
+  return {
+    mode: 'compact',
+    plate: {
+      badge,
+      name,
+      sub: sub || null,
+      rarity: state.rarity && state.rarity !== Rarity.COMMON ? state.rarity : null,
+      pill,
+    },
+  };
 }
 
 /**
- * Which element an agent gets: the full box, the compact label, or none.
- * Sub-agents have no compact label (their parent shows +N); they get the full
- * box when they or their parent are hovered or selected.
+ * Which element an agent gets: the full box, the nameplate, or none.
+ * Sub-agents have no nameplate (their parent shows +N); they get the full
+ * box when they or their parent are hovered or selected. Agents always have a plate.
  */
 export function showOverlay(s: {
   isSub: boolean;
@@ -193,12 +207,10 @@ export function showOverlay(s: {
   isHovered: boolean;
   parentSelected: boolean;
   parentHovered: boolean;
-  alwaysShow: boolean;
 }): 'full' | 'compact' | null {
   const self = s.isSelected || s.isHovered;
   if (s.isSub) return self || s.parentSelected || s.parentHovered ? 'full' : null;
-  if (self) return 'full';
-  return s.alwaysShow ? 'compact' : null;
+  return self ? 'full' : 'compact';
 }
 
 // ── Provider capabilities (tool taxonomy for rendering decisions) ────────────

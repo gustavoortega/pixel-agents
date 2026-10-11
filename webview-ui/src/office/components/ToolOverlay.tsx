@@ -2,10 +2,9 @@ import { useEffect, useState } from 'react';
 
 import { Button } from '../../components/ui/Button.js';
 import {
+  BUBBLE_VERTICAL_OFFSET_PX,
   CHARACTER_SITTING_OFFSET_PX,
   COMPACT_LABEL_FEET_GAP_PX,
-  COMPACT_LABEL_LINE_HEIGHT_PX,
-  COMPACT_LABEL_TEXT_SHADOW,
   CONTEXT_CRITICAL_THRESHOLD,
   CONTEXT_DANGER_THRESHOLD,
   CONTEXT_GAUGE_BG,
@@ -17,6 +16,13 @@ import {
   CONTEXT_GAUGE_WIDTH_PX,
   CONTEXT_WARN_THRESHOLD,
   LABEL_LAYOUT_DIM_OPACITY,
+  NAMEPLATE_BORDER_PX,
+  NAMEPLATE_HEAD_CLEARANCE_PX,
+  NAMEPLATE_LINE1_PX,
+  NAMEPLATE_LINE2_PX,
+  NAMEPLATE_PAD_Y_PX,
+  NAMEPLATE_PILL_GAP_PX,
+  NAMEPLATE_PILL_HEIGHT_PX,
   RARITY_SHIMMER_SEC,
   TEAM_LEAD_COLOR,
   TEAM_ROLE_COLOR,
@@ -28,11 +34,13 @@ import type { OfficeState } from '../engine/officeState.js';
 import { isShowModelFlairEnabled } from '../engine/renderer.js';
 import { characterFlair, Rarity, rarityColor } from '../flair/modelFlair.js';
 import { areaSignRect, type LabelItem, layoutLabels, type Rect } from '../labelLayout.js';
+import { nameplateHeight, type PlateSide, plateSide } from '../nameplate.js';
 import { overlayProjection } from '../projection.js';
 import {
   agentLabel,
   agentStatus,
   compactLabelMaxWidth,
+  type NameplateContent,
   type OverlayContent,
   overlayContent,
   showOverlay,
@@ -60,7 +68,6 @@ interface ToolOverlayProps {
   panRef: React.RefObject<{ x: number; y: number }>;
   onCloseAgent: (id: number) => void;
   onAckTripwire: (id: number, count: number) => void;
-  alwaysShowOverlay: boolean;
 }
 
 /** Derive a short human-readable activity string from tools/status */
@@ -109,94 +116,118 @@ const COMPACT_LABEL_Z_INDEX = 40;
 function CompactLabel({
   id,
   status,
-  content,
+  plate,
   maxWidth,
   left,
   top,
+  side,
   dy,
   dim,
-  rarity,
   tripwire,
   onAckTripwire,
 }: {
   id: number;
   status: string;
-  content: Extract<OverlayContent, { mode: 'compact' | 'marker' }>;
+  /** Null renders an empty node: markers and agents with nothing to show keep their overlay element. */
+  plate: NameplateContent | null;
   maxWidth: number;
   left: number;
+  /** Anchor edge: the plate's top for `below`, its bottom for `above`. */
   top: number;
+  side: PlateSide;
   dy: number;
   dim: boolean;
-  /** Rarity of the agent's model: colors the text and rims the label. Absent = plain label. */
-  rarity: Rarity | undefined;
   tripwire: { count: number; severity: TripwireSeverity } | undefined;
   onAckTripwire: (id: number, count: number) => void;
 }) {
-  const lines = content.mode === 'compact' ? content.lines : [];
-  // Rim via CSS outline, not border: it draws outside the box, so the label keeps
-  // the exact size the layout pass reserved for it. Markers and empty labels get none.
-  const rarityRim =
-    rarity && lines.length > 0
-      ? {
-          color: rarityColor(rarity),
-          outline: `1px solid ${rarityColor(rarity)}`,
-          background: 'var(--color-bg)',
-        }
-      : undefined;
-  // An empty element still renders so every agent keeps its overlay node (tests
-  // count them, and hover/select swap it for the full box in place).
+  const hasPlate = !!plate && (plate.badge || plate.name || plate.sub);
+  const rarityColorValue = plate?.rarity ? rarityColor(plate.rarity) : undefined;
   return (
     <div
-      className={`absolute flex flex-col overflow-hidden${rarity === Rarity.LEGENDARY && rarityRim ? ' rarity-shimmer' : ''}`}
+      className="absolute flex flex-col items-center"
       style={{
         left,
         top,
         maxWidth,
-        transform: `translate(-50%, ${dy}px)`,
+        transform: `translate(-50%, ${side === 'above' ? `calc(-100% + ${dy}px)` : `${dy}px`})`,
         transition: 'transform 120ms',
         opacity: dim ? LABEL_LAYOUT_DIM_OPACITY : 1,
         pointerEvents: 'none',
         zIndex: COMPACT_LABEL_Z_INDEX,
-        ...rarityRim,
-        ...(rarity === Rarity.LEGENDARY && rarityRim
-          ? ({ '--rarity-shimmer-sec': `${RARITY_SHIMMER_SEC}s` } as React.CSSProperties)
-          : {}),
       }}
       data-testid="agent-overlay"
       data-agent-id={id}
       data-status={status}
     >
-      {lines.map((line) =>
-        line.kind === 'label' ? (
-          <span
-            key="label"
-            className="flex whitespace-nowrap leading-none text-2xs"
-            style={{ height: COMPACT_LABEL_LINE_HEIGHT_PX, textShadow: COMPACT_LABEL_TEXT_SHADOW }}
-          >
-            {line.badge && <span className="shrink-0 pr-1">{line.badge}</span>}
-            <span className="overflow-hidden text-ellipsis">{line.text}</span>
-            {line.suffix && <span className="shrink-0">{line.suffix}</span>}
-          </span>
-        ) : (
-          <span
-            key="tripwire"
-            className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none text-2xs cursor-pointer"
-            // Labels ignore pointer events; the alarm line opts back in so one click acknowledges it.
-            style={{
-              height: COMPACT_LABEL_LINE_HEIGHT_PX,
-              color: tripwireColor(tripwire?.severity ?? 'low'),
-              pointerEvents: 'auto',
-            }}
-            title="Click to acknowledge"
-            data-testid="tripwire-alarm"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (tripwire) onAckTripwire(id, tripwire.count);
-            }}
-          >
-            {line.text}
-          </span>
-        ),
+      {plate && hasPlate && (
+        <div
+          className={`relative flex flex-col max-w-full overflow-hidden${plate.rarity === Rarity.LEGENDARY ? ' rarity-shimmer' : ''}`}
+          style={{
+            background: 'var(--brand-paper)',
+            color: 'var(--brand-ink)',
+            border: `${NAMEPLATE_BORDER_PX}px solid ${rarityColorValue ?? 'var(--brand-ink)'}`,
+            boxShadow: 'var(--brand-shadow)',
+            padding: `${NAMEPLATE_PAD_Y_PX}px 6px`,
+            ...(plate.rarity === Rarity.LEGENDARY
+              ? ({ '--rarity-shimmer-sec': `${RARITY_SHIMMER_SEC}s` } as React.CSSProperties)
+              : {}),
+          }}
+        >
+          {(plate.badge || plate.name) && (
+            <span
+              className="flex items-center gap-4 whitespace-nowrap leading-none text-xs"
+              style={{ height: NAMEPLATE_LINE1_PX }}
+            >
+              {plate.badge && (
+                <span
+                  className="shrink-0 text-2xs leading-none px-4"
+                  style={{
+                    background: 'var(--brand-gold)',
+                    border: '2px solid var(--brand-ink)',
+                    height: NAMEPLATE_LINE1_PX - 2,
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  {plate.badge}
+                </span>
+              )}
+              <span className="overflow-hidden text-ellipsis">{plate.name}</span>
+            </span>
+          )}
+          {plate.sub && (
+            <span
+              className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none text-2xs"
+              style={{ height: NAMEPLATE_LINE2_PX, opacity: 0.7 }}
+            >
+              {plate.sub}
+            </span>
+          )}
+        </div>
+      )}
+      {plate?.pill && (
+        <span
+          className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none text-2xs cursor-pointer max-w-full"
+          // Plates ignore pointer events; the pill opts back in so one click acknowledges it.
+          style={{
+            height: NAMEPLATE_PILL_HEIGHT_PX,
+            marginTop: hasPlate ? NAMEPLATE_PILL_GAP_PX : 0,
+            padding: '0 6px',
+            lineHeight: `${NAMEPLATE_PILL_HEIGHT_PX - 4}px`,
+            background: 'var(--brand-rust)',
+            color: 'var(--brand-paper)',
+            border: '2px solid var(--brand-ink)',
+            pointerEvents: 'auto',
+          }}
+          title="Click to acknowledge"
+          data-testid="tripwire-alarm"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (tripwire) onAckTripwire(id, tripwire.count);
+          }}
+        >
+          {plate.pill}
+        </span>
       )}
     </div>
   );
@@ -213,7 +244,6 @@ export function ToolOverlay({
   panRef,
   onCloseAgent,
   onAckTripwire,
-  alwaysShowOverlay,
 }: ToolOverlayProps) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -265,7 +295,6 @@ export function ToolOverlay({
       isHovered,
       parentSelected: parentId !== null && selectedId === parentId,
       parentHovered: parentId !== null && hoveredId === parentId,
-      alwaysShow: alwaysShowOverlay,
     });
     if (shown === 'full') {
       plans.set(id, { kind: 'full' });
@@ -276,21 +305,32 @@ export function ToolOverlay({
         subCount: subagentCharacters.filter((s) => s.parentAgentId === id).length,
         tripwire: officeState.tripwires.get(id),
         level: officeState.rosters.get(id)?.level,
+        name: officeState.rosters.get(id)?.name,
+        rarity: characterFlair(ch, officeState.models, isShowModelFlairEnabled()).rarity,
         maxWidth,
       });
       if (content.mode === 'full') continue;
       plans.set(id, { kind: 'compact', content });
-      if (content.mode === 'compact' && content.lines.length > 0) {
-        // Anchor on the tile centre, not the sprite, so labels do not reshuffle while agents walk.
+      if (content.mode === 'compact' && content.plate) {
+        // Anchor on the tile centre, not the sprite, so plates do not reshuffle while agents walk.
         const sit = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
+        const h = nameplateHeight(content.plate);
+        const side = plateSide(ch.dir);
+        const tileMidY = (ch.tileRow + 0.5) * TILE_SIZE + sit;
         labelItems.push({
           id,
           col: ch.tileCol,
           row: ch.tileRow,
           x: project.toScreenX((ch.tileCol + 0.5) * TILE_SIZE),
-          y: project.toScreenY((ch.tileRow + 0.5) * TILE_SIZE + sit) + COMPACT_LABEL_FEET_GAP_PX,
+          y:
+            side === 'below'
+              ? project.toScreenY(tileMidY) + COMPACT_LABEL_FEET_GAP_PX
+              : project.toScreenY(
+                  tileMidY - BUBBLE_VERTICAL_OFFSET_PX - NAMEPLATE_HEAD_CLEARANCE_PX,
+                ) - h,
           w: maxWidth,
-          h: content.lines.length * COMPACT_LABEL_LINE_HEIGHT_PX,
+          h,
+          grow: side === 'below' ? 'down' : 'up',
         });
       }
     }
@@ -326,18 +366,25 @@ export function ToolOverlay({
         if (plan.kind === 'compact') {
           const sit = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
           const placement = placements.get(id);
+          const side = plateSide(ch.dir);
           return (
             <CompactLabel
               key={id}
               id={id}
               status={status}
-              content={plan.content}
+              plate={plan.content.mode === 'compact' ? plan.content.plate : null}
               maxWidth={maxWidth}
               left={project.toScreenX(ch.x)}
-              top={project.toScreenY(ch.y + sit) + COMPACT_LABEL_FEET_GAP_PX}
+              top={
+                side === 'below'
+                  ? project.toScreenY(ch.y + sit) + COMPACT_LABEL_FEET_GAP_PX
+                  : project.toScreenY(
+                      ch.y + sit - BUBBLE_VERTICAL_OFFSET_PX - NAMEPLATE_HEAD_CLEARANCE_PX,
+                    )
+              }
+              side={side}
               dy={placement?.dy ?? 0}
               dim={placement?.dim ?? false}
-              rarity={characterFlair(ch, officeState.models, isShowModelFlairEnabled()).rarity}
               tripwire={officeState.tripwires.get(id)}
               onAckTripwire={onAckTripwire}
             />

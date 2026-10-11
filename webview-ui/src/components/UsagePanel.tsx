@@ -45,13 +45,15 @@ export function UsagePanel({ usage, onClose }: UsagePanelProps) {
   const unit = metric === 'weighted' ? 'weighted' : 'raw';
 
   const tabClass = (active: boolean) =>
-    `py-2 px-12 border-2 border-ink rounded-none cursor-pointer text-sm ${
-      active ? 'bg-ink text-paper' : 'bg-paper text-ink hover:bg-paper-dark'
+    `py-2 px-12 border-3 border-brand-ink rounded-none cursor-pointer text-sm ${
+      active
+        ? 'bg-brand-ink text-brand-paper'
+        : 'bg-brand-paper text-brand-ink hover:bg-brand-paper-2'
     }`;
 
   return (
     <div
-      className="absolute top-10 right-10 z-30 w-[400px] max-h-[calc(100%-80px)] overflow-y-auto bg-paper text-ink border-2 border-ink rounded-none shadow-pixel p-10"
+      className="absolute top-10 right-10 z-30 w-[400px] max-h-[calc(100%-80px)] overflow-y-auto brand-panel p-10"
       role="dialog"
       aria-label="Token usage"
     >

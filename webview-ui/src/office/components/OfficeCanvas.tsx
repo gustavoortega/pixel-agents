@@ -10,6 +10,7 @@ import {
 } from '../../constants.js';
 import { unlockAudio } from '../../notificationSound.js';
 import { transport } from '../../transport/index.js';
+import { AutoFit, occupiedTileBox } from '../camera.js';
 import { getColorizedSprite } from '../colorize.js';
 import { canPlaceFurniture, getWallPlacementRow } from '../editor/editorActions.js';
 import type { EditorState } from '../editor/editorState.js';
@@ -23,6 +24,7 @@ import type {
 } from '../engine/renderer.js';
 import { renderFrame } from '../engine/renderer.js';
 import { getCatalogEntry, isRotatable } from '../layout/furnitureCatalog.js';
+import { lightFixtures, lightingFor, monitorSources } from '../lighting.js';
 import { EditTool, TILE_SIZE } from '../types.js';
 import { computeNormalModeCursor } from './officeCanvasCursor.js';
 
@@ -41,8 +43,14 @@ interface OfficeCanvasProps {
   zoom: number;
   onZoomChange: (zoom: number) => void;
   panRef: React.MutableRefObject<{ x: number; y: number }>;
-  /** Whether the area overlay + labels should render (settings toggle OR active edit). */
+  /** Whether the room signs render (settings toggle OR active edit). */
   showAreas: boolean;
+  /** The Areas tool is active: the only time the color wash is drawn. */
+  isEditingAreas: boolean;
+  /** Fit-to-activity controller; manual zoom and pan switch it off. */
+  autoFit: AutoFit;
+  /** Zoom change made by auto-fit itself (not a manual one, which would switch it off). */
+  onAutoZoom: (zoom: number) => void;
   /** Currently-selected area label in the editor (alpha-bumped overlay). null otherwise. */
   activeAreaLabel: string | null;
 }
@@ -63,6 +71,9 @@ export function OfficeCanvas({
   onZoomChange,
   panRef,
   showAreas,
+  isEditingAreas,
+  autoFit,
+  onAutoZoom,
   activeAreaLabel,
 }: OfficeCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -78,6 +89,8 @@ export function OfficeCanvas({
   const isEraseDraggingRef = useRef(false);
   // Zoom scroll accumulator for trackpad pinch sensitivity
   const zoomAccumulatorRef = useRef(0);
+  // Auto-fit pan computed for a zoom the canvas has not reached yet; applied once it does.
+  const pendingFitRef = useRef<{ pan: { x: number; y: number }; panZoom: number } | null>(null);
 
   // Clamp pan so the map edge can't go past a margin inside the viewport
   const clampPan = useCallback(
@@ -233,6 +246,33 @@ export function OfficeCanvas({
           }
         }
 
+        // Fit to activity: frame the occupied seats; any manual camera move switched it off.
+        {
+          const layoutForFit = officeState.getLayout();
+          const dprFit = window.devicePixelRatio || 1;
+          const pending = pendingFitRef.current;
+          if (pending && pending.panZoom === zoom) {
+            panRef.current = pending.pan;
+            pendingFitRef.current = null;
+          }
+          const cmd = autoFit.step({
+            occupied: occupiedTileBox([...officeState.seats.values()].filter((s) => s.assigned)),
+            map: { cols: layoutForFit.cols, rows: layoutForFit.rows },
+            canvas: { width: w / dprFit, height: h / dprFit },
+            dpr: dprFit,
+            zoom,
+            pan: panRef.current,
+            nowMs: performance.now(),
+            editing: isEditMode,
+            followed: officeState.cameraFollowId !== null || !!officeState.greeterCameraTarget,
+          });
+          if (cmd.zoom !== undefined && cmd.zoom !== zoom) onAutoZoom(cmd.zoom);
+          if (cmd.pan && cmd.panZoom !== undefined) {
+            if (cmd.panZoom === zoom) panRef.current = cmd.pan;
+            else pendingFitRef.current = { pan: cmd.pan, panZoom: cmd.panZoom };
+          }
+        }
+
         // Camera: smoothly center on the followed agent, or — while the greeter
         // is speaking the Intro — on the character+bubble center the IntroBubble
         // overlay feeds via greeterCameraTarget. An explicit follow (clicking an
@@ -301,6 +341,12 @@ export function OfficeCanvas({
             companions: officeState.companions.values(),
             nowMs: performance.now(),
           },
+          isEditingAreas,
+          {
+            lighting: lightingFor(new Date().getHours(), new Date().getMinutes()),
+            sources: monitorSources(officeState.characters.values(), officeState.seats),
+            fixtures: lightFixtures(layout.furniture),
+          },
         );
         offsetRef.current = { x: offsetX, y: offsetY };
 
@@ -323,6 +369,9 @@ export function OfficeCanvas({
     zoom,
     panRef,
     showAreas,
+    isEditingAreas,
+    autoFit,
+    onAutoZoom,
     activeAreaLabel,
   ]);
 
@@ -551,6 +600,7 @@ export function OfficeCanvas({
         // Break camera follow + greeter centering on manual pan
         officeState.cameraFollowId = null;
         officeState.cancelGreeterCamera();
+        autoFit.disable();
         isPanningRef.current = true;
         panStartRef.current = {
           mouseX: e.clientX,
@@ -656,6 +706,7 @@ export function OfficeCanvas({
       hitTestDeleteButton,
       hitTestRotateButton,
       panRef,
+      autoFit,
     ],
   );
 
@@ -856,13 +907,14 @@ export function OfficeCanvas({
         const dpr = window.devicePixelRatio || 1;
         officeState.cameraFollowId = null;
         officeState.cancelGreeterCamera();
+        autoFit.disable();
         panRef.current = clampPan(
           panRef.current.x - e.deltaX * dpr,
           panRef.current.y - e.deltaY * dpr,
         );
       }
     },
-    [zoom, onZoomChange, officeState, panRef, clampPan],
+    [zoom, onZoomChange, officeState, panRef, clampPan, autoFit],
   );
 
   // Attach wheel listener with { passive: false } so preventDefault() works.
@@ -880,7 +932,11 @@ export function OfficeCanvas({
   }, []);
 
   return (
-    <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-bg">
+    <div
+      ref={containerRef}
+      className="w-full h-full relative overflow-hidden"
+      style={{ background: 'var(--page-bg)' }}
+    >
       <canvas
         ref={canvasRef}
         onMouseMove={handleMouseMove}

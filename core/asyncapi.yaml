@@ -145,6 +145,7 @@ components:
         - $ref: '#/components/schemas/SetAlwaysShowLabels'
         - $ref: '#/components/schemas/SetGhostHeadlessAgents'
         - $ref: '#/components/schemas/SetShowModelFlair'
+        - $ref: '#/components/schemas/SetCozyLighting'
         - $ref: '#/components/schemas/SetHooksEnabled'
         - $ref: '#/components/schemas/HooksConsentResponse'
         - $ref: '#/components/schemas/SetHooksInfoShown'
@@ -814,6 +815,7 @@ components:
         - alwaysShowLabels
         - ghostHeadlessAgents
         - showModelFlair
+        - cozyLighting
         - hooksEnabled
         - hooksInfoShown
         - externalAssetDirectories
@@ -834,6 +836,8 @@ components:
         ghostHeadlessAgents:
           type: boolean
         showModelFlair:
+          type: boolean
+        cozyLighting:
           type: boolean
         hooksEnabled:
           type: boolean
@@ -1105,6 +1109,19 @@ components:
       properties:
         type:
           const: setShowModelFlair
+        enabled:
+          type: boolean
+
+    SetCozyLighting:
+      description: >-
+        Toggle the warm lighting pass: time-of-day tint over the map and the
+        glows around lit monitors and lamps.
+      type: object
+      additionalProperties: false
+      required: [type, enabled]
+      properties:
+        type:
+          const: setCozyLighting
         enabled:
           type: boolean
 
