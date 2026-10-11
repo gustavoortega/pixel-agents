@@ -12,7 +12,6 @@ import { test } from 'vitest';
 import {
   AutoFit,
   type AutoFitInput,
-  clampOffset,
   clampPan,
   fitTarget,
   fitView,
@@ -22,7 +21,6 @@ import {
   roomsOf,
   stepZoom,
   type TileBox,
-  zoomAbout,
 } from '../src/office/camera.js';
 
 const box = (col0: number, row0: number, col1: number, row1: number): TileBox => ({
@@ -34,13 +32,6 @@ const box = (col0: number, row0: number, col1: number, row1: number): TileBox =>
 
 // ── C1: pan and zoom rules (K1) ────────────────────────────────
 
-test('clampOffset: a map smaller than the view is centred, a bigger one never shows void', () => {
-  assert.equal(clampOffset(1000, 600, 123), 200, 'small map ignores the offset and centres');
-  assert.equal(clampOffset(1000, 1500, 50), 0, 'left edge cannot move right of the view edge');
-  assert.equal(clampOffset(1000, 1500, -900), -500, 'right edge cannot move left of the view edge');
-  assert.equal(clampOffset(1000, 1500, -200), -200, 'a legal offset is untouched');
-});
-
 test('clampPan: each axis follows its own rule', () => {
   const view = { width: 1000, height: 600 };
   // 10x5 tiles at zoom 2 = 320x160: small on both axes, so any pan lands centred.
@@ -49,10 +40,12 @@ test('clampPan: each axis follows its own rule', () => {
   assert.deepEqual(clampPan({ x: 9999, y: 40 }, view, { cols: 40, rows: 5 }, 2), { x: 140, y: 0 });
 });
 
-test('zoomAbout: the world point under the anchor stays under it', () => {
-  // world point under (500,300) at offset (-100,-50) and zoom 2 is (300,175); at zoom 4 it must
-  // still be under (500,300), so the offset is anchor - world * 4.
-  assert.deepEqual(zoomAbout({ x: 500, y: 300 }, { x: -100, y: -50 }, 2, 4), { x: -700, y: -400 });
+test('clampPan: a big map clamps both edges and leaves a legal pan alone', () => {
+  const view = { width: 1000, height: 600 };
+  const map = { cols: 40, rows: 20 }; // 1280x640 at zoom 2: pan limits are +-140 across, +-20 down
+  assert.deepEqual(clampPan({ x: -9999, y: -9999 }, view, map, 2), { x: -140, y: -20 });
+  assert.deepEqual(clampPan({ x: 9999, y: 9999 }, view, map, 2), { x: 140, y: 20 });
+  assert.deepEqual(clampPan({ x: 50, y: -10 }, view, map, 2), { x: 50, y: -10 });
 });
 
 test('panAfterZoom: zooming from the viewport centre keeps the centred world point, then clamps', () => {
@@ -62,6 +55,17 @@ test('panAfterZoom: zooming from the viewport centre keeps the centred world poi
   assert.deepEqual(panAfterZoom(centre, { x: 0, y: 0 }, 2, 3, view, map), { x: 0, y: 0 });
   // Panned 100px: the point under the centre is at world x 270; at zoom 3 the pan becomes 150.
   assert.deepEqual(panAfterZoom(centre, { x: 100, y: 0 }, 2, 3, view, map), { x: 150, y: 0 });
+});
+
+test('panAfterZoom: the world point under an off-centre wheel cursor stays under it', () => {
+  const view = { width: 1000, height: 600 };
+  const map = { cols: 40, rows: 20 };
+  // Cursor (800,100) at pan 0, zoom 2 (offset -140,-20) sits over world (470,60). At zoom 3 the
+  // offset must be anchor - world * 3 = (-610,-80), which is pan (-150,100) and inside the clamp.
+  assert.deepEqual(panAfterZoom({ x: 800, y: 100 }, { x: 0, y: 0 }, 2, 3, view, map), {
+    x: -150,
+    y: 100,
+  });
 });
 
 // ── C2/F3: the fit target (K2) ─────────────────────────────────

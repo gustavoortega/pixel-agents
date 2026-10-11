@@ -23,7 +23,7 @@ const UNLOCKS: ReadonlyArray<{ level: number; kind: DeskPropKind }> = [
 ];
 
 /** The latest props a level has unlocked, oldest first. Older ones retire so a desk never crowds. */
-export function unlockProps(level: number): DeskPropKind[] {
+function unlockProps(level: number): DeskPropKind[] {
   return UNLOCKS.filter((u) => level >= u.level)
     .map((u) => u.kind)
     .slice(-DESK_PROP_SLOTS_MAX);

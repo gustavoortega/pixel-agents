@@ -6,40 +6,9 @@ import { describe, expect, it } from 'vitest';
 import { SHAFT_EVENING, SHAFT_MORNING } from '../src/constants.js';
 import { buildDynamicCatalog } from '../src/office/layout/furnitureCatalog.js';
 import { monitorLook, monitorOverlayPlan } from '../src/office/monitor.js';
-import { shaftFor, shaftRects } from '../src/office/shafts.js';
+import { shaftRects } from '../src/office/shafts.js';
 import type { OfficeLayout } from '../src/office/types.js';
 import { TILE_SIZE, TileType } from '../src/office/types.js';
-
-describe('shaftFor', () => {
-  it('is off from 20:00 to 06:59 and on from 07:00 to 19:59', () => {
-    for (const [h, m] of [
-      [20, 0],
-      [23, 59],
-      [0, 0],
-      [6, 59],
-    ]) {
-      expect(shaftFor(h, m), `${h}:${m}`).toBeNull();
-    }
-    expect(shaftFor(7, 0)).not.toBeNull();
-    expect(shaftFor(19, 59)).not.toBeNull();
-  });
-
-  it('peaks at 0.16 at 09:00, ends warm at 18:00 and slides between', () => {
-    expect(shaftFor(9, 0)).toEqual({ r: 255, g: 236, b: 190, alpha: 0.16 });
-    expect(shaftFor(18, 0)).toEqual({ r: 255, g: 170, b: 110, alpha: SHAFT_EVENING.alpha });
-    const mid = shaftFor(13, 30)!;
-    expect(mid.g).toBe(203);
-    expect(mid.b).toBe(150);
-    expect(mid.alpha).toBeCloseTo((SHAFT_MORNING.alpha + SHAFT_EVENING.alpha) / 2, 10);
-    // No minute of the day is brighter than the 09:00 peak, and the 07:00 morning holds it.
-    let max = 0;
-    for (let t = 0; t < 24 * 60; t++) {
-      max = Math.max(max, shaftFor(Math.floor(t / 60), t % 60)?.alpha ?? 0);
-    }
-    expect(max).toBe(0.16);
-    expect(shaftFor(7, 0)!.alpha).toBe(0.16);
-  });
-});
 
 describe('shaftRects', () => {
   const sprite = (w: number, h: number) => Array.from({ length: h }, () => new Array(w).fill(''));
@@ -105,11 +74,25 @@ describe('shaftRects', () => {
     expect(shaftRects(layout, 20)).toEqual([]);
     expect(shaftRects(layout, 6, 59)).toEqual([]);
     expect(shaftRects(layout, 7)).toHaveLength(1);
+    expect(shaftRects(layout, 19, 59)).toHaveLength(1);
   });
 
-  it('carries the color of the hour', () => {
-    expect(shaftRects(office(), 9)[0].color.alpha).toBe(0.16);
-    expect(shaftRects(office(), 18)[0].color.alpha).toBe(SHAFT_EVENING.alpha);
+  it('carries the color of the hour: 0.16 peak at 09:00, warm at 18:00, sliding between', () => {
+    const colorAt = (h: number, m = 0) => shaftRects(office(), h, m)[0].color;
+    expect(colorAt(9)).toEqual({ r: 255, g: 236, b: 190, alpha: 0.16 });
+    expect(colorAt(18)).toEqual({ r: 255, g: 170, b: 110, alpha: SHAFT_EVENING.alpha });
+    const mid = colorAt(13, 30);
+    expect(mid.g).toBe(203);
+    expect(mid.b).toBe(150);
+    expect(mid.alpha).toBeCloseTo((SHAFT_MORNING.alpha + SHAFT_EVENING.alpha) / 2, 10);
+    // The 07:00 morning holds the 09:00 peak, and no minute of the day is brighter.
+    expect(colorAt(7).alpha).toBe(0.16);
+    const layout = office();
+    let max = 0;
+    for (let t = 0; t < 24 * 60; t++) {
+      max = Math.max(max, shaftRects(layout, Math.floor(t / 60), t % 60)[0]?.color.alpha ?? 0);
+    }
+    expect(max).toBe(0.16);
   });
 });
 

@@ -4,6 +4,9 @@ import { spriteWorldHeight, spriteWorldWidth } from '../../../../core/src/assets
 import { Button } from '../../components/ui/Button.js';
 import {
   BUBBLE_VERTICAL_OFFSET_PX,
+  CHARACTER_HEAD_HEIGHT_PX,
+  CHARACTER_HEAD_WIDTH_PX,
+  CHARACTER_SPRITE_HEIGHT_PX,
   COMPACT_LABEL_FEET_GAP_PX,
   CONTEXT_CRITICAL_THRESHOLD,
   CONTEXT_DANGER_THRESHOLD,
@@ -525,6 +528,7 @@ export function ToolOverlay({
   // wall wins over the nicest spot, and as a group so the order survives the clamp.
   const clamps = new Map<number, { dx: number; dy: number }>();
   officeState.bubbleLift.clear();
+  const zoomPx = 1 / project.toWorldLength(1);
   const bubbleBox = {
     w: spriteWorldWidth(BUBBLE_WAITING_SPRITE) * (1 / project.toWorldLength(1)),
     h: spriteWorldHeight(BUBBLE_WAITING_SPRITE) * (1 / project.toWorldLength(1)),
@@ -552,6 +556,13 @@ export function ToolOverlay({
         bubble: hasCanvasItem ? bubbleBox : null,
         dy: pdy,
         floor,
+        head: {
+          x: it.x - (CHARACTER_HEAD_WIDTH_PX * zoomPx) / 2,
+          y: it.y + it.h,
+          w: CHARACTER_HEAD_WIDTH_PX * zoomPx,
+          h: CHARACTER_HEAD_HEIGHT_PX * zoomPx,
+        },
+        feetY: it.y + it.h + CHARACTER_SPRITE_HEIGHT_PX * zoomPx,
       });
       clamps.set(it.id, { dx: stack.shift.dx, dy: stack.shift.dy - pdy });
       if (stack.bubble) {
@@ -560,7 +571,8 @@ export function ToolOverlay({
           stack.bubble.y + stack.bubble.h - project.toScreenY(0),
         );
         const defaultBottom = ch.y + seatedBubbleOffsetPx(ch) - BUBBLE_VERTICAL_OFFSET_PX - 1;
-        officeState.bubbleLift.set(it.id, Math.max(0, defaultBottom - bottomWorld));
+        // Negative when the stack flipped below the feet: the bubble is drawn lower, not lifted.
+        officeState.bubbleLift.set(it.id, defaultBottom - bottomWorld);
       }
       continue;
     }

@@ -28,7 +28,7 @@ export interface ShaftColor {
 
 /** Sun color for a local time, or null while the shaft is off (20:00-06:59). The morning color
  *  holds until 09:00, then it slides to the evening color at 18:00 and holds. */
-export function shaftFor(hour: number, minute: number): ShaftColor | null {
+function shaftFor(hour: number, minute: number): ShaftColor | null {
   const t = hour * 60 + minute;
   if (t >= LIGHT_NIGHT_START_MIN || t < LIGHT_DAY_START_MIN) return null;
   const { minute: t0, ...a } = SHAFT_MORNING;

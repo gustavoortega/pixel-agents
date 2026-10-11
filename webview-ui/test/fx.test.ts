@@ -4,23 +4,14 @@
 import { describe, expect, it } from 'vitest';
 
 import { FX_LEVEL_UP_MS, FX_STORM_MS } from '../src/constants.js';
-import { FxEngine, fxForRosterEvent,FxKind } from '../src/office/fx/fxEngine.js';
+import { FxEngine } from '../src/office/fx/fxEngine.js';
 import { MoodWeather } from '../src/office/fx/moodWeather.js';
 
-describe('fxForRosterEvent', () => {
-  it.each([
-    [{ kind: 'xp', amount: 10 }, []],
-    [{ kind: 'xp', amount: 99 }, []],
-    [{ kind: 'xp', amount: 100 }, [FxKind.SPARKLE, FxKind.XP_TEXT]],
-    [{ kind: 'levelUp' }, [FxKind.PILLAR, FxKind.CONFETTI, FxKind.BANNER]],
-  ] as const)('%j', (event, kinds) => {
-    expect(fxForRosterEvent({ ...event })).toEqual(kinds);
-  });
-
-  it('a level-up never also asks for the pop', () => {
-    const kinds = fxForRosterEvent({ kind: 'levelUp', amount: 500 });
-    expect(kinds).not.toContain(FxKind.SPARKLE);
-    expect(kinds).not.toContain(FxKind.XP_TEXT);
+describe('FxEngine level-up', () => {
+  it('a level-up with a big amount plays the level-up only, never also a pop', () => {
+    const fx = new FxEngine();
+    fx.onRosterEvent(1, { kind: 'levelUp', amount: 500, level: 2 }, 0);
+    expect(fx.active.map((a) => a.kind)).toEqual(['levelUp']);
   });
 });
 

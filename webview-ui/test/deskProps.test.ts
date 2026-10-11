@@ -9,11 +9,12 @@ import {
   deskSlots,
   pcForSeat,
   propPlacements,
-  unlockProps,
 } from '../src/office/flair/deskProps.js';
 import { Direction } from '../src/office/types.js';
 
-describe('unlockProps', () => {
+describe('desk prop unlocks', () => {
+  // Enough slots that none is dropped, so the placements are exactly what the level unlocks.
+  const ampleSlots = [0, 1, 2, 3].map((col) => ({ col, row: 3 }));
   it.each([
     [0, []],
     [4, []],
@@ -24,7 +25,7 @@ describe('unlockProps', () => {
     [20, ['photo', 'trophy']],
     [99, ['photo', 'trophy']],
   ])('level %i', (level, kinds) => {
-    expect(unlockProps(level)).toEqual(kinds);
+    expect(propPlacements(level, ampleSlots).map((p) => p.kind)).toEqual(kinds);
   });
 });
 
