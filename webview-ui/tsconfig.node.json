@@ -10,6 +10,7 @@
     },
     "types": ["node"],
     "skipLibCheck": true,
+    "jsx": "react-jsx",
 
     /* Bundler mode */
     "moduleResolution": "bundler",

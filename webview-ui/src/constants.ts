@@ -2,6 +2,8 @@ import type { ColorValue } from './components/ui/types.js';
 
 // ── Grid & Layout ────────────────────────────────────────────
 export const TILE_SIZE = 16;
+/** Height, in tiles, of the wall art above a room's top floor row. */
+export const WALL_FACE_TILES = 2;
 export const DEFAULT_COLS = 20;
 export const DEFAULT_ROWS = 11;
 export const MAX_COLS = 64;
@@ -566,6 +568,8 @@ export const WINDOW_FOOTPRINT_H_TILES = 2;
 export const LAMP_HEAD_OFFSET_PX = 6;
 /** HUD clock refresh, ms. */
 export const HUD_CLOCK_REFRESH_MS = 15_000;
+/** HUD active-agent count refresh, ms (reads the characters' status, which is not React state). */
+export const HUD_ACTIVE_REFRESH_MS = 500;
 
 // ── Cozy look: camera fit ───────────────────────────────────────
 /** Margin around the framed rooms, in tiles. The rooms' own floor is the frame: plates are clamped inside it. */

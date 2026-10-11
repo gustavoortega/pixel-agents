@@ -48,6 +48,7 @@ import {
   layoutLabels,
   type Rect,
   roomFloorRect,
+  withTopWallFace,
 } from '../labelLayout.js';
 import {
   chipBoxHeight,
@@ -536,7 +537,9 @@ export function ToolOverlay({
   for (const it of labelItems) {
     const ch = officeState.characters.get(it.id);
     if (!ch) continue;
-    const world = roomFloorRect(layout.areaTiles, layout.cols, layout.rows, officeState.roomOf(ch));
+    const world = withTopWallFace(
+      roomFloorRect(layout.areaTiles, layout.cols, layout.rows, officeState.roomOf(ch)),
+    );
     const x0 = project.toScreenX(world.x);
     const y0 = project.toScreenY(world.y);
     const floor: Rect = {
@@ -563,6 +566,7 @@ export function ToolOverlay({
           h: CHARACTER_HEAD_HEIGHT_PX * zoomPx,
         },
         feetY: it.y + it.h + CHARACTER_SPRITE_HEIGHT_PX * zoomPx,
+        noFlip: ch.seatId !== null && ch.state === CharacterState.TYPE && ch.dir === Direction.DOWN,
       });
       clamps.set(it.id, { dx: stack.shift.dx, dy: stack.shift.dy - pdy });
       if (stack.bubble) {

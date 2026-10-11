@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Rect } from '../src/office/labelLayout.js';
+import { withTopWallFace } from '../src/office/labelLayout.js';
 import { stackAbove } from '../src/office/overlayStack.js';
 
 const overlaps = (a: Rect, b: Rect): boolean =>
@@ -91,5 +92,32 @@ describe('overlay stack', () => {
     expect(s.bubble!.y).toBeGreaterThanOrEqual(floor.y);
     expect(s.chip!.y).toBeGreaterThan(s.bubble!.y);
     expect(s.plate!.y).toBeGreaterThan(s.chip!.y);
+  });
+
+  describe('first floor row under the top wall', () => {
+    // The room's floor starts at y = 230; the group needs ~80 px above a head at y = 300.
+    const roomFloor: Rect = { x: 0, y: 230, w: 400, h: 200 };
+    const base = { x: 200, headTop: HEAD_TOP, plate, chip, bubble, head, feetY: FEET };
+
+    it('stays above the head, over the room wall face, instead of flipping onto the desk', () => {
+      const floor = withTopWallFace(roomFloor);
+      const s = stackAbove({ ...base, floor });
+      const boxes = [s.plate!, s.chip!, s.bubble!];
+      for (const b of boxes) {
+        expect(b.y + b.h, 'above the head').toBeLessThanOrEqual(HEAD_TOP);
+        expect(b.y, 'inside the extended rect').toBeGreaterThanOrEqual(floor.y);
+        expect(overlaps(b, head)).toBe(false);
+      }
+      expect(s.bubble!.y, 'sits over the wall face').toBeLessThan(roomFloor.y);
+    });
+
+    it('never flips below the feet for a seated agent facing down, even when it cannot fit', () => {
+      const s = stackAbove({ ...base, floor: roomFloor, noFlip: true });
+      expect(s.plate!.y).toBeLessThan(FEET);
+    });
+
+    it('does not extend sideways, down, or above the map top', () => {
+      expect(withTopWallFace({ x: 5, y: 8, w: 40, h: 30 })).toEqual({ x: 5, y: 0, w: 40, h: 38 });
+    });
   });
 });

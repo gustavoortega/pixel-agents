@@ -32,6 +32,8 @@ export interface OverlayStackInput {
    *  below the feet when the wall would otherwise push it onto the head. */
   head?: Rect;
   feetY?: number;
+  /** A seated agent facing down has its desk below: the group never flips there. */
+  noFlip?: boolean;
 }
 
 export interface OverlayStack {
@@ -73,7 +75,13 @@ export function stackAbove(input: OverlayStackInput): OverlayStack {
     const h = input.head;
     return !!h && r.x < h.x + h.w && h.x < r.x + r.w && r.y < h.y + h.h && h.y < r.y + r.h;
   };
-  if (items.length > 0 && input.floor && input.head && input.feetY !== undefined) {
+  if (
+    items.length > 0 &&
+    !input.noFlip &&
+    input.floor &&
+    input.head &&
+    input.feetY !== undefined
+  ) {
     const stillAbove = items.some((r) => overlapsHead({ ...r, x: r.x + dx, y: r.y + dy }));
     if (stillAbove) {
       const below = stackBelow(input, [plate, chip, bubble], gap, input.feetY);
