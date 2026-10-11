@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { VIGNETTE_CLEAR_RADIUS_PCT, VIGNETTE_COLOR } from '../constants.js';
+import { VIGNETTE_BACKGROUND } from '../constants.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import { lightingFor } from '../office/lighting.js';
 import { mapRectCss, overlayProjection } from '../office/projection.js';
@@ -49,7 +49,7 @@ export function LightingTint({ officeState, containerRef, zoom, panRef }: Lighti
         className="absolute pointer-events-none"
         style={{
           ...rect,
-          background: `radial-gradient(ellipse at center, transparent ${VIGNETTE_CLEAR_RADIUS_PCT}%, ${VIGNETTE_COLOR} 100%)`,
+          background: VIGNETTE_BACKGROUND,
           zIndex: 5,
         }}
         data-testid="map-vignette"

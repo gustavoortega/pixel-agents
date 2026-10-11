@@ -99,6 +99,26 @@ describe('cozy art pack', () => {
     expect(looks.size, 'every sheet has its own palette').toBe(12);
   });
 
+  it('bakes the baseboard color into exactly the three rows above the wall outline', () => {
+    const png = PNG.sync.read(
+      fs.readFileSync(path.join(runA, 'webview-ui/public/assets/walls/wall_0.png')),
+    );
+    const BASEBOARD = [0x6b, 0x41, 0x28];
+    const rowsWithColor = new Set<number>();
+    for (let y = 0; y < png.height; y++) {
+      for (let x = 0; x < png.width; x++) {
+        const i = (y * png.width + x) * 4;
+        if (BASEBOARD.every((v, k) => png.data[i + k] === v)) rowsWithColor.add(y % 32);
+      }
+    }
+    expect([...rowsWithColor].sort((a, b) => a - b)).toEqual([28, 29, 30]);
+    // The isolated-wall piece (mask 0, top-left cell) has a plain face: its inner pixels carry it.
+    for (const y of [28, 29, 30]) {
+      const i = (y * png.width + 8) * 4;
+      expect(Array.from(png.data.slice(i, i + 3)), `row ${y}`).toEqual(BASEBOARD);
+    }
+  });
+
   it('draws carpet_0 as a plain rug: two gray levels and no loose accent dots', () => {
     const png = PNG.sync.read(
       fs.readFileSync(path.join(runA, 'webview-ui/public/assets/carpets/carpet_0.png')),

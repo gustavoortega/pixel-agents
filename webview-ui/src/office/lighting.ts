@@ -11,22 +11,17 @@ import {
   GLOW_DOWN_OFFSET_TILES,
   GLOW_LAMP_RADIUS_TILES,
   GLOW_MONITOR_RADIUS_TILES,
-  GLOW_SHAFT_LENGTH_TILES,
-  GLOW_SHAFT_WIDTH_TILES,
   LAMP_HEAD_OFFSET_PX,
   LIGHT_DAWN_START_MIN,
   LIGHT_DAY_START_MIN,
   LIGHT_FIXTURE_LAMP,
-  LIGHT_FIXTURE_WINDOW,
   LIGHT_GOLDEN_START_MIN,
   LIGHT_NIGHT_START_MIN,
   LIGHT_PHASES,
   TILE_SIZE,
-  WINDOW_FOOTPRINT_H_TILES,
-  WINDOW_FOOTPRINT_W_TILES,
 } from '../constants.js';
 import type { Direction } from './types.js';
-import { CharacterState, Direction as Dir } from './types.js';
+import { Direction as Dir } from './types.js';
 
 export type LightPhase = keyof typeof LIGHT_PHASES;
 
@@ -36,7 +31,6 @@ export interface Lighting {
   tint: { color: string; alpha: number } | null;
   monitorGlow: number;
   lampGlow: number;
-  windowShaft: number;
 }
 
 /** Phase for a local time. Boundaries are inclusive at the start: 07:00 is day, 16:00 golden. */
@@ -53,7 +47,6 @@ export function lightingFor(hour: number, minute: number): Lighting {
     tint: p.tint ? { ...p.tint } : null,
     monitorGlow: p.monitorGlow,
     lampGlow: p.lampGlow,
-    windowShaft: p.windowShaft,
   };
 }
 
@@ -68,7 +61,7 @@ export function clockLabel(hour: number, minute: number): string {
 
 // ── Glow placement ──────────────────────────────────────────────
 
-export type GlowKind = 'monitor' | 'lamp' | 'shaft';
+export type GlowKind = 'monitor' | 'lamp';
 
 /** A seated agent's monitor: the seat tile, the way it faces, and whether it is working. */
 export interface GlowSource {
@@ -85,7 +78,6 @@ export interface FixturePoint {
 
 export interface GlowFixtures {
   lamps: readonly FixturePoint[];
-  windows: readonly FixturePoint[];
 }
 
 /** One glow to paint: the destination rect in device px, already clipped to the map, and the
@@ -111,7 +103,6 @@ const FACING_STEP: Record<Direction, { dc: number; dr: number }> = {
 /** Size of the cached sprite for a glow kind, in device px. */
 export function glowSize(kind: GlowKind, zoom: number): { w: number; h: number } {
   const s = TILE_SIZE * zoom;
-  if (kind === 'shaft') return { w: GLOW_SHAFT_WIDTH_TILES * s, h: GLOW_SHAFT_LENGTH_TILES * s };
   const radius = (kind === 'lamp' ? GLOW_LAMP_RADIUS_TILES : GLOW_MONITOR_RADIUS_TILES) * s;
   return { w: 2 * radius, h: 2 * radius };
 }
@@ -191,15 +182,6 @@ export function glowDraws(input: {
     }
   }
 
-  if (lighting.windowShaft > 0) {
-    const { w, h } = glowSize('shaft', zoom);
-    for (const win of fixtures.windows) {
-      const cx = offsetX + (win.col + WINDOW_FOOTPRINT_W_TILES / 2) * s;
-      const top = offsetY + (win.row + WINDOW_FOOTPRINT_H_TILES) * s;
-      push('shaft', { x: cx - w / 2, y: top, w, h }, map, lighting.windowShaft);
-    }
-  }
-
   return out;
 }
 
@@ -208,19 +190,17 @@ export function lightFixtures(
   furniture: ReadonlyArray<{ type: string; col: number; row: number }>,
 ): GlowFixtures {
   const lamps: FixturePoint[] = [];
-  const windows: FixturePoint[] = [];
   for (const f of furniture) {
     if (f.type === LIGHT_FIXTURE_LAMP) lamps.push({ col: f.col, row: f.row });
-    else if (f.type === LIGHT_FIXTURE_WINDOW) windows.push({ col: f.col, row: f.row });
   }
-  return { lamps, windows };
+  return { lamps };
 }
 
-/** Seated, working agents: the ones whose monitor is lit. */
+/** Seated agents whose status is active: the ones whose monitor is lit. The pose does not
+ *  matter, a working agent walking to its desk still has the screen on. */
 export function monitorSources(
   characters: Iterable<{
     seatId: string | null;
-    state: string;
     isActive: boolean;
     isSubagent: boolean;
   }>,
@@ -235,7 +215,7 @@ export function monitorSources(
       seatCol: seat.seatCol,
       seatRow: seat.seatRow,
       facing: seat.facingDir,
-      active: ch.isActive && ch.state === CharacterState.TYPE,
+      active: ch.isActive,
     });
   }
   return out;

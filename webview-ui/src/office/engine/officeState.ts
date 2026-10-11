@@ -8,7 +8,6 @@ import {
   COFFEE_COOLDOWN_SEC,
   COFFEE_MIN_STAY_SEC,
   DISMISS_BUBBLE_FAST_FADE_SEC,
-  FURNITURE_ANIM_INTERVAL_SEC,
   GREETER_ID,
   GREETER_TILE_MARGIN,
   INACTIVE_SEAT_TIMER_MIN_SEC,
@@ -43,6 +42,7 @@ import {
   layoutToTileMap,
 } from '../layout/layoutSerializer.js';
 import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
+import { monitorLook, monitorTick } from '../monitor.js';
 import { seatedDrawOffsetPx } from '../seatDraw.js';
 import { getPetCount, getPetName } from '../sprites/petSpriteData.js';
 import { getLoadedCharacterCount } from '../sprites/spriteData.js';
@@ -906,9 +906,12 @@ export class OfficeState {
     }
   }
 
-  /** Rebuild furniture instances with auto-state applied (active agents turn electronics ON) */
-  private rebuildFurnitureInstances(): void {
-    // Collect tiles where active agents face desks
+  /**
+   * Tiles whose electronics are lit: the desk tiles in front of every active agent's seat.
+   * Seam: this is the seat -> PC lookup for monitors; replace the body, not the callers, when
+   * seats learn which PC they own.
+   */
+  private monitorTilesLitByActiveAgents(): Set<string> {
     const autoOnTiles = new Set<string>();
     for (const ch of this.characters.values()) {
       if (!ch.isActive || !ch.seatId) continue;
@@ -940,13 +943,20 @@ export class OfficeState {
       }
     }
 
+    return autoOnTiles;
+  }
+
+  /** Rebuild furniture instances with auto-state applied (active agents turn electronics ON) */
+  private rebuildFurnitureInstances(): void {
+    const autoOnTiles = this.monitorTilesLitByActiveAgents();
+
     if (autoOnTiles.size === 0) {
       this.furniture = layoutToFurnitureInstances(this.layout.furniture);
       return;
     }
 
     // Build modified furniture list with auto-state and animation applied
-    const animFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
+    const tick = monitorTick(this.furnitureAnimTimer * 1000);
     const modifiedFurniture: PlacedFurniture[] = this.layout.furniture.map((item) => {
       const entry = getCatalogEntry(item.type);
       if (!entry) return item;
@@ -959,7 +969,7 @@ export class OfficeState {
               // Check if the on-state type has animation frames
               const frames = getAnimationFrames(onType);
               if (frames && frames.length > 1) {
-                const frameIdx = animFrame % frames.length;
+                const frameIdx = monitorLook(true, tick).frame % frames.length;
                 onType = frames[frameIdx];
               }
               return { ...item, type: onType };
@@ -1227,9 +1237,9 @@ export class OfficeState {
 
   update(dt: number): void {
     // Furniture animation cycling
-    const prevFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
+    const prevFrame = monitorTick(this.furnitureAnimTimer * 1000);
     this.furnitureAnimTimer += dt;
-    const newFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
+    const newFrame = monitorTick(this.furnitureAnimTimer * 1000);
     if (newFrame !== prevFrame) {
       this.rebuildFurnitureInstances();
     }

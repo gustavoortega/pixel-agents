@@ -98,6 +98,8 @@ export interface FurnitureInstance {
   y: number;
   /** Y value used for depth sorting (typically bottom edge) */
   zY: number;
+  /** Furniture id, so the renderer can tell a lit PC from a dark one */
+  type?: string;
   /** Render-time horizontal flip flag (for mirrored side variants) */
   mirrored?: boolean;
 }
