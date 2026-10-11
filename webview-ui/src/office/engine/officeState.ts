@@ -245,8 +245,13 @@ export class OfficeState {
     // Seat ids and tiles may all be new: a coffee trip's sofa seat means nothing now.
     for (const ch of this.characters.values()) ch.trip = null;
 
-    // First pass: try to keep characters at their existing seats
+    // First pass: try to keep characters at their existing seats. Helpers sit out: a top-level
+    // agent outranks them for every seat, so they are placed last, around their parents.
     for (const ch of this.characters.values()) {
+      if (ch.isSubagent) {
+        ch.seatId = null;
+        continue;
+      }
       if (ch.seatId && this.seats.has(ch.seatId)) {
         const seat = this.seats.get(ch.seatId)!;
         if (!seat.assigned) {
@@ -267,7 +272,7 @@ export class OfficeState {
 
     // Second pass: assign remaining characters to free seats
     for (const ch of this.characters.values()) {
-      if (ch.seatId) continue;
+      if (ch.seatId || ch.isSubagent) continue;
       const seatId = this.findFreeSeat(ch.folderName);
       if (seatId) {
         this.seats.get(seatId)!.assigned = true;
@@ -279,6 +284,10 @@ export class OfficeState {
         ch.y = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
         ch.dir = seat.facingDir;
       }
+    }
+
+    for (const ch of this.characters.values()) {
+      if (ch.isSubagent) this.placeHelper(ch);
     }
 
     // Relocate any characters that ended up outside bounds or on non-walkable tiles
@@ -450,9 +459,61 @@ export class OfficeState {
         otherSeats.push(uid);
       }
     }
-    if (pcSeats.length > 0) return pcSeats[Math.floor(Math.random() * pcSeats.length)];
-    if (otherSeats.length > 0) return otherSeats[Math.floor(Math.random() * otherSeats.length)];
-    return null;
+    const pool = pcSeats.length > 0 ? pcSeats : otherSeats;
+    if (pool.length === 0) return null;
+    // Face-on seats first (the agent reads at its desk), then seats no helper holds, so a
+    // helper is only asked to yield when that is what the better seat costs.
+    const faceOn = pool.filter((uid) => this.seats.get(uid)!.facingDir === Direction.DOWN);
+    const byFace = faceOn.length > 0 ? faceOn : pool;
+    const helperHeld = this.helperHeldSeats();
+    const unheld = byFace.filter((uid) => !helperHeld.has(uid));
+    const pick = unheld.length > 0 ? unheld : byFace;
+    return pick[Math.floor(Math.random() * pick.length)];
+  }
+
+  /** Seats currently held by a helper (sub-agent): a top-level agent may take them over. */
+  private helperHeldSeats(): Set<string> {
+    const held = new Set<string>();
+    for (const ch of this.characters.values()) {
+      if (ch.isSubagent && ch.seatId && ch.matrixEffect !== 'despawn') held.add(ch.seatId);
+    }
+    return held;
+  }
+
+  /** The helper sitting at a seat, newest spawn first (ids count down), or undefined. */
+  private helperAt(seatId: string): Character | undefined {
+    let found: Character | undefined;
+    for (const ch of this.characters.values()) {
+      if (!ch.isSubagent || ch.seatId !== seatId || ch.matrixEffect === 'despawn') continue;
+      if (!found || ch.id < found.id) found = ch;
+    }
+    return found;
+  }
+
+  /**
+   * Give a helper a seat near its parent, or stand it clear of the parent: used when a top-level
+   * agent took its seat or the layout changed under it. Releases whatever seat it held.
+   */
+  private placeHelper(helper: Character): void {
+    if (helper.seatId) {
+      const held = this.seats.get(helper.seatId);
+      if (held && this.helperAt(helper.seatId) === helper) held.assigned = false;
+      helper.seatId = null;
+    }
+    const parent =
+      helper.parentAgentId !== null ? this.characters.get(helper.parentAgentId) : undefined;
+    const { seatId, tile } = this.helperPlacement(parent);
+    const seat = seatId ? this.seats.get(seatId)! : null;
+    if (seat) seat.assigned = true;
+    helper.seatId = seatId;
+    helper.tileCol = tile.col;
+    helper.tileRow = tile.row;
+    helper.x = tile.col * TILE_SIZE + TILE_SIZE / 2;
+    helper.y = tile.row * TILE_SIZE + TILE_SIZE / 2;
+    helper.path = [];
+    helper.moveProgress = 0;
+    helper.state = helper.isActive && seatId ? CharacterState.TYPE : CharacterState.IDLE;
+    helper.dir = seat ? seat.facingDir : (parent?.dir ?? helper.dir);
   }
 
   /**
@@ -472,8 +533,9 @@ export class OfficeState {
   private findFreeSeat(folderName?: string): string | null {
     const freeSeats: string[] = [];
     const freeCouchSeats: string[] = [];
+    const helperHeld = this.helperHeldSeats();
     for (const [uid, seat] of this.seats) {
-      if (seat.assigned) continue;
+      if (seat.assigned && !helperHeld.has(uid)) continue;
       (seat.couch ? freeCouchSeats : freeSeats).push(uid);
     }
     // Couch cushions are for coffee: an agent only gets one when every desk seat is taken.
@@ -578,7 +640,8 @@ export class OfficeState {
       const zone = this.seatZone(preferredSeatId);
       const inMappedArea =
         !wanted || wanted.length === 0 || (zone !== null && wanted.includes(zone));
-      if (!seat.assigned && inMappedArea) {
+      // A helper holding it does not count: the agent's own seat outranks a helper's.
+      if ((!seat.assigned || this.helperAt(preferredSeatId)) && inMappedArea) {
         seatId = preferredSeatId;
       }
     }
@@ -588,6 +651,10 @@ export class OfficeState {
     if (!seatId) {
       seatId = this.findFreeSeat(folderName);
     }
+
+    // Whoever sits there is a helper (every other holder was ruled out above): it yields.
+    const yielding = seatId ? this.helperAt(seatId) : undefined;
+    if (yielding) yielding.seatId = null;
 
     let ch: Character;
     if (seatId) {
@@ -617,6 +684,7 @@ export class OfficeState {
       startMatrixEffect(ch, 'spawn');
     }
     this.characters.set(id, ch);
+    if (yielding) this.placeHelper(yielding);
   }
 
   // ── Greeter ───────────────────────────────────────────────────
@@ -844,7 +912,9 @@ export class OfficeState {
 
     let bestSeat: string | null = null;
     let bestD = Infinity;
-    for (const [uid, seat] of this.seats) {
+    // Without its parent (a reload where the parent is still buffered) a helper has no room to
+    // sit in, and a seat taken now could be the one the parent restores to.
+    for (const [uid, seat] of parentCh ? this.seats : []) {
       if (seat.assigned || seat.couch) continue;
       if (this.roomOfTile(seat.seatCol, seat.seatRow) !== homeRoom) continue;
       const d = dist(seat.seatCol, seat.seatRow);

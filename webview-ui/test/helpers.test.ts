@@ -126,3 +126,62 @@ describe('a saved seat outside the folder mapped rooms', () => {
     expect(os.characters.get(1)!.seatId).toBe('b-seat');
   });
 });
+
+describe('a top-level agent outranks a helper for a seat', () => {
+  const back = (uid: string, col: number, row: number): PlacedFurniture => ({
+    uid,
+    type: 'CUSHIONED_CHAIR_BACK',
+    col,
+    row,
+  });
+
+  it('reload order: a helper recreated before its parent is restored leaves the parent saved seat free', () => {
+    // The helper's lazy creation (subagentToolStart) can land while the parent is still buffered.
+    const os = office([chair('face-on', 3, 3), back('back-view', 4, 3)]);
+    const sub = os.characters.get(os.addSubagent(1, 'tool-1'))!;
+    os.addAgent(1, 0, 0, 'back-view', true);
+    expect(os.characters.get(1)!.seatId).toBe('back-view');
+    expect(sub.seatId).toBeNull();
+    expect(os.seats.get('face-on')!.assigned).toBe(false);
+  });
+
+  it('takes its saved seat back from a helper that sits in it; the helper moves to the other seat', () => {
+    const os = office([chair('p', 5, 3), chair('face-on', 3, 3), back('back-view', 4, 3)]);
+    os.addAgent(1, 0, 0, 'p', true);
+    const sub = os.characters.get(os.addSubagent(1, 'tool-1'))!;
+    expect(sub.seatId).toBe('back-view'); // nearest to the parent
+    os.addAgent(2, 0, 0, 'back-view', true);
+    expect(os.characters.get(2)!.seatId).toBe('back-view');
+    expect(sub.seatId).toBe('face-on');
+    expect([sub.tileCol, sub.tileRow]).toEqual([3, 3]);
+  });
+
+  it('with no saved seat, takes the face-on seat a helper holds; the helper stands when none is left', () => {
+    const os = office([chair('p', 5, 3), chair('face-on', 4, 3), back('back-view', 3, 3)]);
+    os.addAgent(1, 0, 0, 'p', true);
+    const sub = os.characters.get(os.addSubagent(1, 'tool-1'))!;
+    expect(sub.seatId).toBe('face-on');
+    os.addAgent(2, 0, 0, undefined, true);
+    expect(os.characters.get(2)!.seatId).toBe('face-on');
+    expect(sub.seatId).toBe('back-view');
+    // A third agent takes the last seat: the helper has nowhere left to sit and stands.
+    os.addAgent(3, 0, 0, undefined, true);
+    expect(os.characters.get(3)!.seatId).toBe('back-view');
+    expect(sub.seatId).toBeNull();
+    expect(os.seats.get('back-view')!.assigned).toBe(true);
+  });
+
+  it('a layout change with fewer seats than characters seats the agents and stands the helper', () => {
+    const os = office([chair('p', 5, 3), chair('face-on', 3, 3)]);
+    os.addAgent(1, 0, 0, 'p', true);
+    const sub = os.characters.get(os.addSubagent(1, 'tool-1'))!;
+    os.addAgent(2, 0, 0, 'face-on', true);
+    os.rebuildFromLayout({
+      ...os.getLayout(),
+      furniture: [chair('x', 5, 3), chair('y', 3, 3)],
+    });
+    expect(os.characters.get(1)!.seatId).not.toBeNull();
+    expect(os.characters.get(2)!.seatId).not.toBeNull();
+    expect(sub.seatId).toBeNull();
+  });
+});
