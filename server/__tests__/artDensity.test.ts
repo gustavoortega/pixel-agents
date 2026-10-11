@@ -54,9 +54,17 @@ describe('character sheets', () => {
     const twin = png(224, 256, (x, y) => noisy(Math.floor(x / 2), Math.floor(y / 2)));
     const fromLegacy = decodeCharacterPng(legacy);
     expect(fromLegacy).toEqual(decodeCharacterPng(twin));
-    expect(fromLegacy.down).toHaveLength(11);
+    // 7 down frames + the 6-pose idle row (every cell of the fixture is drawn)
+    expect(fromLegacy.down).toHaveLength(13);
     expect(fromLegacy.down[0]).toHaveLength(64);
     expect(fromLegacy.down[0][0]).toHaveLength(32);
+  });
+
+  it('ends the idle row at the last drawn pose, so a 4-pose sheet keeps the runtime fallbacks', () => {
+    // Idle row (y 96..127) drawn only in its first four 16 px cells, as sheets were before the
+    // nap-breathing and sip poses.
+    const fourPoses = png(112, 128, (x, y) => (y >= 96 && x >= 64 ? [0, 0, 0, 0] : noisy(x, y)));
+    expect(decodeCharacterPng(fourPoses).down).toHaveLength(7 + 4);
   });
 });
 

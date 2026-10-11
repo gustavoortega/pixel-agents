@@ -138,9 +138,16 @@ export function decodeCharacterSheet(img: RgbaImage): CharacterDirectionSprites 
       out[dir].push(slice(art, f * fw, d * fh, fw, fh, hex));
   });
   if (art.height >= (CHAR_IDLE_ROW + 1) * fh) {
+    const idle: string[][][] = [];
     for (let f = 0; f < CHAR_IDLE_FRAMES; f++) {
-      out.down.push(slice(art, f * fw, CHAR_IDLE_ROW * fh, fw, fh, hex));
+      idle.push(slice(art, f * fw, CHAR_IDLE_ROW * fh, fw, fh, hex));
     }
+    // A sheet drawn with fewer idle poses leaves the last cells clear: drop them, so the runtime's
+    // fallback for a missing pose applies instead of drawing nothing.
+    while (idle.length > 0 && idle[idle.length - 1].every((row) => row.every((px) => px === ''))) {
+      idle.pop();
+    }
+    out.down.push(...idle);
   }
   return out;
 }

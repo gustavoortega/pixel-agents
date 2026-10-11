@@ -1,16 +1,20 @@
 {
   "name": "sparkle",
-  "description": "Twinkle for Fable (3x3 plus).",
-  "width": 3,
-  "height": 3,
+  "description": "Twinkle for Fable (6x6 art px plus, 3x3 world px).",
+  "density": 2,
+  "width": 6,
+  "height": 6,
   "palette": {
     ".": "",
-    "W": "#fff2b0",
+    "W": "#ffffff",
     "Y": "#ffd65a"
   },
   "pixels": [
-    [".","Y","."],
-    ["Y","W","Y"],
-    [".","Y","."]
+    [".",".","Y","Y",".","."],
+    [".",".","W","Y",".","."],
+    ["Y","W","W","W","W","Y"],
+    ["Y","W","W","W","W","Y"],
+    [".",".","Y","W",".","."],
+    [".",".","Y","Y",".","."]
   ]
 }

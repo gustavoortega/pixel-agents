@@ -1592,7 +1592,7 @@ export class OfficeState {
    * (every agent's, so a prop never lands where another agent's companion would sit).
    */
   private updateDeskProps(): void {
-    const seated: Array<{ id: number; pc: Tile; across: Tile; level: number }> = [];
+    const seated: Array<{ id: number; pc: Tile; across: Tile; seat: Tile; level: number }> = [];
     for (const id of [...this.characters.keys()].sort((a, b) => a - b)) {
       const ch = this.characters.get(id)!;
       const level = this.rosters.get(id)?.level ?? 0;
@@ -1608,7 +1608,13 @@ export class OfficeState {
         : null;
       if (!pc) continue;
       const { dCol } = seatFacingOffset(seat.facingDir);
-      seated.push({ id, pc, across: dCol === 0 ? { col: 1, row: 0 } : { col: 0, row: 1 }, level });
+      seated.push({
+        id,
+        pc,
+        across: dCol === 0 ? { col: 1, row: 0 } : { col: 0, row: 1 },
+        seat: { col: seat.seatCol, row: seat.seatRow },
+        level,
+      });
     }
     const blocked = new Set<string>();
     for (const s of seated) {
@@ -1624,6 +1630,7 @@ export class OfficeState {
         deskTiles: this.deskTiles,
         electronicsTiles: this.electronicsTiles,
         blocked,
+        seat: s.seat,
       });
       for (const p of propPlacements(s.level, slots)) {
         const key = `${p.tile.col},${p.tile.row}`;
