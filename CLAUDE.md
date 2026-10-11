@@ -202,8 +202,8 @@ Adding a new CLI integration is one subdirectory under `server/src/providers/hoo
 
 `core/asyncapi.yaml` is the contract. Pinned to **3.0.0** because `@asyncapi/modelina@5.10.1` declares `supportedVersions: ['3.0.0']` only; bumping to 3.1.0 produces `export type Root = any`. Revisit when Modelina ships 3.1.0 support.
 
-- **30 ServerMessage variants** (server → client): agent lifecycle, agent activity, sub-agent activity, team + context usage + session title + tripwire (`agentTripwire`, `agentTripwireClear`), assets, settings + workspace, diagnostics.
-- **19 ClientMessage variants** (client → server): tripwire ack (`ackTripwire`), lifecycle (`webviewReady`, `launchAgent`, `focusAgent`, `closeAgent`), layout (`saveAgentSeats`, `saveLayout`, `exportLayout`, `importLayout`), settings (`setSoundEnabled`, `setHooksEnabled`, `setWatchAllSessions`, `setAlwaysShowLabels`, `setHooksInfoShown`, `setLastSeenVersion`), discovery + assets, diagnostics.
+- **31 ServerMessage variants** (server → client): agent lifecycle, agent activity, sub-agent activity, team + context usage + model look (`agentModel`) + session title + tripwire (`agentTripwire`, `agentTripwireClear`), assets, settings + workspace, diagnostics.
+- **20 ClientMessage variants** (client → server): tripwire ack (`ackTripwire`), lifecycle (`webviewReady`, `launchAgent`, `focusAgent`, `closeAgent`), layout (`saveAgentSeats`, `saveLayout`, `exportLayout`, `importLayout`), settings (`setSoundEnabled`, `setShowModelFlair`, `setHooksEnabled`, `setWatchAllSessions`, `setAlwaysShowLabels`, `setHooksInfoShown`, `setLastSeenVersion`), discovery + assets, diagnostics.
 
 Both unions use `oneOf` with `discriminator: type`. Every concrete message sets `additionalProperties: false`.
 

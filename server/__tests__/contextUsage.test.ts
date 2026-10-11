@@ -11,7 +11,11 @@ import {
   updateContextUsage,
   widenContextWindow,
 } from '../src/contextUsage.js';
-import { claudeProvider, contextWindowForModel } from '../src/providers/hook/claude/claude.js';
+import {
+  claudeProvider,
+  contextWindowForModel,
+  modelTier,
+} from '../src/providers/hook/claude/claude.js';
 import type { AgentState } from '../src/types.js';
 
 function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
@@ -117,6 +121,23 @@ describe('claudeProvider.contextWindowForModel', () => {
   });
 });
 
+describe('claudeProvider.modelTier', () => {
+  it.each([
+    ['claude-opus-5-5', 3],
+    ['claude-sonnet-5-5', 2],
+    ['claude-haiku-4-5-20251001', 1],
+    ['claude-fable-5-1', 4],
+    ['claude-opus-4-8', 3],
+  ])('ranks %s as tier %i', (model, tier) => {
+    expect(modelTier(model)).toBe(tier);
+  });
+
+  it('answers nothing for ids it cannot place, never the lowest tier', () => {
+    expect(modelTier('<synthetic>')).toBeUndefined();
+    expect(modelTier('claude-unknown-9')).toBeUndefined();
+  });
+});
+
 describe('widenContextWindow', () => {
   it('never reports a window below the default', () => {
     expect(widenContextWindow(1_000, 0)).toBe(DEFAULT_MAX_CONTEXT_TOKENS);
@@ -139,13 +160,18 @@ describe('updateContextUsage', () => {
   let agents: AgentStateStore;
   let agent: AgentState;
   let messages: Array<Record<string, unknown>>;
+  let models: Array<Record<string, unknown>>;
 
   beforeEach(() => {
     agents = new AgentStateStore();
     agent = createTestAgent();
     agents.set(1, agent);
     messages = [];
-    agents.on('broadcast', (msg) => messages.push(msg as Record<string, unknown>));
+    models = [];
+    agents.on('broadcast', (msg) => {
+      const m = msg as Record<string, unknown>;
+      (m.type === 'agentModel' ? models : messages).push(m);
+    });
   });
 
   it('broadcasts the context of the newest turn', () => {
@@ -247,16 +273,97 @@ describe('updateContextUsage', () => {
   });
 });
 
+describe('agentModel broadcast', () => {
+  let agents: AgentStateStore;
+  let agent: AgentState;
+  let models: Array<Record<string, unknown>>;
+
+  function turn(model: string, isSidechain = false): Record<string, unknown> {
+    return {
+      type: 'assistant',
+      isSidechain,
+      message: { model, usage: { cache_read_input_tokens: 1_000 } },
+    };
+  }
+
+  beforeEach(() => {
+    agents = new AgentStateStore();
+    agent = createTestAgent();
+    agents.set(1, agent);
+    models = [];
+    agents.on('broadcast', (msg) => {
+      if ((msg as { type: string }).type === 'agentModel')
+        models.push(msg as Record<string, unknown>);
+    });
+  });
+
+  it('broadcasts once per change, not once per line', () => {
+    for (const model of [
+      'claude-opus-5-5',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-sonnet-5-5',
+    ]) {
+      updateContextUsage(1, agent, agents, turn(model), claudeProvider);
+    }
+    expect(models).toEqual([
+      { type: 'agentModel', id: 1, model: 'claude-opus-5-5', tier: 3 },
+      { type: 'agentModel', id: 1, model: 'claude-sonnet-5-5', tier: 2 },
+    ]);
+  });
+
+  it('omits the tier for a model the provider cannot place', () => {
+    updateContextUsage(1, agent, agents, turn('claude-unknown-9'), claudeProvider);
+    expect(models).toEqual([{ type: 'agentModel', id: 1, model: 'claude-unknown-9' }]);
+    expect('tier' in models[0]).toBe(false);
+  });
+
+  it("does not let a lead's sidechain turn change the model", () => {
+    updateContextUsage(1, agent, agents, turn('claude-opus-5-5'), claudeProvider);
+    updateContextUsage(1, agent, agents, turn('claude-haiku-4-5-20251001', true), claudeProvider);
+    expect(agent.model).toBe('claude-opus-5-5');
+    expect(models).toHaveLength(1);
+  });
+
+  it('never reads a model from a sidechain-only transcript (a teammate)', () => {
+    updateContextUsage(1, agent, agents, turn('claude-opus-5-5', true), claudeProvider);
+    expect(agent.contextTokens).toBeGreaterThan(0);
+    expect(agent.model).toBeUndefined();
+    expect(models).toEqual([]);
+  });
+
+  it('ignores synthetic records, which report zero usage', () => {
+    updateContextUsage(1, agent, agents, turn('claude-opus-5-5'), claudeProvider);
+    updateContextUsage(
+      1,
+      agent,
+      agents,
+      {
+        type: 'assistant',
+        message: { model: '<synthetic>', usage: { input_tokens: 0, output_tokens: 0 } },
+      },
+      claudeProvider,
+    );
+    expect(agent.model).toBe('claude-opus-5-5');
+    expect(models).toHaveLength(1);
+  });
+});
+
 describe('seedContextUsage', () => {
   let tmpDir: string;
   let agents: AgentStateStore;
   let messages: Array<Record<string, unknown>>;
+  let models: Array<Record<string, unknown>>;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-agents-context-'));
     agents = new AgentStateStore();
     messages = [];
-    agents.on('broadcast', (msg) => messages.push(msg as Record<string, unknown>));
+    models = [];
+    agents.on('broadcast', (msg) => {
+      const m = msg as Record<string, unknown>;
+      (m.type === 'agentModel' ? models : messages).push(m);
+    });
   });
 
   afterEach(() => {
@@ -269,10 +376,14 @@ describe('seedContextUsage', () => {
     return file;
   }
 
-  function seedAgent(jsonlFile: string, overrides: Partial<AgentState> = {}): AgentState {
+  function seedAgent(
+    jsonlFile: string,
+    overrides: Partial<AgentState> = {},
+    provider?: typeof claudeProvider,
+  ): AgentState {
     const agent = createTestAgent({ jsonlFile, ...overrides });
     agents.set(agent.id, agent);
-    seedContextUsage(agent.id, agents);
+    seedContextUsage(agent.id, agents, provider);
     return agent;
   }
 
@@ -305,6 +416,20 @@ describe('seedContextUsage', () => {
     ]);
 
     expect(seedAgent(file).contextTokens).toBe(53_697);
+  });
+
+  it('seeds the model from the main chain, and not from a sidechain fallback', () => {
+    const main = writeTranscript('main.jsonl', [assistantRecord({ cacheRead: 1_000 })]);
+    seedAgent(main, {}, claudeProvider);
+    expect(models).toEqual([{ type: 'agentModel', id: 1, model: 'claude-opus-5', tier: 3 }]);
+
+    models.length = 0;
+    const side = writeTranscript('side.jsonl', [
+      assistantRecord({ cacheRead: 1_000, isSidechain: true }),
+    ]);
+    const teammate = seedAgent(side, { id: 2 }, claudeProvider);
+    expect(teammate.model).toBeUndefined();
+    expect(models).toEqual([]);
   });
 
   it('reads only the tail, skipping the record the read landed inside', () => {

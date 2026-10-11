@@ -355,3 +355,35 @@ export const PET_THUMB_SCALE_MARGIN = 0.85;
 export const EMPTY_SPRITE_THUMBNAIL_BG = '#333';
 /** Maximum string length for a PlacedPet.id (defends against pathologically-long layout entries). */
 export const MAX_PET_ID_LENGTH = 128;
+
+// ── Model look (rarity, equipment, companion) ───────────────────
+/** Rarity colors, the same four everywhere the look shows: label plate, outline, shimmer. */
+export const RARITY_COLORS = {
+  common: '#9d9d9d',
+  rare: '#3d8bff',
+  epic: '#a335ee',
+  legendary: '#ff8000',
+} as const;
+/** Equipment in front of the body sorts just after it, so it is never hidden by it. */
+export const ACCESSORY_FRONT_Z_OFFSET = 0.001;
+/** A cape behind the body sorts between the rarity outline (-0.001) and the body. */
+export const CAPE_BEHIND_Z_OFFSET = 0.0005;
+/** A cape facing away from the camera (up) hangs over the body instead. */
+export const CAPE_OVER_Z_OFFSET = 0.0005;
+/** Sparkle twinkle cycle: alpha swings between the floor and 1 over this period. */
+export const SPARKLE_PERIOD_MS = 1400;
+export const SPARKLE_MIN_ALPHA = 0.2;
+/** Companion hover height for flying kinds (bird, dragon), world px. */
+export const COMPANION_HOVER_PX = 6;
+/** Flying companions bob 1 px up every this many seconds. */
+export const COMPANION_BOB_INTERVAL_SEC = 0.4;
+/** Companion glide speed toward its tile, world px/s. Faster than the agent so it keeps up. */
+export const COMPANION_SPEED_PX_PER_SEC = 64;
+export const COMPANION_IDLE_FRAME_DURATION_SEC = 0.6;
+export const COMPANION_MOVE_FRAME_DURATION_SEC = 0.15;
+/** Gap between a companion's feet and the bottom of its tile, world px. */
+export const COMPANION_FEET_INSET_PX = 2;
+/** Tiles an agent has left behind that a companion remembers; it only ever uses the last one. */
+export const COMPANION_TRAIL_LENGTH = 2;
+/** Outline of the legendary label plate shimmers once per this many seconds. */
+export const RARITY_SHIMMER_SEC = 2.4;

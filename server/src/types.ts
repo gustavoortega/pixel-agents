@@ -1,5 +1,7 @@
 import type * as vscode from 'vscode';
 
+import type { ModelTier } from '../../core/src/provider.js';
+
 export interface AgentState {
   id: number;
   sessionId: string;
@@ -57,6 +59,12 @@ export interface AgentState {
   /** True once this transcript produced a main-chain turn, after which
    *  sidechain records belong to sub-agents and stop moving the gauge. */
   sawMainChainUsage?: boolean;
+
+  // -- Model look (server/src/contextUsage.ts) --
+  /** Model id of the newest main-chain turn; undefined until one is seen. */
+  model?: string;
+  /** The provider's tier for `model`; undefined when it cannot place it. */
+  modelTier?: ModelTier;
 
   // -- Session title (server/src/sessionTitle.ts) --
   /** Title the user chose for the session; the newest record wins. */

@@ -122,6 +122,25 @@ export function getBlockedTiles(
   return tiles;
 }
 
+/**
+ * Every tile a piece of furniture occupies, background rows included. Unlike
+ * `getBlockedTiles` this is not about walking: a character may walk through a
+ * shelf's background row, but a companion should not stand inside the shelf.
+ */
+export function getFurnitureTiles(furniture: PlacedFurniture[]): Set<string> {
+  const tiles = new Set<string>();
+  for (const item of furniture) {
+    const entry = getCatalogEntry(item.type);
+    if (!entry) continue;
+    for (let dr = 0; dr < entry.footprintH; dr++) {
+      for (let dc = 0; dc < entry.footprintW; dc++) {
+        tiles.add(`${item.col + dc},${item.row + dr}`);
+      }
+    }
+  }
+  return tiles;
+}
+
 /** Get tiles blocked for placement purposes — skips top backgroundTiles rows per item */
 export function getPlacementBlockedTiles(
   furniture: PlacedFurniture[],

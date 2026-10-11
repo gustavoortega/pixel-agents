@@ -13,9 +13,10 @@ import { tripwireResendMessage } from './tripwires.js';
  * 3. Background tools with runInBackground + isTeammateSpawn flags, skipping promoted spawns
  * 4. Waiting status
  * 5. Context usage
- * 6. Session title
- * 7. Tripwire alarm
- * 8. Roster member (only for agents that hold one; mood depends on the alarm, so it follows it)
+ * 6. Model look
+ * 7. Session title
+ * 8. Tripwire alarm
+ * 9. Roster member (only for agents that hold one; mood depends on the alarm, so it follows it)
  */
 export function resendAgentActivity(
   send: (message: Record<string, unknown>) => void,
@@ -91,11 +92,15 @@ export function resendAgentActivity(
       });
     }
 
-    // 6. Session title. Sent for untitled agents too (title omitted): a client that
+    // 6. Model look. Sent for every agent, `model` omitted while unknown, so a client
+    // that missed a change (or never knew) cannot keep a stale rarity.
+    send({ type: 'agentModel', id, model: agent.model, tier: agent.modelTier });
+
+    // 7. Session title. Sent for untitled agents too (title omitted): a client that
     // was offline when a title was cleared would otherwise keep showing the stale one.
     send({ type: 'agentSessionTitle', id, title: derivedTitle(agent) });
 
-    // 7. Tripwire alarm, or a clear for agents without one: a client that was offline
+    // 8. Tripwire alarm, or a clear for agents without one: a client that was offline
     // during an ack would otherwise keep an alarm the user already dismissed.
     send(tripwireResendMessage(agent));
 

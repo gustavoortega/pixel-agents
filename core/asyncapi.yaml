@@ -100,6 +100,8 @@ components:
         - $ref: '#/components/schemas/AgentTeamInfo'
         # Context window
         - $ref: '#/components/schemas/AgentContextUsage'
+        # Model look
+        - $ref: '#/components/schemas/AgentModel'
         # Session title
         - $ref: '#/components/schemas/AgentSessionTitle'
         # Tripwires
@@ -142,6 +144,7 @@ components:
         - $ref: '#/components/schemas/SetLastSeenVersion'
         - $ref: '#/components/schemas/SetAlwaysShowLabels'
         - $ref: '#/components/schemas/SetGhostHeadlessAgents'
+        - $ref: '#/components/schemas/SetShowModelFlair'
         - $ref: '#/components/schemas/SetHooksEnabled'
         - $ref: '#/components/schemas/HooksConsentResponse'
         - $ref: '#/components/schemas/SetHooksInfoShown'
@@ -453,6 +456,29 @@ components:
           type: integer
         maxContextTokens:
           type: integer
+
+    AgentModel:
+      description: |
+        The model the agent's newest main-chain turn ran on, and its tier (1 smallest
+        to 4 largest) when the provider can place it. Drives the office's rarity look.
+        Sent when either changes, and on reconnect for every agent. `model` omitted
+        means no model is known yet; `tier` omitted means the provider cannot place
+        the model (unknown means no flair, never tier 1). Sub-agents have no session
+        of their own and never receive one.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: agentModel
+        id:
+          type: integer
+        model:
+          type: string
+        tier:
+          type: integer
+          minimum: 1
+          maximum: 4
 
     AgentSessionTitle:
       description: |
@@ -787,6 +813,7 @@ components:
         - watchAllSessions
         - alwaysShowLabels
         - ghostHeadlessAgents
+        - showModelFlair
         - hooksEnabled
         - hooksInfoShown
         - externalAssetDirectories
@@ -805,6 +832,8 @@ components:
         alwaysShowLabels:
           type: boolean
         ghostHeadlessAgents:
+          type: boolean
+        showModelFlair:
           type: boolean
         hooksEnabled:
           type: boolean
@@ -1063,6 +1092,19 @@ components:
       properties:
         type:
           const: setGhostHeadlessAgents
+        enabled:
+          type: boolean
+
+    SetShowModelFlair:
+      description: >-
+        Toggle the model look: rarity colors, equipment and the companion that
+        follow each agent's model tier.
+      type: object
+      additionalProperties: false
+      required: [type, enabled]
+      properties:
+        type:
+          const: setShowModelFlair
         enabled:
           type: boolean
 

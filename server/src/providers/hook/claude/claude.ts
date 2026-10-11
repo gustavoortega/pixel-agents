@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { normalizeProjectPath } from '../../../../../core/src/normalizeProjectPath.js';
-import type { AgentEvent, HookProvider } from '../../../../../core/src/provider.js';
+import type { AgentEvent, HookProvider, ModelTier } from '../../../../../core/src/provider.js';
 import {
   SESSION_TITLE_MAX_LENGTH,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
@@ -19,6 +19,7 @@ import { createClaudeTranscriptUsage } from './claudeUsage.js';
 import { CONSENT_DISCLOSURE, CONSENT_INSTALL_HEADLINE } from './consentCopy.js';
 import {
   CLAUDE_LARGE_CONTEXT_WINDOW,
+  CLAUDE_MODEL_TIERS,
   CLAUDE_SMALL_CONTEXT_MODEL_PATTERN,
   CLAUDE_SMALL_CONTEXT_WINDOW,
   CLAUDE_TERMINAL_NAME_PREFIX,
@@ -311,6 +312,21 @@ export function contextWindowForModel(model: string | undefined): number | undef
     : CLAUDE_LARGE_CONTEXT_WINDOW;
 }
 
+/**
+ * Tier of a Claude model id, for the office's rarity look.
+ *
+ * Undefined means "can't place it", which the office draws as no flair at all:
+ * `<synthetic>` and ids from a family we haven't met must not read as the
+ * smallest model.
+ */
+export function modelTier(model: string): ModelTier | undefined {
+  const id = model.toLowerCase();
+  for (const [family, tier] of CLAUDE_MODEL_TIERS) {
+    if (id.includes(family)) return tier;
+  }
+  return undefined;
+}
+
 /** A non-empty trimmed string capped at the title limit, or undefined. */
 function titleField(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -358,6 +374,7 @@ export const claudeProvider: HookProvider = {
   readingTools: new Set(['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch']),
   terminalNamePrefix: CLAUDE_TERMINAL_NAME_PREFIX,
   contextWindowForModel,
+  modelTier,
   extractSessionTitle,
   transcriptUsage: createClaudeTranscriptUsage(extractSessionTitle),
 

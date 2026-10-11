@@ -342,21 +342,49 @@ export function updateCharacter(
   }
 }
 
-/** Get the correct sprite frame for a character's current state and direction */
-export function getCharacterSprite(ch: Character, sprites: CharacterSprites): SpriteData {
+/** Which animation set of a character's sheet is playing, and the index within it. */
+export type SheetAnimation =
+  | { set: 'walk'; index: number }
+  | { set: 'typing'; index: number }
+  | { set: 'reading'; index: number };
+
+/** Sheet frame behind each animation step: walk1-3 (the cycle revisits walk2), type1-2, read1-2. */
+const WALK_SHEET_FRAMES = [0, 1, 2, 1] as const;
+const TYPING_SHEET_FRAMES = [3, 4] as const;
+const READING_SHEET_FRAMES = [5, 6] as const;
+
+/** The one place that maps a character's state to a frame of its sheet. */
+export function characterAnimation(ch: Character): SheetAnimation {
   switch (ch.state) {
     case CharacterState.TYPE:
-      if (isReadingTool(ch.currentTool)) {
-        return sprites.reading[ch.dir][ch.frame % 2];
-      }
-      return sprites.typing[ch.dir][ch.frame % 2];
+      return isReadingTool(ch.currentTool)
+        ? { set: 'reading', index: ch.frame % 2 }
+        : { set: 'typing', index: ch.frame % 2 };
     case CharacterState.WALK:
-      return sprites.walk[ch.dir][ch.frame % 4];
-    case CharacterState.IDLE:
-      return sprites.walk[ch.dir][1];
+      return { set: 'walk', index: ch.frame % 4 };
     default:
-      return sprites.walk[ch.dir][1];
+      // Idle reuses the second walk frame
+      return { set: 'walk', index: 1 };
   }
+}
+
+/** Frame (0-6) of the character sheet currently drawn; equipment bobs with it. */
+export function sheetFrameIndex(ch: Character): number {
+  const anim = characterAnimation(ch);
+  switch (anim.set) {
+    case 'reading':
+      return READING_SHEET_FRAMES[anim.index];
+    case 'typing':
+      return TYPING_SHEET_FRAMES[anim.index];
+    default:
+      return WALK_SHEET_FRAMES[anim.index];
+  }
+}
+
+/** Get the correct sprite frame for a character's current state and direction */
+export function getCharacterSprite(ch: Character, sprites: CharacterSprites): SpriteData {
+  const anim = characterAnimation(ch);
+  return sprites[anim.set][ch.dir][anim.index];
 }
 
 function randomRange(min: number, max: number): number {

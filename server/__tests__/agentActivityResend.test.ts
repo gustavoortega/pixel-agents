@@ -37,14 +37,18 @@ function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
   } as AgentState;
 }
 
-/** Resend minus the title and tripwire messages, which every agent gets, so the tests
+/** Resend minus the model, title and tripwire messages, which every agent gets, so the tests
  *  below can assert the other messages without restating them each time. */
 function resendActivityWithoutTitlesOrAlarms(
   sent: Array<Record<string, unknown>>,
   store: AgentStateStore,
 ): void {
   resendAgentActivity((msg) => {
-    if (msg.type !== 'agentSessionTitle' && !String(msg.type).startsWith('agentTripwire')) {
+    if (
+      msg.type !== 'agentSessionTitle' &&
+      msg.type !== 'agentModel' &&
+      !String(msg.type).startsWith('agentTripwire')
+    ) {
       sent.push(msg);
     }
   }, store);
@@ -67,8 +71,13 @@ describe('resendAgentActivity roster', () => {
     fs.rmSync(dir, { recursive: true, force: true });
 
     const forAgent = (id: number) => sent.filter((m) => m.id === id).map((m) => m.type);
-    expect(forAgent(1)).toEqual(['agentSessionTitle', 'agentTripwireClear', 'agentRoster']);
-    expect(forAgent(2)).toEqual(['agentSessionTitle', 'agentTripwireClear']);
+    expect(forAgent(1)).toEqual([
+      'agentModel',
+      'agentSessionTitle',
+      'agentTripwireClear',
+      'agentRoster',
+    ]);
+    expect(forAgent(2)).toEqual(['agentModel', 'agentSessionTitle', 'agentTripwireClear']);
     expect(sent.find((m) => m.type === 'agentRoster')).toMatchObject({
       id: 1,
       level: 1,
@@ -80,7 +89,7 @@ describe('resendAgentActivity roster', () => {
 });
 
 describe('resendAgentActivity', () => {
-  it('sends messages in order: team info, tools, waiting, context, title, tripwire', () => {
+  it('sends messages in order: team info, tools, waiting, context, model, title, tripwire', () => {
     const store = new AgentStateStore();
     store.set(
       1,
@@ -101,6 +110,7 @@ describe('resendAgentActivity', () => {
       'agentToolStart',
       'agentStatus',
       'agentContextUsage',
+      'agentModel',
       'agentSessionTitle',
       'agentTripwireClear',
     ]);
@@ -254,6 +264,20 @@ describe('resendAgentActivity', () => {
     sent = [];
     resendActivityWithoutTitlesOrAlarms(sent, store);
     expect(sent).toHaveLength(0);
+  });
+
+  it('sends the model look for every agent, omitting what is unknown', () => {
+    const store = new AgentStateStore();
+    store.set(1, createTestAgent({ id: 1, model: 'claude-opus-5-5', modelTier: 3 }));
+    store.set(2, createTestAgent({ id: 2 }));
+    const sent: Array<Record<string, unknown>> = [];
+    resendAgentActivity((msg) => {
+      if (msg.type === 'agentModel') sent.push(JSON.parse(JSON.stringify(msg)));
+    }, store);
+    expect(sent).toEqual([
+      { type: 'agentModel', id: 1, model: 'claude-opus-5-5', tier: 3 },
+      { type: 'agentModel', id: 2 },
+    ]);
   });
 
   it('handles edge cases: empty store and multiple agents', () => {

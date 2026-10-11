@@ -6,6 +6,8 @@
  * Adding another provider? Create its own `providers/<kind>/<name>/constants.ts`.
  */
 
+import type { ModelTier } from '../../../../../core/src/provider.js';
+
 /** Output filename after esbuild compiles claude-hook.ts to CJS (source is .ts, output is .js) */
 export const CLAUDE_HOOK_SCRIPT_NAME = 'claude-hook.js';
 
@@ -85,3 +87,14 @@ export const CLAUDE_SMALL_CONTEXT_WINDOW = 200_000;
  *  guessing small for a large model pins every gauge in the red, while the
  *  reverse is a quiet under-read that the runtime's widening still corrects. */
 export const CLAUDE_SMALL_CONTEXT_MODEL_PATTERN = /haiku|claude-[123]|-4-[01]\b/i;
+
+// Tier ranking behind the model look in the office. Checked in this order against
+// the lowercased model id, first substring hit wins, so a future id naming two
+// families resolves to the larger one. Ids outside the list (`<synthetic>`, a
+// family we have not met) have no tier.
+export const CLAUDE_MODEL_TIERS: ReadonlyArray<readonly [string, ModelTier]> = [
+  ['fable', 4],
+  ['opus', 3],
+  ['sonnet', 2],
+  ['haiku', 1],
+];

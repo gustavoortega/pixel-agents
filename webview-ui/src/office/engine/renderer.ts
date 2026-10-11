@@ -1,5 +1,7 @@
+import type { ModelTier } from '../../../../core/src/provider.js';
 import type { ColorValue } from '../../components/ui/types.js';
 import {
+  ACCESSORY_FRONT_Z_OFFSET,
   AREA_ACTIVE_ALPHA_MULTIPLIER,
   AREA_LABEL_ALPHA,
   AREA_LABEL_FALLBACK_COLOR,
@@ -21,8 +23,8 @@ import {
   BUTTON_RADIUS_ZOOM_FACTOR,
   CARPET_DEFAULT_ACCENT_COLOR,
   CARPET_DEFAULT_COLOR,
-  CHARACTER_SITTING_OFFSET_PX,
   CHARACTER_Z_SORT_OFFSET,
+  COMPANION_FEET_INSET_PX,
   DELETE_BUTTON_BG,
   FALLBACK_FLOOR_COLOR,
   GHOST_BORDER_HOVER_FILL,
@@ -34,7 +36,6 @@ import {
   GHOST_VALID_TINT,
   GRID_LINE_COLOR,
   HEADLESS_CHARACTER_ALPHA,
-  HOVERED_OUTLINE_ALPHA,
   IDLE_GLYPH_COLOR,
   IDLE_GLYPH_SHADOW_COLOR,
   OUTLINE_Z_SORT_OFFSET,
@@ -42,7 +43,6 @@ import {
   SEAT_AVAILABLE_COLOR,
   SEAT_BUSY_COLOR,
   SEAT_OWN_COLOR,
-  SELECTED_OUTLINE_ALPHA,
   SELECTION_DASH_PATTERN,
   SELECTION_HIGHLIGHT_COLOR,
   TRIPWIRE_BEACON_RADIUS_PX,
@@ -50,6 +50,17 @@ import {
   VOID_TILE_DASH_PATTERN,
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
+import {
+  accessoryPlacement,
+  accessoryZ,
+  ANCHORS,
+  characterDrawOrigin,
+  SPARKLE_SPRITE,
+  sparkleAlpha,
+} from '../flair/accessories.js';
+import type { Companion } from '../flair/companion.js';
+import { companionHoverOffsetPx, getCompanionSprite } from '../flair/companion.js';
+import { characterFlair, characterOutline } from '../flair/modelFlair.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
 import { areaSignRect } from '../labelLayout.js';
 import { mapOffset } from '../projection.js';
@@ -59,7 +70,11 @@ import {
   hasCarpetSprites,
 } from '../sprites/carpetTiles.js';
 import { getPetSprites } from '../sprites/petSpriteData.js';
-import { getCachedSprite, getOutlineSprite } from '../sprites/spriteCache.js';
+import {
+  getCachedSprite,
+  getOutlineSprite,
+  getTintedOutlineSprite,
+} from '../sprites/spriteCache.js';
 import {
   BUBBLE_HEART_SPRITE,
   BUBBLE_PERMISSION_SPRITE,
@@ -79,7 +94,7 @@ import type {
 } from '../types.js';
 import { CharacterState, TILE_SIZE, TileType } from '../types.js';
 import { getWallInstances, hasWallSprites, wallColorToHex } from '../wallTiles.js';
-import { getCharacterSprite } from './characters.js';
+import { getCharacterSprite, sheetFrameIndex } from './characters.js';
 import { renderMatrixEffect } from './matrixEffect.js';
 import { getPetSpriteData } from './petEntity.js';
 
@@ -101,6 +116,29 @@ export function setGhostHeadlessAgents(enabled: boolean): void {
 
 export function isGhostHeadlessAgentsEnabled(): boolean {
   return ghostHeadlessAgents;
+}
+
+/**
+ * "Show model flair": rarity outline, equipment, sparkles and the companion.
+ * Module state for the same reason as the ghost setting above. Off draws every
+ * character as it was before the model look existed. On by default.
+ */
+let showModelFlair = true;
+
+export function setShowModelFlair(enabled: boolean): void {
+  showModelFlair = enabled;
+}
+
+export function isShowModelFlairEnabled(): boolean {
+  return showModelFlair;
+}
+
+/** What the renderer needs to draw the model look; built per frame by the canvas. */
+export interface ModelLookRenderState {
+  models: ReadonlyMap<number, { tier?: ModelTier }>;
+  companions: Iterable<Companion>;
+  /** Wall-clock ms, for the sparkle twinkle and the flying companions' bob. */
+  nowMs: number;
 }
 
 // ── Render functions ────────────────────────────────────────────
@@ -341,6 +379,8 @@ export function renderTileGrid(
   }
 }
 
+const NO_MODELS: ReadonlyMap<number, { tier?: ModelTier }> = new Map();
+
 interface ZDrawable {
   zY: number;
   draw: (ctx: CanvasRenderingContext2D) => void;
@@ -357,6 +397,7 @@ export function renderScene(
   selectedAgentId: number | null,
   hoveredAgentId: number | null,
   pets: Pet[] = [],
+  look?: ModelLookRenderState,
 ): void {
   const drawables: ZDrawable[] = [];
 
@@ -391,11 +432,15 @@ export function renderScene(
     const sprites = getCharacterSprites(ch.palette, ch.hueShift);
     const spriteData = getCharacterSprite(ch, sprites);
     const cached = getCachedSprite(spriteData, zoom);
-    // Sitting offset: shift character down when seated so they visually sit in the chair
-    const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
-    // Anchor at bottom-center of character — round to integer device pixels
-    const drawX = Math.round(offsetX + ch.x * zoom - cached.width / 2);
-    const drawY = Math.round(offsetY + (ch.y + sittingOffset) * zoom - cached.height);
+    // Anchor at bottom-center of character, shifted down while seated (sitting offset)
+    const { drawX, drawY } = characterDrawOrigin(
+      ch,
+      cached.width,
+      cached.height,
+      offsetX,
+      offsetY,
+      zoom,
+    );
 
     // Sort characters by bottom of their tile (not center) so they render
     // in front of same-row furniture (e.g. chairs) but behind furniture
@@ -424,12 +469,18 @@ export function renderScene(
       continue;
     }
 
-    // White outline: full opacity for selected, 50% for hover
+    const flair = characterFlair(ch, look?.models ?? NO_MODELS, showModelFlair && !!look);
+
+    // Outline: white for selected (full) or hovered (half), which beats the rarity color
     const isSelected = selectedAgentId !== null && ch.id === selectedAgentId;
     const isHovered = hoveredAgentId !== null && ch.id === hoveredAgentId;
-    if (isSelected || isHovered) {
-      const outlineAlpha = isSelected ? SELECTED_OUTLINE_ALPHA : HOVERED_OUTLINE_ALPHA;
-      const outlineData = getOutlineSprite(spriteData);
+    const outline = characterOutline({ isSelected, isHovered, rarity: flair.rarity });
+    if (outline) {
+      const outlineData =
+        outline.kind === 'selection'
+          ? getOutlineSprite(spriteData)
+          : getTintedOutlineSprite(spriteData, outline.color);
+      const outlineAlpha = outline.alpha;
       const outlineCached = getCachedSprite(outlineData, zoom);
       const olDrawX = drawX - zoom; // 1 sprite-pixel offset, scaled
       const olDrawY = drawY - zoom; // outline follows sitting offset via drawY
@@ -439,6 +490,41 @@ export function renderScene(
           c.save();
           c.globalAlpha = outlineAlpha;
           c.drawImage(outlineCached, olDrawX, olDrawY);
+          c.restore();
+        },
+      });
+    }
+
+    // Equipment follows the sheet frame on screen (bobs with the walk/type cycle)
+    if (look && flair.accessories.length > 0) {
+      const tier = look.models.get(ch.id)?.tier;
+      const frame = sheetFrameIndex(ch);
+      for (const kind of flair.accessories) {
+        const placement = accessoryPlacement(kind, ch.dir, frame, tier);
+        const accCached = getCachedSprite(placement.sprite, zoom);
+        const accY = drawY + placement.dy * zoom;
+        drawables.push({
+          zY: accessoryZ(kind, ch.dir, charZY),
+          draw: (c) => {
+            c.save();
+            c.globalAlpha = alpha;
+            c.drawImage(accCached, drawX, accY);
+            c.restore();
+          },
+        });
+      }
+    }
+    if (look && flair.sparkles) {
+      const sparkleCached = getCachedSprite(SPARKLE_SPRITE, zoom);
+      const nowMs = look.nowMs;
+      drawables.push({
+        zY: charZY + ACCESSORY_FRONT_Z_OFFSET,
+        draw: (c) => {
+          c.save();
+          for (const s of ANCHORS.sparkles) {
+            c.globalAlpha = sparkleAlpha(nowMs, s.phaseMs);
+            c.drawImage(sparkleCached, drawX + s.dx * zoom, drawY + s.dy * zoom);
+          }
           c.restore();
         },
       });
@@ -457,6 +543,26 @@ export function renderScene(
         c.restore();
       },
     });
+  }
+
+  // ── Companions ────────────────────────────────────────
+  if (look && showModelFlair) {
+    for (const comp of look.companions) {
+      if (!comp.visible) continue;
+      const sprite = getCompanionSprite(comp.kind, comp.set, comp.frame, comp.facingRight);
+      const cached = getCachedSprite(sprite, zoom);
+      const hover = companionHoverOffsetPx(comp.kind, look.nowMs / 1000);
+      const drawX = Math.round(offsetX + comp.x * zoom - cached.width / 2);
+      // Feet a touch above the tile's bottom edge; flying kinds hover above that
+      const feetY = comp.y + TILE_SIZE / 2 - COMPANION_FEET_INSET_PX + hover;
+      const drawY = Math.round(offsetY + feetY * zoom - cached.height);
+      drawables.push({
+        zY: comp.y + TILE_SIZE / 2,
+        draw: (c) => {
+          c.drawImage(cached, drawX, drawY);
+        },
+      });
+    }
   }
 
   // ── Pets ──────────────────────────────────────────────
@@ -979,6 +1085,7 @@ export function renderFrame(
   pets?: Pet[],
   tripwires?: ReadonlyMap<number, { severity: TripwireSeverity }>,
   areaUsage?: ReadonlyMap<string, number>,
+  look?: ModelLookRenderState,
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -1035,6 +1142,7 @@ export function renderFrame(
     selectedId,
     hoveredId,
     pets ?? [],
+    look,
   );
 
   // Speech bubbles (always on top of characters)
