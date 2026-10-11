@@ -16,6 +16,10 @@ export const CHARACTER_DIRECTIONS = ['down', 'up', 'right'] as const;
 export const CHAR_FRAME_W = 16;
 export const CHAR_FRAME_H = 32;
 export const CHAR_FRAMES_PER_ROW = 7;
+/** Idle poses live in a 4th row (after down, up, right): sit-idle, head-down, page-turn A and B.
+ *  Decoded as frames 7..10 of `down`; sheets that stop at 3 rows (older or external) simply lack them. */
+export const CHAR_IDLE_ROW = CHARACTER_DIRECTIONS.length;
+export const CHAR_IDLE_FRAMES = 4;
 
 // ── Pet Sprite Dimensions (96×96 spritesheet) ──────────────
 export const PET_FRAME_W_SMALL = 16;

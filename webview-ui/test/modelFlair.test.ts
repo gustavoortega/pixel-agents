@@ -140,10 +140,21 @@ describe('accessoryPlacement', () => {
     );
   });
 
-  it('has a bob for each of the 7 sheet frames', () => {
-    expect(ANCHORS.down.bob).toHaveLength(7);
+  it('has a head and shoulder bob for each sheet frame (down also covers the 4 idle frames)', () => {
+    expect(ANCHORS.down.bob).toHaveLength(11);
+    expect(ANCHORS.down.shoulderBob).toHaveLength(11);
     expect(ANCHORS.up.bob).toHaveLength(7);
     expect(ANCHORS.right.bob).toHaveLength(7);
+  });
+
+  it('keeps the shoulders put while the napping head drops: the cape follows the shoulders', () => {
+    const napFrame = 8;
+    const cape = accessoryPlacement(AccessoryKind.CAPE, Direction.DOWN, napFrame, undefined);
+    const neutral = accessoryPlacement(AccessoryKind.CAPE, Direction.DOWN, 1, undefined);
+    const crown = accessoryPlacement(AccessoryKind.CROWN, Direction.DOWN, napFrame, undefined);
+    const crownNeutral = accessoryPlacement(AccessoryKind.CROWN, Direction.DOWN, 1, undefined);
+    expect(crown.dy - crownNeutral.dy).toBe(6); // the head is 6 rows lower
+    expect(cape.dy - neutral.dy).toBe(2); // the first visible shoulder row is 2 lower
   });
 });
 

@@ -1,5 +1,8 @@
 import {
   DEFAULT_MAX_CONTEXT_TOKENS,
+  POSE_SETTLE_SEC,
+  POSE_TICK_SEC,
+  READING_PAGE_TURN_SEC,
   SEAT_REST_MAX_SEC,
   SEAT_REST_MIN_SEC,
   TYPE_FRAME_DURATION_SEC,
@@ -14,7 +17,7 @@ import { findPath } from '../layout/tileMap.js';
 import type { CharacterSprites } from '../sprites/spriteData.js';
 import { isReadingToolName } from '../toolUtils.js';
 import type { Character, Seat, SpriteData, TileType as TileTypeVal } from '../types.js';
-import { CharacterState, Direction, TILE_SIZE } from '../types.js';
+import { CharacterState, Direction, IdlePose, TILE_SIZE, WorkStatus } from '../types.js';
 
 /** Whether a tool should show the reading animation (vs typing). Taxonomy comes
  *  from the active HookProvider via the `providerCapabilities` message. */
@@ -76,6 +79,17 @@ export function createCharacter(
     wanderCount: 0,
     wanderLimit: randomInt(WANDER_MOVES_BEFORE_REST_MIN, WANDER_MOVES_BEFORE_REST_MAX),
     isActive: initialActive,
+    agentStatus: initialActive ? WorkStatus.ACTIVE : WorkStatus.IDLE,
+    // An agent that starts idle is already settled into reading: no pose to wait for.
+    pose: initialActive ? IdlePose.TYPING : IdlePose.READING,
+    poseStatus: initialActive ? WorkStatus.ACTIVE : WorkStatus.IDLE,
+    idleSec: 0,
+    poseSettleSec: POSE_SETTLE_SEC,
+    poseTickSec: POSE_TICK_SEC,
+    poseClockSec: 0,
+    coffeeCooldownSec: 0,
+    drawSink: 0,
+    trip: null,
     seatId,
     bubbleType: null,
     bubbleTimer: 0,
@@ -126,13 +140,13 @@ export function updateCharacter(
         ch.frameTimer -= TYPE_FRAME_DURATION_SEC;
         ch.frame = (ch.frame + 1) % 2;
       }
-      // If no longer active, stand up and start wandering (after seatTimer expires)
+      // No longer active: a seated agent stays in its seat (the idle pose decides what it does
+      // there); one with no seat has nothing to sit at, so it stands up and wanders.
       if (!ch.isActive) {
-        if (ch.seatTimer > 0) {
-          ch.seatTimer -= dt;
+        if (ch.seatId) {
+          ch.seatTimer = 0; // clear the turn-end sentinel
           break;
         }
-        ch.seatTimer = 0; // clear sentinel
         ch.state = CharacterState.IDLE;
         ch.frame = 0;
         ch.frameTimer = 0;
@@ -182,31 +196,41 @@ export function updateCharacter(
         }
         break;
       }
+      // Not active, with a seat: idle agents live at their desk (reading, napping), so they sit
+      // at once when they are there and walk back after a short pause when they are not.
+      const ownSeat = ch.seatId ? seats.get(ch.seatId) : undefined;
+      if (ownSeat) {
+        if (ch.tileCol === ownSeat.seatCol && ch.tileRow === ownSeat.seatRow) {
+          ch.state = CharacterState.TYPE;
+          ch.dir = ownSeat.facingDir;
+          ch.frame = 0;
+          ch.frameTimer = 0;
+          break;
+        }
+        ch.wanderTimer -= dt;
+        if (ch.wanderTimer <= 0) {
+          const path = findPath(
+            ch.tileCol,
+            ch.tileRow,
+            ownSeat.seatCol,
+            ownSeat.seatRow,
+            tileMap,
+            blockedTiles,
+          );
+          if (path.length > 0) {
+            ch.path = path;
+            ch.moveProgress = 0;
+            ch.state = CharacterState.WALK;
+            ch.frame = 0;
+            ch.frameTimer = 0;
+          }
+          ch.wanderTimer = randomRange(WANDER_PAUSE_MIN_SEC, WANDER_PAUSE_MAX_SEC);
+        }
+        break;
+      }
       // Countdown wander timer
       ch.wanderTimer -= dt;
       if (ch.wanderTimer <= 0) {
-        // Check if we've wandered enough — return to seat for a rest
-        if (ch.wanderCount >= ch.wanderLimit && ch.seatId) {
-          const seat = seats.get(ch.seatId);
-          if (seat) {
-            const path = findPath(
-              ch.tileCol,
-              ch.tileRow,
-              seat.seatCol,
-              seat.seatRow,
-              tileMap,
-              blockedTiles,
-            );
-            if (path.length > 0) {
-              ch.path = path;
-              ch.moveProgress = 0;
-              ch.state = CharacterState.WALK;
-              ch.frame = 0;
-              ch.frameTimer = 0;
-              break;
-            }
-          }
-        }
         const candidates = wanderCandidates(
           walkableTiles,
           ch.seatId ? seats.get(ch.seatId) : undefined,
@@ -347,20 +371,49 @@ export function updateCharacter(
 export type SheetAnimation =
   | { set: 'walk'; index: number }
   | { set: 'typing'; index: number }
-  | { set: 'reading'; index: number };
+  | { set: 'reading'; index: number }
+  | { set: 'idle'; index: number };
 
 /** Sheet frame behind each animation step: walk1-3 (the cycle revisits walk2), type1-2, read1-2. */
 const WALK_SHEET_FRAMES = [0, 1, 2, 1] as const;
 const TYPING_SHEET_FRAMES = [3, 4] as const;
 const READING_SHEET_FRAMES = [5, 6] as const;
+/** The idle row, appended to `down`: sit-idle, head-down, page-turn A, page-turn B. */
+const IDLE_SHEET_FRAMES = [7, 8, 9, 10] as const;
+const IDLE_SIT = 0;
+const IDLE_NAP = 1;
+const IDLE_PAGE_A = 2;
+
+/** Which page-turn frame (0 or 1) of the reading pose is up: it flips every READING_PAGE_TURN_SEC. */
+export function readingPage(ch: Pick<Character, 'poseClockSec'>): number {
+  return Math.floor(ch.poseClockSec / READING_PAGE_TURN_SEC) % 2;
+}
 
 /** The one place that maps a character's state to a frame of its sheet. */
 export function characterAnimation(ch: Character): SheetAnimation {
   switch (ch.state) {
-    case CharacterState.TYPE:
-      return isReadingTool(ch.currentTool)
-        ? { set: 'reading', index: ch.frame % 2 }
-        : { set: 'typing', index: ch.frame % 2 };
+    case CharacterState.TYPE: {
+      // The idle poses are authored front view only; facing any other way the seated agent keeps
+      // the typing frame (the book is baked into the reading frames, the nap and the mug are not drawn).
+      const front = ch.dir === Direction.DOWN;
+      switch (ch.pose) {
+        case IdlePose.WAIT_BUBBLE:
+        case IdlePose.COFFEE:
+          return front ? { set: 'idle', index: IDLE_SIT } : { set: 'typing', index: 0 };
+        case IdlePose.NAPPING:
+          return front ? { set: 'idle', index: IDLE_NAP } : { set: 'typing', index: 0 };
+        case IdlePose.READING: {
+          const page = readingPage(ch);
+          return front
+            ? { set: 'idle', index: IDLE_PAGE_A + page }
+            : { set: 'reading', index: page };
+        }
+        default:
+          return isReadingTool(ch.currentTool)
+            ? { set: 'reading', index: ch.frame % 2 }
+            : { set: 'typing', index: ch.frame % 2 };
+      }
+    }
     case CharacterState.WALK:
       return { set: 'walk', index: ch.frame % 4 };
     default:
@@ -369,7 +422,7 @@ export function characterAnimation(ch: Character): SheetAnimation {
   }
 }
 
-/** Frame (0-6) of the character sheet currently drawn; equipment bobs with it. */
+/** Frame of the character sheet currently drawn (0-6, and 7-10 for the idle row); equipment bobs with it. */
 export function sheetFrameIndex(ch: Character): number {
   const anim = characterAnimation(ch);
   switch (anim.set) {
@@ -377,6 +430,8 @@ export function sheetFrameIndex(ch: Character): number {
       return READING_SHEET_FRAMES[anim.index];
     case 'typing':
       return TYPING_SHEET_FRAMES[anim.index];
+    case 'idle':
+      return IDLE_SHEET_FRAMES[anim.index];
     default:
       return WALK_SHEET_FRAMES[anim.index];
   }
@@ -385,6 +440,7 @@ export function sheetFrameIndex(ch: Character): number {
 /** Get the correct sprite frame for a character's current state and direction */
 export function getCharacterSprite(ch: Character, sprites: CharacterSprites): SpriteData {
   const anim = characterAnimation(ch);
+  if (anim.set === 'idle') return sprites.idle[anim.index];
   return sprites[anim.set][ch.dir][anim.index];
 }
 

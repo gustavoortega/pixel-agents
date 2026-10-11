@@ -26,7 +26,14 @@ import {
 } from '../src/constants.js';
 import { createPet, updatePet } from '../src/office/engine/petEntity.js';
 import type { Character, TileType as TileTypeVal } from '../src/office/types.js';
-import { CharacterState, Direction, PetState, TileType } from '../src/office/types.js';
+import {
+  CharacterState,
+  Direction,
+  IdlePose,
+  PetState,
+  TileType,
+  WorkStatus,
+} from '../src/office/types.js';
 
 // ── Helpers ────────────────────────────────────────────────────
 
@@ -75,6 +82,16 @@ function makeChar(id: number, col: number, row: number): Character {
     wanderCount: 0,
     wanderLimit: 5,
     isActive: false,
+    agentStatus: WorkStatus.IDLE,
+    pose: IdlePose.READING,
+    poseStatus: WorkStatus.IDLE,
+    idleSec: 0,
+    poseSettleSec: 0,
+    poseTickSec: 0,
+    poseClockSec: 0,
+    coffeeCooldownSec: 0,
+    drawSink: 0,
+    trip: null,
     seatId: null,
     bubbleType: null,
     bubbleTimer: 0,

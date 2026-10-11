@@ -9,6 +9,8 @@ export interface SeatLike {
   seatCol: number;
   seatRow: number;
   assigned: boolean;
+  /** A couch cushion: a lounge seat, taken as a desk only when every desk is taken. */
+  couch?: boolean;
 }
 
 export interface AnchorLike {
@@ -36,7 +38,10 @@ export function anchorTile(
     : { col: anchor.tileCol, row: anchor.tileRow };
 }
 
-/** Free seat closest (Manhattan) to a tile — seats teammates beside their lead. */
+/**
+ * Free seat closest (Manhattan) to a tile — seats teammates beside their lead. Couch cushions
+ * are lounge seats: they are only picked when no desk seat is free.
+ */
 export function closestFreeSeat(
   seats: ReadonlyMap<string, SeatLike>,
   col: number,
@@ -44,12 +49,16 @@ export function closestFreeSeat(
 ): string | null {
   let best: string | null = null;
   let bestDist = Infinity;
+  let bestIsCouch = true;
   for (const [uid, seat] of seats) {
     if (seat.assigned) continue;
+    const couch = !!seat.couch;
+    if (!bestIsCouch && couch) continue;
     const d = Math.abs(seat.seatCol - col) + Math.abs(seat.seatRow - row);
-    if (d < bestDist) {
+    if ((bestIsCouch && !couch) || d < bestDist) {
       best = uid;
       bestDist = d;
+      bestIsCouch = couch;
     }
   }
   return best;

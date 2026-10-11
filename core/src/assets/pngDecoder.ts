@@ -15,6 +15,8 @@ import {
   CHAR_FRAME_H,
   CHAR_FRAME_W,
   CHAR_FRAMES_PER_ROW,
+  CHAR_IDLE_FRAMES,
+  CHAR_IDLE_ROW,
   CHARACTER_DIRECTIONS,
   FLOOR_TILE_SIZE,
   PET_FRAME_H,
@@ -161,36 +163,45 @@ export function parseCarpetPng(pngBuffer: Buffer): string[][][] {
 }
 
 /**
- * Decode a single character PNG (112×96) into direction-keyed frame arrays.
- * Each PNG has 3 direction rows (down, up, right) × 7 frames (16×32 each).
+ * Decode a single character PNG (112×96, or 112×128 with the idle row) into direction-keyed
+ * frame arrays. Rows 0-2 are down, up, right × 7 frames (16×32 each). The optional 4th row holds
+ * the 4 front-view idle poses; they are appended to `down` as frames 7..10, so the wire shape
+ * (`down`, `up`, `right`: arrays of frames) is unchanged and a sheet without the row decodes as before.
  */
 export function decodeCharacterPng(pngBuffer: Buffer): CharacterDirectionSprites {
   const png = PNG.sync.read(sanitizePngBuffer(pngBuffer));
   const charData: CharacterDirectionSprites = { down: [], up: [], right: [] };
 
+  const readFrame = (rowOffsetY: number, frameOffsetX: number): string[][] => {
+    const sprite: string[][] = [];
+    for (let y = 0; y < CHAR_FRAME_H; y++) {
+      const row: string[] = [];
+      for (let x = 0; x < CHAR_FRAME_W; x++) {
+        const idx = ((rowOffsetY + y) * png.width + (frameOffsetX + x)) * 4;
+        const r = png.data[idx];
+        const g = png.data[idx + 1];
+        const b = png.data[idx + 2];
+        const a = png.data[idx + 3];
+        row.push(rgbaToHex(r, g, b, a));
+      }
+      sprite.push(row);
+    }
+    return sprite;
+  };
+
   for (let dirIdx = 0; dirIdx < CHARACTER_DIRECTIONS.length; dirIdx++) {
     const dir = CHARACTER_DIRECTIONS[dirIdx];
-    const rowOffsetY = dirIdx * CHAR_FRAME_H;
     const frames: string[][][] = [];
-
     for (let f = 0; f < CHAR_FRAMES_PER_ROW; f++) {
-      const sprite: string[][] = [];
-      const frameOffsetX = f * CHAR_FRAME_W;
-      for (let y = 0; y < CHAR_FRAME_H; y++) {
-        const row: string[] = [];
-        for (let x = 0; x < CHAR_FRAME_W; x++) {
-          const idx = ((rowOffsetY + y) * png.width + (frameOffsetX + x)) * 4;
-          const r = png.data[idx];
-          const g = png.data[idx + 1];
-          const b = png.data[idx + 2];
-          const a = png.data[idx + 3];
-          row.push(rgbaToHex(r, g, b, a));
-        }
-        sprite.push(row);
-      }
-      frames.push(sprite);
+      frames.push(readFrame(dirIdx * CHAR_FRAME_H, f * CHAR_FRAME_W));
     }
     charData[dir] = frames;
+  }
+
+  if (png.height >= (CHAR_IDLE_ROW + 1) * CHAR_FRAME_H) {
+    for (let f = 0; f < CHAR_IDLE_FRAMES; f++) {
+      charData.down.push(readFrame(CHAR_IDLE_ROW * CHAR_FRAME_H, f * CHAR_FRAME_W));
+    }
   }
 
   return charData;

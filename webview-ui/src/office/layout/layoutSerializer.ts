@@ -1,14 +1,23 @@
 import type { ColorValue } from '../../components/ui/types.js';
+import {
+  CHARACTER_SITTING_OFFSET_PX,
+  DESK_SEAT_COVER_PX,
+  SOFA_FRONT_COVER_PX,
+} from '../../constants.js';
 import { getColorizedSprite } from '../colorize.js';
 import type {
   FurnitureInstance,
   OfficeLayout,
   PlacedFurniture,
   Seat,
+  SpriteData,
   TileType as TileTypeVal,
 } from '../types.js';
 import { DEFAULT_COLS, DEFAULT_ROWS, Direction, TILE_SIZE, TileType } from '../types.js';
 import { getCatalogEntry, getOrientationInGroup } from './furnitureCatalog.js';
+
+/** A pixel at least this opaque counts as solid when reading a desk's top edge off its art. */
+const OPAQUE_ALPHA = 128;
 
 /** Convert flat tile array from layout into 2D grid */
 export function layoutToTileMap(layout: OfficeLayout): TileTypeVal[][] {
@@ -21,6 +30,66 @@ export function layoutToTileMap(layout: OfficeLayout): TileTypeVal[][] {
     map.push(row);
   }
   return map;
+}
+
+/** A couch: a chair with more than one seat. Its seats are lounge seats, and it is drawn in two z layers. */
+function isCouch(entry: { category?: string; footprintW: number; footprintH: number }): boolean {
+  return entry.category === 'chairs' && entry.footprintW * entry.footprintH >= 2;
+}
+
+/** Rows [y0, y1) of a sprite as a sprite of their own. Memoized: the sprite cache keys on identity. */
+const sliceMemo = new WeakMap<SpriteData, Map<string, SpriteData>>();
+function sliceRows(sprite: SpriteData, y0: number, y1: number): SpriteData {
+  let byRange = sliceMemo.get(sprite);
+  if (!byRange) {
+    byRange = new Map();
+    sliceMemo.set(sprite, byRange);
+  }
+  const key = `${y0}:${y1}`;
+  let slice = byRange.get(key);
+  if (!slice) {
+    slice = sprite.slice(y0, y1);
+    byRange.set(key, slice);
+  }
+  return slice;
+}
+
+/**
+ * A couch as z layers, one pair per footprint row: the back part sorts at the row's bottom edge,
+ * behind whoever sits on it, and the front part just after it, in front of the sitter's lower body.
+ * The cut is where the sofa front must start so it hides SOFA_FRONT_COVER_PX of a seated sprite.
+ * A back-view couch is all front: its back is toward the camera and covers the sitter whole.
+ * Pure geometry: nothing is remembered about who sits there, so standing up changes nothing.
+ */
+function couchInstances(
+  sprite: SpriteData,
+  x: number,
+  y: number,
+  row: number,
+  footprintH: number,
+  orientation: string | undefined,
+  mirrored: boolean,
+): FurnitureInstance[] {
+  const out: FurnitureInstance[] = [];
+  const cut = Math.round(TILE_SIZE / 2 + CHARACTER_SITTING_OFFSET_PX - SOFA_FRONT_COVER_PX);
+  const mirror = mirrored ? { mirrored: true as const } : {};
+  for (let r = 0; r < footprintH; r++) {
+    const rowZ = (row + r + 1) * TILE_SIZE;
+    const top = r * TILE_SIZE;
+    const parts: Array<[number, number, number]> =
+      orientation === 'back'
+        ? [[top, top + TILE_SIZE, rowZ + 1]]
+        : [
+            [top, top + cut, rowZ],
+            [top + cut, top + TILE_SIZE, rowZ + 1],
+          ];
+    for (const [y0, y1, zY] of parts) {
+      const part = sliceRows(sprite, y0, y1);
+      if (part.length === 0) continue;
+      out.push({ sprite: part, x, y: y + y0, zY, ...mirror });
+    }
+  }
+  return out;
 }
 
 /** Convert placed furniture into renderable FurnitureInstance[] */
@@ -82,6 +151,12 @@ export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): Furnit
       }
     }
 
+    if (isCouch(entry)) {
+      instances.push(
+        ...couchInstances(sprite, x, y, item.row, entry.footprintH, entry.orientation, mirrored),
+      );
+      continue;
+    }
     instances.push({ sprite, x, y, zY, ...(mirrored ? { mirrored: true } : {}) });
   }
   return instances;
@@ -184,6 +259,62 @@ function orientationToFacing(orientation: string): Direction {
   }
 }
 
+/** Alpha of a sprite pixel (`''` is clear; `#RRGGBBAA` carries one). */
+function pixelAlpha(px: string): number {
+  if (px === '') return 0;
+  return px.length === 9 ? parseInt(px.slice(7, 9), 16) : 255;
+}
+
+/**
+ * Extra px a face-on seat sinks so the desk in front of it hides DESK_SEAT_COVER_PX of the seated
+ * sprite: the desk is the one that covers (it sorts in front), the sink just makes the cover real.
+ * Read off the desk's own art, row by row, so a redrawn desk needs no number changed.
+ * 0 when the seat does not face down or has no desk on its own tile or the one below.
+ */
+function deskSeatSink(
+  furniture: PlacedFurniture[],
+  seatCol: number,
+  seatRow: number,
+  facing: Direction,
+): number {
+  if (facing !== Direction.DOWN) return 0;
+  for (const dr of [0, 1]) {
+    const col = seatCol;
+    const row = seatRow + dr;
+    for (const item of furniture) {
+      const entry = getCatalogEntry(item.type);
+      if (!entry || !entry.isDesk) continue;
+      if (
+        col < item.col ||
+        col >= item.col + entry.footprintW ||
+        row < item.row ||
+        row >= item.row + entry.footprintH
+      ) {
+        continue;
+      }
+      // First row (px from the sprite's top) with an opaque pixel in the seat's column.
+      const x0 = (col - item.col) * TILE_SIZE;
+      let top = -1;
+      for (let y = 0; y < entry.sprite.length && top < 0; y++) {
+        for (let x = x0; x < x0 + TILE_SIZE; x++) {
+          if (pixelAlpha(entry.sprite[y]?.[x] ?? '') >= OPAQUE_ALPHA) {
+            top = y;
+            break;
+          }
+        }
+      }
+      if (top < 0) continue;
+      const deskTopY = item.row * TILE_SIZE + top;
+      const seatY = seatRow * TILE_SIZE + TILE_SIZE / 2;
+      return Math.max(
+        0,
+        Math.round(deskTopY + DESK_SEAT_COVER_PX - seatY - CHARACTER_SITTING_OFFSET_PX),
+      );
+    }
+  }
+  return 0;
+}
+
 /** Generate seats from chair furniture.
  *  Facing priority: 1) chair orientation, 2) adjacent desk, 3) forward (DOWN). */
 export function layoutToSeats(furniture: PlacedFurniture[]): Map<string, Seat> {
@@ -239,12 +370,16 @@ export function layoutToSeats(furniture: PlacedFurniture[]): Map<string, Seat> {
 
         // First seat uses chair uid (backward compat), subsequent use uid:N
         const seatUid = seatCount === 0 ? item.uid : `${item.uid}:${seatCount}`;
+        const couch = isCouch(entry);
+        const sink = couch ? 0 : deskSeatSink(furniture, tileCol, tileRow, facingDir);
         seats.set(seatUid, {
           uid: seatUid,
           seatCol: tileCol,
           seatRow: tileRow,
           facingDir,
           assigned: false,
+          ...(couch ? { couch: true } : {}),
+          ...(sink > 0 ? { sink } : {}),
         });
         seatCount++;
       }

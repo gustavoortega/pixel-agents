@@ -1,9 +1,14 @@
 /**
- * ONE cozy chibi, authored as pixel maps, drawn into the 112x96 character sheet
- * the app already loads: 7 frames x 16 px wide, 3 rows x 32 px tall.
+ * ONE cozy chibi, authored as pixel maps, drawn into the 112x128 character sheet
+ * the app loads: 7 frames x 16 px wide, 4 rows x 32 px tall.
  *
- *   rows:   0 = down, 1 = up (back view, how seated agents are seen), 2 = right (left is a runtime flip)
+ *   rows:   0 = down, 1 = up (back view, how seated agents are seen), 2 = right (left is a runtime flip),
+ *           3 = idle poses, front view only (see below)
  *   frames: 0 walk1, 1 walk2 (also idle), 2 walk3, 3 type1, 4 type2, 5 read1, 6 read2
+ *   row 3:  0 sit-idle, 1 head-down (nap), 2 page-turn A, 3 page-turn B (4 frames, the rest is transparent)
+ *
+ * The book and the mug an agent holds are NOT in the sheet: they are palette-free overlays the
+ * renderer draws on top, so every palette shares them.
  *
  * char_0..11 are palette swaps of that single base (hair, skin, outfit).
  *
@@ -19,8 +24,12 @@ import { assertRect, Canvas, mirror, shade } from './canvas';
 export const FRAME_W = 16;
 export const FRAME_H = 32;
 export const FRAMES = 7;
+/** Frames in the idle row (row 3); the decoder appends them to `down` as frames 7..10. */
+export const IDLE_FRAMES = 4;
 export const DIRS = ['down', 'up', 'right'] as const;
 export type Dir = (typeof DIRS)[number];
+/** Sheet rows: one per direction plus the idle row. */
+export const SHEET_ROWS = DIRS.length + 1;
 
 // Frame rows where the layers sit.
 const HEAD_Y = 3;
@@ -78,6 +87,20 @@ const HEAD_RIGHT = [
   '...ohhhhsssssmo.',
   '....oooooooooo..',
 ];
+
+/** Head bowed onto the desk: only the crown shows, hair all around (9 rows). */
+const NAP_HEAD_HALF = [
+  '....oooo',
+  '...ohhhh',
+  '..ohhHHh',
+  '..ohhHhh',
+  '..ohhhhh',
+  '..ohhhhh',
+  '..ohhhdd',
+  '...ohddd',
+  '....oooo',
+];
+const NAP_HEAD_Y = 9;
 
 const HEADS: Record<Dir, string[]> = {
   down: mirror(HEAD_DOWN_HALF),
@@ -206,7 +229,63 @@ interface Pose {
   legs: string[] | null;
   seated: boolean;
   arms: Stamp[];
+  /** A head other than the dir's own, at an absolute row (the bowed nap head). */
+  head?: { rows: string[]; y: number };
 }
+
+/**
+ * Idle poses, front view: sit-idle (hands in the lap), head-down (nap), page-turn A and B.
+ * No book and no mug here: both are overlays, so the hands only frame the empty space. The book
+ * goes at rows 15-19 (16-20 on page B), high on the chest, so the desk in front of a seated agent
+ * does not hide it.
+ */
+const IDLE_POSES: Pose[] = [
+  {
+    dy: 0,
+    legs: null,
+    seated: true,
+    arms: [
+      { rows: ARM_L, x: 1, y: 16 },
+      { rows: ARM_R, x: 13, y: 16 },
+      { rows: HAND, x: 5, y: 20 },
+      { rows: HAND, x: 9, y: 20 },
+    ],
+  },
+  {
+    dy: 0,
+    legs: null,
+    seated: true,
+    arms: [
+      { rows: ARM_L, x: 1, y: 17 },
+      { rows: ARM_R, x: 13, y: 17 },
+      { rows: HAND, x: 4, y: 21 },
+      { rows: HAND, x: 10, y: 21 },
+    ],
+    head: { rows: mirror(NAP_HEAD_HALF), y: NAP_HEAD_Y },
+  },
+  {
+    dy: 0,
+    legs: null,
+    seated: true,
+    arms: [
+      { rows: ARM_L, x: 1, y: 16 },
+      { rows: ARM_R, x: 13, y: 16 },
+      { rows: HAND, x: 3, y: 17 },
+      { rows: HAND, x: 11, y: 17 },
+    ],
+  },
+  {
+    dy: 1,
+    legs: null,
+    seated: true,
+    arms: [
+      { rows: ARM_L, x: 1, y: 16 },
+      { rows: ARM_R, x: 13, y: 16 },
+      { rows: HAND, x: 3, y: 17 },
+      { rows: HAND, x: 11, y: 16 },
+    ],
+  },
+];
 
 function posesFor(dir: Dir): Pose[] {
   if (dir === 'right') {
@@ -358,7 +437,15 @@ function stampGrid(g: FrameGrid, rows: readonly string[], x: number, y: number):
 }
 
 export function composeFrame(dir: Dir, frame: number): FrameGrid {
-  const pose = posesFor(dir)[frame];
+  return composePose(dir, posesFor(dir)[frame]);
+}
+
+/** Idle row frame `i` (0 sit-idle, 1 head-down, 2 page-turn A, 3 page-turn B), front view. */
+export function composeIdleFrame(i: number): FrameGrid {
+  return composePose('down', IDLE_POSES[i]);
+}
+
+function composePose(dir: Dir, pose: Pose): FrameGrid {
   const g = blank();
   if (pose.legs) {
     stampGrid(g, pose.legs, 0, LEGS_Y);
@@ -371,7 +458,11 @@ export function composeFrame(dir: Dir, frame: number): FrameGrid {
   for (const a of pose.arms) {
     stampGrid(g, a.rows, a.x, a.y + pose.dy);
   }
-  stampGrid(g, HEADS[dir], 0, HEAD_Y + pose.dy);
+  if (pose.head) {
+    stampGrid(g, pose.head.rows, 0, pose.head.y);
+  } else {
+    stampGrid(g, HEADS[dir], 0, HEAD_Y + pose.dy);
+  }
   return g;
 }
 
@@ -379,6 +470,7 @@ export function validateMaps(): void {
   assertRect('HEAD down', HEADS.down, 16, 12);
   assertRect('HEAD up', HEADS.up, 16, 12);
   assertRect('HEAD right', HEADS.right, 16, 12);
+  assertRect('HEAD nap', mirror(NAP_HEAD_HALF), 16, 9);
   assertRect('TORSO down', TORSO_DOWN, 10, 7);
   assertRect('TORSO up', TORSO_UP, 10, 7);
   assertRect('TORSO right', TORSO_RIGHT, 6, 7);
@@ -455,7 +547,7 @@ export function paletteFor(look: CharLook): Palette {
 }
 
 export function buildCharacterSheet(look: CharLook): Canvas {
-  const sheet = new Canvas(FRAME_W * FRAMES, FRAME_H * DIRS.length);
+  const sheet = new Canvas(FRAME_W * FRAMES, FRAME_H * SHEET_ROWS);
   const pal = paletteFor(look);
   DIRS.forEach((dir, row) => {
     for (let f = 0; f < FRAMES; f++) {
@@ -468,6 +560,14 @@ export function buildCharacterSheet(look: CharLook): Canvas {
       );
     }
   });
+  for (let f = 0; f < IDLE_FRAMES; f++) {
+    sheet.stamp(
+      composeIdleFrame(f).map((r) => r.join('')),
+      pal,
+      f * FRAME_W,
+      DIRS.length * FRAME_H,
+    );
+  }
   return sheet;
 }
 
@@ -480,8 +580,11 @@ export interface DirAnchors {
   headTopY: number;
   /** First outfit row (the shoulder line) in the neutral frame. */
   shoulderY: number;
-  /** Per frame: rows the head and shoulders sit below the neutral frame. */
+  /** Per frame: rows the head sits below the neutral frame. */
   bob: number[];
+  /** Per frame: rows the shoulder line sits below the neutral frame. Differs from `bob` only when
+   *  the head moves alone (the bowed head of the nap frame). */
+  shoulderBob: number[];
 }
 
 export type Anchors = Record<Dir, DirAnchors>;
@@ -499,6 +602,10 @@ export function computeAnchors(): Anchors {
   const out = {} as Anchors;
   for (const dir of DIRS) {
     const frames = Array.from({ length: FRAMES }, (_, f) => composeFrame(dir, f));
+    // The idle row is front view only: its frames follow the seven of `down` (frames 7..10).
+    if (dir === 'down') {
+      for (let f = 0; f < IDLE_FRAMES; f++) frames.push(composeIdleFrame(f));
+    }
     const top = frames.map((g) => firstRow(g, (c) => c !== '.'));
     const shoulder = frames.map((g) => firstRow(g, (c) => c === 't'));
     const neutral = 1;
@@ -506,6 +613,7 @@ export function computeAnchors(): Anchors {
       headTopY: top[neutral],
       shoulderY: shoulder[neutral],
       bob: top.map((t) => t - top[neutral]),
+      shoulderBob: shoulder.map((t) => t - shoulder[neutral]),
     };
   }
   return out;

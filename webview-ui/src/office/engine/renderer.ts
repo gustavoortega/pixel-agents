@@ -17,7 +17,6 @@ import {
   AREA_SIGN_USAGE_BAR_HEIGHT_PX,
   AREA_SIGN_USAGE_TRACK_COLOR,
   BUBBLE_FADE_DURATION_SEC,
-  BUBBLE_SITTING_OFFSET_PX,
   BUBBLE_VERTICAL_OFFSET_PX,
   BUTTON_ICON_COLOR,
   BUTTON_ICON_SIZE_FACTOR,
@@ -27,7 +26,6 @@ import {
   BUTTON_RADIUS_ZOOM_FACTOR,
   CARPET_DEFAULT_ACCENT_COLOR,
   CARPET_DEFAULT_COLOR,
-  CHARACTER_SITTING_OFFSET_PX,
   CHARACTER_Z_SORT_OFFSET,
   COMPANION_DESK_Z_OFFSET,
   COMPANION_FEET_INSET_PX,
@@ -44,6 +42,9 @@ import {
   HEADLESS_CHARACTER_ALPHA,
   IDLE_GLYPH_COLOR,
   IDLE_GLYPH_SHADOW_COLOR,
+  NAP_ZZ_CELL_PX,
+  NAP_ZZ_PERIOD_MS,
+  NAP_ZZ_RISE_CELLS,
   ROTATE_BUTTON_BG,
   SEAT_AVAILABLE_COLOR,
   SEAT_BUSY_COLOR,
@@ -65,12 +66,14 @@ import {
 } from '../flair/accessories.js';
 import type { Companion } from '../flair/companion.js';
 import { companionHoverOffsetPx, getCompanionSprite } from '../flair/companion.js';
+import { bookPlacement, mugPlacement } from '../flair/idleProps.js';
 import { characterFlair, characterOutline } from '../flair/modelFlair.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
 import { areaSignRect } from '../labelLayout.js';
 import type { GlowFixtures, GlowSource, Lighting } from '../lighting.js';
 import { glowDraws } from '../lighting.js';
 import { mapOffset } from '../projection.js';
+import { seatedBubbleOffsetPx, seatedDrawOffsetPx } from '../seatDraw.js';
 import { characterLayerZ, shadowSprite } from '../shadow.js';
 import {
   getCarpetJunctionSprite,
@@ -101,9 +104,9 @@ import type {
   SpriteData,
   TileType as TileTypeVal,
 } from '../types.js';
-import { CharacterState, TILE_SIZE, TileType } from '../types.js';
+import { CharacterState, Direction, IdlePose, TILE_SIZE, TileType } from '../types.js';
 import { getWallInstances, hasWallSprites, wallColorToHex } from '../wallTiles.js';
-import { getCharacterSprite, sheetFrameIndex } from './characters.js';
+import { getCharacterSprite, readingPage, sheetFrameIndex } from './characters.js';
 import { renderMatrixEffect } from './matrixEffect.js';
 import { getPetSpriteData } from './petEntity.js';
 
@@ -535,7 +538,7 @@ export function renderScene(
     const layerZ = characterLayerZ(charZY);
     {
       const shadowCached = getCachedSprite(shadowSprite(ch.isSubagent), zoom);
-      const sit = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
+      const sit = seatedDrawOffsetPx(ch);
       const sx = Math.round(offsetX + ch.x * zoom - shadowCached.width / 2);
       const sy = Math.round(offsetY + (ch.y + sit) * zoom - shadowCached.height / 2);
       drawables.push({
@@ -605,6 +608,31 @@ export function renderScene(
           c.restore();
         },
       });
+    }
+
+    // What an idle agent holds: the book while reading, the mug on the sofa. Over the body, so the
+    // desk or sofa front that sorts in front of the agent still hides whatever sinks behind it.
+    if (ch.state === CharacterState.TYPE && ch.dir === Direction.DOWN) {
+      const held =
+        ch.pose === IdlePose.READING
+          ? bookPlacement(readingPage(ch), sheetFrameIndex(ch))
+          : ch.pose === IdlePose.COFFEE
+            ? mugPlacement()
+            : null;
+      if (held) {
+        const heldCached = getCachedSprite(held.sprite, zoom);
+        const hx = drawX + held.dx * zoom;
+        const hy = drawY + held.dy * zoom;
+        drawables.push({
+          zY: charZY + ACCESSORY_FRONT_Z_OFFSET,
+          draw: (c) => {
+            c.save();
+            c.globalAlpha = alpha;
+            c.drawImage(heldCached, hx, hy);
+            c.restore();
+          },
+        });
+      }
     }
 
     drawables.push({
@@ -1027,6 +1055,48 @@ function renderIdleGlyph(
   ctx.restore();
 }
 
+/**
+ * Napping "Zz": two z glyphs climbing from the head and fading out, a beat apart. Same 3x5 z as the
+ * idle glyph, but moving: a napper is the one idle state worth a little motion.
+ */
+function renderNapZz(
+  ctx: CanvasRenderingContext2D,
+  centerX: number,
+  bottomY: number,
+  zoom: number,
+  nowMs: number,
+): void {
+  const cell = Math.max(1, Math.round(zoom * NAP_ZZ_CELL_PX));
+  const rows: Array<[number, number]> = [
+    [0, 3],
+    [2, 1],
+    [1, 1],
+    [0, 1],
+    [0, 3],
+  ];
+  ctx.save();
+  for (const [phase, dx] of [
+    [0, 0],
+    [0.5, 4],
+  ] as const) {
+    const t = (nowMs / NAP_ZZ_PERIOD_MS + phase) % 1;
+    const rise = Math.round(t * NAP_ZZ_RISE_CELLS * cell);
+    const left = Math.round(centerX) + (dx - 1) * cell;
+    const top = Math.round(bottomY) - 5 * cell - rise;
+    ctx.globalAlpha = 1 - t * t;
+    for (const [color, sh] of [
+      [IDLE_GLYPH_SHADOW_COLOR, 1],
+      [IDLE_GLYPH_COLOR, 0],
+    ] as const) {
+      ctx.fillStyle = color;
+      rows.forEach(([start, width], r) => {
+        ctx.fillRect(left + start * cell + sh, top + r * cell + sh, width * cell, cell);
+      });
+    }
+  }
+  ctx.restore();
+}
+
 function renderBubbles(
   ctx: CanvasRenderingContext2D,
   characters: Character[],
@@ -1034,11 +1104,12 @@ function renderBubbles(
   offsetY: number,
   zoom: number,
   tripwires?: ReadonlyMap<number, { severity: TripwireSeverity }>,
+  nowMs = 0,
 ): void {
   for (const ch of characters) {
     // Character is anchored bottom-center at (ch.x, ch.y), sprite is 16x24.
     // Bubbles sit above the head with a small gap; follow sitting offset.
-    const sittingOff = ch.state === CharacterState.TYPE ? BUBBLE_SITTING_OFFSET_PX : 0;
+    const sittingOff = seatedBubbleOffsetPx(ch);
     const headY = Math.round(offsetY + (ch.y + sittingOff - BUBBLE_VERTICAL_OFFSET_PX) * zoom);
     let topY = headY - 1 * zoom;
 
@@ -1074,7 +1145,11 @@ function renderBubbles(
 
     // Shares the above-head slot with bubbles and the beacon; statusGlyph yields to both.
     if (statusGlyph(ch, !!tripwire)) {
-      renderIdleGlyph(ctx, offsetX + ch.x * zoom, topY, zoom);
+      if (ch.pose === IdlePose.NAPPING && ch.state === CharacterState.TYPE) {
+        renderNapZz(ctx, offsetX + ch.x * zoom, topY, zoom, nowMs);
+      } else {
+        renderIdleGlyph(ctx, offsetX + ch.x * zoom, topY, zoom);
+      }
     }
   }
 }
@@ -1283,7 +1358,7 @@ export function renderFrame(
   }
 
   // Speech bubbles (always on top of characters)
-  renderBubbles(ctx, characters, offsetX, offsetY, zoom, tripwires);
+  renderBubbles(ctx, characters, offsetX, offsetY, zoom, tripwires, look?.nowMs);
   // Pet heart bubbles (same overlay pass)
   if (pets && pets.length > 0) {
     renderPetBubbles(ctx, pets, offsetX, offsetY, zoom);

@@ -1,6 +1,7 @@
 /**
- * Camera "fit to activity": pick the integer zoom and centre that frame the seats that are in
- * use, and keep them framed without ever jumping the view around.
+ * Camera: "fit to activity" (the integer zoom and centre that frame the rooms where agents are
+ * working, kept framed without jumping the view around) and the pan/zoom rules (a zoom keeps the
+ * point under an anchor still, a map smaller than the view is centred, a bigger one never shows void).
  *
  * Pure functions plus a tiny controller with an injected clock. The canvas component feeds it
  * once per frame and applies what it returns; nothing here touches the DOM.
@@ -9,8 +10,8 @@
 import {
   FIT_CENTER_EASE_MS,
   FIT_MARGIN_TILES,
-  FIT_MIN_ZOOM,
-  FIT_TOP_PAD_TILES,
+  FIT_MIN_ROOMS,
+  LOUNGE_FURNITURE_TYPE,
   TILE_SIZE,
   ZOOM_MAX,
   ZOOM_MIN,
@@ -38,31 +39,139 @@ export interface FitResult {
   zoom: number;
   /** Centre of the framed area, in world px. */
   center: Point;
+  /** The framed tiles, margin included (whole map without a target). Absent on a result that only tracks the view. */
+  box?: TileBox;
 }
 
-/** Bounding box of the seats in use, or null when nobody is seated. */
-export function occupiedTileBox(
-  seats: Iterable<{ seatCol: number; seatRow: number }>,
-): TileBox | null {
-  let box: TileBox | null = null;
-  for (const s of seats) {
-    if (!box) box = { col0: s.seatCol, row0: s.seatRow, col1: s.seatCol, row1: s.seatRow };
-    else {
-      box.col0 = Math.min(box.col0, s.seatCol);
-      box.row0 = Math.min(box.row0, s.seatRow);
-      box.col1 = Math.max(box.col1, s.seatCol);
-      box.row1 = Math.max(box.row1, s.seatRow);
-    }
+/** A room's key in the room map for agents (and floor) outside every Area. */
+export const LOBBY_ROOM = '';
+
+export interface RoomLayout {
+  cols: number;
+  rows: number;
+  /** Per tile, parallel to the floor: 0 is wall, 255 is void; everything else is floor. */
+  tiles: ReadonlyArray<number>;
+  /** Per tile Area label; null = none. */
+  areaTiles?: ReadonlyArray<string | null>;
+  furniture: ReadonlyArray<{ type: string; col: number; row: number }>;
+}
+
+export interface Rooms {
+  /** Tile box of every room: the bbox of an Area's tiles, and the lobby (floor outside every Area). */
+  boxes: Map<string, TileBox>;
+  /** Label of the Area holding the coffee table, or null when no Area does. */
+  lounge: string | null;
+}
+
+function growBox(box: TileBox | undefined, col: number, row: number): TileBox {
+  if (!box) return { col0: col, row0: row, col1: col, row1: row };
+  return {
+    col0: Math.min(box.col0, col),
+    row0: Math.min(box.row0, row),
+    col1: Math.max(box.col1, col),
+    row1: Math.max(box.row1, row),
+  };
+}
+
+/**
+ * The rooms of a layout: one box per Area (the bounding box of its tiles) plus the lobby, the
+ * floor that belongs to no Area. A layout without Areas is one lobby, i.e. the whole floor.
+ */
+export function roomsOf(layout: RoomLayout): Rooms {
+  const boxes = new Map<string, TileBox>();
+  const WALL = 0;
+  const VOID = 255;
+  for (let i = 0; i < layout.tiles.length; i++) {
+    const t = layout.tiles[i];
+    if (t === WALL || t === VOID) continue;
+    const col = i % layout.cols;
+    const row = Math.floor(i / layout.cols);
+    const key = layout.areaTiles?.[i] ?? LOBBY_ROOM;
+    boxes.set(key, growBox(boxes.get(key), col, row));
   }
-  return box;
+  let lounge: string | null = null;
+  const table = layout.furniture.find((f) => f.type === LOUNGE_FURNITURE_TYPE);
+  if (table) {
+    const label = layout.areaTiles?.[table.row * layout.cols + table.col] ?? null;
+    if (label && boxes.has(label)) lounge = label;
+  }
+  return { boxes, lounge };
 }
 
-/** The box grown by the margin. Deliberately not clamped to the map: a seat by the wall still
- *  wants the same breathing room, and the minimum-zoom rule is what keeps that from zooming out. */
-function withMargin(box: TileBox): TileBox {
+/** Squared distance between the centres of two boxes. */
+function boxGap(a: TileBox, b: TileBox): number {
+  const dx = (a.col0 + a.col1) / 2 - (b.col0 + b.col1) / 2;
+  const dy = (a.row0 + a.row1) / 2 - (b.row0 + b.row1) / 2;
+  return dx * dx + dy * dy;
+}
+
+function unionBox(boxes: Iterable<TileBox>): TileBox | null {
+  let u: TileBox | null = null;
+  for (const b of boxes) {
+    u = u
+      ? {
+          col0: Math.min(u.col0, b.col0),
+          row0: Math.min(u.row0, b.row0),
+          col1: Math.max(u.col1, b.col1),
+          row1: Math.max(u.row1, b.row1),
+        }
+      : { ...b };
+  }
+  return u;
+}
+
+/** One agent as the fit sees it. */
+export interface FitAgent {
+  /** active and waiting agents hold the frame; idle ones (coffee walkers, nappers) never do. */
+  working: boolean;
+  /** Room of its seat (or of the tile it stands on without one); LOBBY_ROOM outside every Area. */
+  room: string;
+  /** Room of the tile it stands on right now: how the lounge notices someone walked in. */
+  tileRoom: string;
+}
+
+/**
+ * What the camera frames: the union of the room boxes where somebody is working, plus the lounge
+ * when anyone at all is in it, widened to at least FIT_MIN_ROOMS rooms (the closest rooms join).
+ * Null when nobody is working, and when the map has fewer rooms than that minimum: both frame the
+ * whole map. Never a sprite box, so walking agents cannot make the frame twitch.
+ */
+export function fitTarget(rooms: Rooms, agents: Iterable<FitAgent>): TileBox | null {
+  const chosen = new Set<string>();
+  let anyone = false;
+  let inLounge = false;
+  for (const a of agents) {
+    anyone = true;
+    if (a.working && rooms.boxes.has(a.room)) chosen.add(a.room);
+    if (rooms.lounge !== null && a.tileRoom === rooms.lounge) inLounge = true;
+  }
+  if (!anyone || chosen.size === 0) return null;
+  if (inLounge && rooms.lounge !== null) chosen.add(rooms.lounge);
+  if (rooms.boxes.size < FIT_MIN_ROOMS) return null;
+
+  while (chosen.size < FIT_MIN_ROOMS) {
+    const frame = unionBox([...chosen].map((k) => rooms.boxes.get(k)!))!;
+    let best: string | null = null;
+    let bestGap = Infinity;
+    for (const [key, box] of rooms.boxes) {
+      if (chosen.has(key)) continue;
+      const gap = boxGap(frame, box);
+      if (gap < bestGap) {
+        best = key;
+        bestGap = gap;
+      }
+    }
+    if (best === null) break;
+    chosen.add(best);
+  }
+  return unionBox([...chosen].map((k) => rooms.boxes.get(k)!));
+}
+
+/** The box grown by the margin. Not clamped to the map: the pan clamp keeps the view inside it. */
+export function withMargin(box: TileBox): TileBox {
   return {
     col0: box.col0 - FIT_MARGIN_TILES,
-    row0: box.row0 - FIT_MARGIN_TILES - FIT_TOP_PAD_TILES,
+    row0: box.row0 - FIT_MARGIN_TILES,
     col1: box.col1 + FIT_MARGIN_TILES,
     row1: box.row1 + FIT_MARGIN_TILES,
   };
@@ -80,48 +189,52 @@ function zoomToFit(tilesW: number, tilesH: number, devW: number, devH: number): 
   return Math.floor(Math.min(devW / (tilesW * TILE_SIZE), devH / (tilesH * TILE_SIZE)));
 }
 
+/** Zoom at which the whole map fits the canvas: the reference the plates scale against. */
+export function fitZoomWholeMap(
+  map: MapSize,
+  canvas: { width: number; height: number },
+  dpr: number,
+): number {
+  const fit = zoomToFit(map.cols, map.rows, canvas.width * dpr, canvas.height * dpr);
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fit));
+}
+
 /**
- * Zoom and centre that frame the occupied seats plus a margin, or the whole map when nobody is
- * seated. The zoom is the largest integer that fits, never below FIT_MIN_ZOOM unless the whole
- * map needs less, and clamped to the zoom range. `canvas` is in CSS px; `dpr` converts it.
+ * Zoom and centre that frame the target box plus a margin, or the whole map when there is no
+ * target. The zoom is the largest integer at which the frame fits, so the frame fills the shorter
+ * viewport axis; the longer one is left to the pan clamp's centring. `canvas` is in CSS px.
  */
 export function fitView(
-  occupied: TileBox | null,
+  target: TileBox | null,
   map: MapSize,
   canvas: { width: number; height: number },
   dpr: number,
 ): FitResult {
   const devW = canvas.width * dpr;
   const devH = canvas.height * dpr;
-  const mapBox: TileBox = {
-    col0: 0,
-    row0: -FIT_TOP_PAD_TILES,
-    col1: map.cols - 1,
-    row1: map.rows - 1,
-  };
-  const box = occupied ? withMargin(occupied) : mapBox;
+  const box = target
+    ? withMargin(target)
+    : { col0: 0, row0: 0, col1: map.cols - 1, row1: map.rows - 1 };
   const fit = zoomToFit(box.col1 - box.col0 + 1, box.row1 - box.row0 + 1, devW, devH);
-  const wholeMapFit = zoomToFit(map.cols, map.rows, devW, devH);
-  const floor = Math.min(FIT_MIN_ZOOM, wholeMapFit);
-  const zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.max(fit, floor)));
-  return { zoom, center: boxCenter(box) };
+  const zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fit));
+  return { zoom, center: boxCenter(box), box };
 }
 
 /**
- * What to do when the set of occupied seats changed. Null when the new box (with margin) is
- * already inside the current view. Otherwise the view moves to the box, and the zoom only ever
- * goes OUT: it never zooms back in by itself, so a seat appearing cannot make the room jump
- * closer. The Fit button is how the user asks for the tightest frame.
+ * What to do when the fit target changed. Null when the new box (with margin) is already inside
+ * the current view. Otherwise the view moves to the box, and the zoom only ever goes OUT: it never
+ * zooms back in by itself, so an agent starting work cannot make the room jump closer. The Fit
+ * button is how the user asks for the tightest frame.
  */
 export function refitView(
   current: FitResult,
-  occupied: TileBox | null,
+  target: TileBox | null,
   map: MapSize,
   canvas: { width: number; height: number },
   dpr: number,
 ): FitResult | null {
-  if (!occupied) return null;
-  const box = withMargin(occupied);
+  if (!target) return null;
+  const box = withMargin(target);
   const halfW = (canvas.width * dpr) / current.zoom / 2;
   const halfH = (canvas.height * dpr) / current.zoom / 2;
   const inside =
@@ -130,8 +243,92 @@ export function refitView(
     box.row0 * TILE_SIZE >= current.center.y - halfH &&
     (box.row1 + 1) * TILE_SIZE <= current.center.y + halfH;
   if (inside) return null;
-  const target = fitView(occupied, map, canvas, dpr);
-  return { zoom: Math.min(current.zoom, target.zoom), center: target.center };
+  const next = fitView(target, map, canvas, dpr);
+  return { zoom: Math.min(current.zoom, next.zoom), center: next.center };
+}
+
+// ── Pan and zoom rules ──────────────────────────────────────────
+
+/**
+ * Where the map's near edge may sit on one axis, device px. A map smaller than the view is
+ * centred; a bigger one is clamped so no void shows on either side: the offset stays in
+ * [view - map, 0].
+ */
+export function clampOffset(view: number, mapPx: number, offset: number): number {
+  if (mapPx <= view) return Math.floor((view - mapPx) / 2);
+  return Math.max(view - mapPx, Math.min(0, offset));
+}
+
+/** Offset of the map's top-left corner for a pan, the renderer's formula (see `mapOffset`). */
+function offsetOfPan(view: number, mapPx: number, pan: number): number {
+  return Math.floor((view - mapPx) / 2) + Math.round(pan);
+}
+
+/** Pan whose offset is `offset` (the inverse of offsetOfPan). */
+function panOfOffset(view: number, mapPx: number, offset: number): number {
+  return offset - Math.floor((view - mapPx) / 2);
+}
+
+/** `pan` moved onto the nearest legal one for this zoom: centred per axis when the map is small, void-free when it is big. */
+export function clampPan(
+  pan: Point,
+  canvas: { width: number; height: number },
+  map: MapSize,
+  zoom: number,
+): Point {
+  const mapW = map.cols * TILE_SIZE * zoom;
+  const mapH = map.rows * TILE_SIZE * zoom;
+  return {
+    x: panOfOffset(
+      canvas.width,
+      mapW,
+      clampOffset(canvas.width, mapW, offsetOfPan(canvas.width, mapW, pan.x)),
+    ),
+    y: panOfOffset(
+      canvas.height,
+      mapH,
+      clampOffset(canvas.height, mapH, offsetOfPan(canvas.height, mapH, pan.y)),
+    ),
+  };
+}
+
+/**
+ * The offset a zoom change leaves the map at, so the world point under `anchor` (canvas device px:
+ * the viewport centre for buttons, the cursor for the wheel) stays under it.
+ */
+export function zoomAbout(anchor: Point, offset: Point, fromZoom: number, toZoom: number): Point {
+  const k = toZoom / fromZoom;
+  return { x: anchor.x - (anchor.x - offset.x) * k, y: anchor.y - (anchor.y - offset.y) * k };
+}
+
+/** The pan after a zoom change about `anchor`, clamped for the new zoom. */
+export function panAfterZoom(
+  anchor: Point,
+  pan: Point,
+  fromZoom: number,
+  toZoom: number,
+  canvas: { width: number; height: number },
+  map: MapSize,
+): Point {
+  const oldW = map.cols * TILE_SIZE * fromZoom;
+  const oldH = map.rows * TILE_SIZE * fromZoom;
+  const offset = zoomAbout(
+    anchor,
+    { x: offsetOfPan(canvas.width, oldW, pan.x), y: offsetOfPan(canvas.height, oldH, pan.y) },
+    fromZoom,
+    toZoom,
+  );
+  const newW = map.cols * TILE_SIZE * toZoom;
+  const newH = map.rows * TILE_SIZE * toZoom;
+  return clampPan(
+    {
+      x: panOfOffset(canvas.width, newW, offset.x),
+      y: panOfOffset(canvas.height, newH, offset.y),
+    },
+    canvas,
+    map,
+    toZoom,
+  );
 }
 
 /** Pan (device px, as the renderer's `panRef` holds it) that puts `center` in the middle of the canvas. */
@@ -158,7 +355,8 @@ export function easeCenter(from: Point, to: Point, t: number): Point {
 }
 
 export interface AutoFitInput {
-  occupied: TileBox | null;
+  /** What the fit frames: the working rooms (see `fitTarget`); null frames the whole map. */
+  target: TileBox | null;
   map: MapSize;
   canvas: { width: number; height: number };
   dpr: number;
@@ -180,7 +378,7 @@ export interface AutoFitCommand {
 
 /**
  * Auto-fit state. On at start; any manual zoom or pan, an open editor or a followed agent turns
- * it off, and `enable` (the Fit button) turns it on and frames the occupied seats right away.
+ * it off, and `enable` (the Fit button) turns it on and frames the working rooms right away.
  */
 export class AutoFit {
   private readonly onChange?: (enabled: boolean) => void;
@@ -208,7 +406,7 @@ export class AutoFit {
     }
   }
 
-  /** Fit button: frame the occupied seats again and keep following changes. */
+  /** Fit button: frame the working rooms again and keep following changes. */
   enable(): void {
     this.started = false;
     this.anim = null;
@@ -222,15 +420,23 @@ export class AutoFit {
     if (input.editing || input.followed) this.disable();
     if (!this.on || input.canvas.width <= 0 || input.canvas.height <= 0) return {};
     const { map, canvas, dpr } = input;
-    const key = input.occupied ? JSON.stringify(input.occupied) : '';
+    const key = input.target ? JSON.stringify(input.target) : '';
+    // Pans leave here already legal for the zoom they are valid at, so the canvas applies them as given.
+    const legal = (center: Point, zoom: number): Point =>
+      clampPan(
+        panForCenter(center, map, zoom),
+        { width: canvas.width * dpr, height: canvas.height * dpr },
+        map,
+        zoom,
+      );
 
     if (!this.started) {
       this.started = true;
       this.lastKey = key;
-      const fit = fitView(input.occupied, map, canvas, dpr);
+      const fit = fitView(input.target, map, canvas, dpr);
       this.zoom = fit.zoom;
       this.anim = null;
-      return { zoom: fit.zoom, pan: panForCenter(fit.center, map, fit.zoom), panZoom: fit.zoom };
+      return { zoom: fit.zoom, pan: legal(fit.center, fit.zoom), panZoom: fit.zoom };
     }
 
     if (this.zoom === 0) this.zoom = input.zoom;
@@ -242,7 +448,7 @@ export class AutoFit {
         zoom: this.zoom,
         center: centerForPan(input.pan, map, this.zoom),
       };
-      const next = refitView(current, input.occupied, map, canvas, dpr);
+      const next = refitView(current, input.target, map, canvas, dpr);
       if (next) {
         if (next.zoom !== this.zoom) {
           this.zoom = next.zoom;
@@ -254,7 +460,7 @@ export class AutoFit {
 
     if (this.anim) {
       const t = (input.nowMs - this.anim.startMs) / FIT_CENTER_EASE_MS;
-      cmd.pan = panForCenter(easeCenter(this.anim.from, this.anim.to, t), map, this.zoom);
+      cmd.pan = legal(easeCenter(this.anim.from, this.anim.to, t), this.zoom);
       cmd.panZoom = this.zoom;
       if (t >= 1) this.anim = null;
     }

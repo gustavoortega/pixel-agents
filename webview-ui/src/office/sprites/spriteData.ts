@@ -64,6 +64,9 @@ export interface CharacterSprites {
   walk: Record<Direction, [SpriteData, SpriteData, SpriteData, SpriteData]>;
   typing: Record<Direction, [SpriteData, SpriteData]>;
   reading: Record<Direction, [SpriteData, SpriteData]>;
+  /** Front-view idle poses (sheet row 3, `down` frames 7..10): sit-idle, head-down (nap),
+   *  page-turn A, page-turn B. A sheet without the row falls back to the typing frames. */
+  idle: [SpriteData, SpriteData, SpriteData, SpriteData];
 }
 
 const spriteCache = new Map<string, CharacterSprites>();
@@ -107,6 +110,12 @@ export function hueShiftSprites(sprites: CharacterSprites, hueShift: number): Ch
       [Dir.RIGHT]: shiftPair(sprites.reading[Dir.RIGHT]),
       [Dir.LEFT]: shiftPair(sprites.reading[Dir.LEFT]),
     } as Record<Direction, [SpriteData, SpriteData]>,
+    idle: [
+      shift(sprites.idle[0]),
+      shift(sprites.idle[1]),
+      shift(sprites.idle[2]),
+      shift(sprites.idle[3]),
+    ],
   };
 }
 
@@ -153,6 +162,7 @@ export function getCharacterSprites(paletteIndex: number, hueShift = 0): Charact
         [Dir.RIGHT]: [rt[5], rt[6]],
         [Dir.LEFT]: [flip(rt[5]), flip(rt[6])],
       },
+      idle: [d[7] ?? d[3], d[8] ?? d[3], d[9] ?? d[5], d[10] ?? d[6]],
     };
   } else {
     // Fallback: return transparent placeholder sprites (16×32)
@@ -178,6 +188,7 @@ export function getCharacterSprites(paletteIndex: number, hueShift = 0): Charact
         [Dir.RIGHT]: pairSet,
         [Dir.LEFT]: pairSet,
       },
+      idle: [e, e, e, e],
     };
   }
 

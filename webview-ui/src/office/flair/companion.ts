@@ -91,6 +91,33 @@ export function deskCompanionTile(input: {
   return null;
 }
 
+/**
+ * Where the companion of an agent sitting on a sofa rests: on the coffee table in front of it. The
+ * first table tile along the seat's facing line, else the table tile beside that one (right, then
+ * left). Null when the sofa faces no table or every candidate is taken.
+ */
+export function tableCompanionTile(input: {
+  seat: Tile;
+  /** Unit step of the seat's facing. */
+  facing: Tile;
+  depth: number;
+  tableTiles: ReadonlyMap<string, number>;
+  isTaken: (tile: Tile) => boolean;
+}): Tile | null {
+  const { seat, facing, depth, tableTiles, isTaken } = input;
+  for (let d = 1; d <= depth; d++) {
+    const contact = { col: seat.col + facing.col * d, row: seat.row + facing.row * d };
+    if (!tableTiles.has(`${contact.col},${contact.row}`)) continue;
+    const beside = [
+      contact,
+      { col: contact.col + 1, row: contact.row },
+      { col: contact.col - 1, row: contact.row },
+    ];
+    return beside.find((t) => tableTiles.has(`${t.col},${t.row}`) && !isTaken(t)) ?? null;
+  }
+  return null;
+}
+
 /** New trail after the agent moved from `from` to `to`; unchanged while it stays put. */
 export function advanceTrail(trail: readonly Tile[], from: Tile, to: Tile): readonly Tile[] {
   if (from.col === to.col && from.row === to.row) return trail;
