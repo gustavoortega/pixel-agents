@@ -25,6 +25,7 @@ export type ServerMessage =
   | SubagentToolPermission
   | AgentTeamInfo
   | AgentContextUsage
+  | AgentModel
   | AgentSessionTitle
   | AgentTripwire
   | AgentTripwireClear
@@ -57,6 +58,7 @@ export type ClientMessage =
   | SetLastSeenVersion
   | SetAlwaysShowLabels
   | SetGhostHeadlessAgents
+  | SetShowModelFlair
   | SetHooksEnabled
   | HooksConsentResponse
   | SetHooksInfoShown
@@ -196,6 +198,13 @@ export interface AgentContextUsage {
   maxContextTokens: number;
 }
 
+export interface AgentModel {
+  type: 'agentModel';
+  id: number;
+  model?: string;
+  tier?: number;
+}
+
 export interface AgentSessionTitle {
   type: 'agentSessionTitle';
   id: number;
@@ -325,6 +334,7 @@ export interface SettingsLoaded {
   watchAllSessions: boolean;
   alwaysShowLabels: boolean;
   ghostHeadlessAgents: boolean;
+  showModelFlair: boolean;
   hooksEnabled: boolean;
   hooksInfoShown: boolean;
   externalAssetDirectories: string[];
@@ -466,6 +476,11 @@ export interface SetAlwaysShowLabels {
 
 export interface SetGhostHeadlessAgents {
   type: 'setGhostHeadlessAgents';
+  enabled: boolean;
+}
+
+export interface SetShowModelFlair {
+  type: 'setShowModelFlair';
   enabled: boolean;
 }
 

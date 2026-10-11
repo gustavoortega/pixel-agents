@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { HooksConsentRequest, TokenUsage } from '../../../core/src/messages.js';
+import type { ModelTier } from '../../../core/src/provider.js';
 import { areaShares } from '../components/usageView.js';
 import {
   playAlarmSound,
@@ -11,7 +12,10 @@ import {
 import type { ExistingAgentMeta, PendingAgent } from '../office/engine/existingAgents.js';
 import { reconcileExistingAgents } from '../office/engine/existingAgents.js';
 import type { OfficeState } from '../office/engine/officeState.js';
-import { setGhostHeadlessAgents as setRendererGhostHeadlessAgents } from '../office/engine/renderer.js';
+import {
+  setGhostHeadlessAgents as setRendererGhostHeadlessAgents,
+  setShowModelFlair as setRendererShowModelFlair,
+} from '../office/engine/renderer.js';
 import { setFloorSprites } from '../office/floorTiles.js';
 import { buildDynamicCatalog } from '../office/layout/furnitureCatalog.js';
 import { migrateLayoutColors } from '../office/layout/layoutSerializer.js';
@@ -96,6 +100,8 @@ interface ExtensionMessageState {
   alwaysShowLabels: boolean;
   ghostHeadlessAgents: boolean;
   setGhostHeadlessAgents: (v: boolean) => void;
+  showModelFlair: boolean;
+  setShowModelFlair: (v: boolean) => void;
   hooksEnabled: boolean;
   setHooksEnabled: (v: boolean) => void;
   /** Actual install state per provider (hooksStatus messages) — absent/false
@@ -151,6 +157,7 @@ export function useExtensionMessages(
   const [watchAllSessions, setWatchAllSessions] = useState(false);
   const [alwaysShowLabels, setAlwaysShowLabels] = useState(false);
   const [ghostHeadlessAgents, setGhostHeadlessAgentsState] = useState(false);
+  const [showModelFlair, setShowModelFlairState] = useState(true);
   const [hooksEnabled, setHooksEnabled] = useState(true);
   const [hooksInstalled, setHooksInstalled] = useState<Record<string, boolean>>({});
   const [hooksStatusSeq, setHooksStatusSeq] = useState<Record<string, number>>({});
@@ -170,6 +177,12 @@ export function useExtensionMessages(
   const applyGhostHeadlessAgents = useCallback((enabled: boolean) => {
     setGhostHeadlessAgentsState(enabled);
     setRendererGhostHeadlessAgents(enabled);
+  }, []);
+
+  // Same pairing as the ghost setting: the renderer reads its own copy every frame.
+  const applyShowModelFlair = useCallback((enabled: boolean) => {
+    setShowModelFlairState(enabled);
+    setRendererShowModelFlair(enabled);
   }, []);
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
@@ -671,6 +684,9 @@ export function useExtensionMessages(
         if (typeof msg.ghostHeadlessAgents === 'boolean') {
           applyGhostHeadlessAgents(msg.ghostHeadlessAgents as boolean);
         }
+        if (typeof msg.showModelFlair === 'boolean') {
+          applyShowModelFlair(msg.showModelFlair as boolean);
+        }
         if (typeof msg.hooksEnabled === 'boolean') {
           setHooksEnabled(msg.hooksEnabled as boolean);
         }
@@ -750,6 +766,12 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentContextUsage') {
         const id = msg.id as number;
         os.setAgentContext(id, msg.contextTokens as number, msg.maxContextTokens as number);
+      } else if (msg.type === 'agentModel') {
+        os.setAgentModel(
+          msg.id as number,
+          msg.model as string | undefined,
+          msg.tier as ModelTier | undefined,
+        );
       } else if (msg.type === 'agentSessionTitle') {
         os.setSessionTitle(msg.id as number, msg.title as string | undefined);
       } else if (msg.type === 'agentTripwire') {
@@ -822,6 +844,8 @@ export function useExtensionMessages(
     alwaysShowLabels,
     ghostHeadlessAgents,
     setGhostHeadlessAgents: applyGhostHeadlessAgents,
+    showModelFlair,
+    setShowModelFlair: applyShowModelFlair,
     hooksEnabled,
     hooksInstalled,
     hooksStatusSeq,

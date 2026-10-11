@@ -113,6 +113,37 @@ export function updateContextUsage(
   const isSidechain = (record as TranscriptRecord | null)?.isSidechain === true;
   if (isSidechain && agent.sawMainChainUsage) return;
   applyContextTokens(agentId, agent, agents, tokens, !isSidechain, windowFor(record, provider));
+  if (!isSidechain) applyModel(agentId, agent, agents, record, provider);
+}
+
+/**
+ * Track which model the agent's newest main-chain turn ran on, and tell the
+ * office when it changes (it draws the rarity look from it).
+ *
+ * Callers pass main-chain records only: a sidechain turn belongs to a
+ * sub-agent, whose model says nothing about this agent. Synthetic records (API
+ * errors, interrupts) report zero usage, so the callers' no-news gate keeps
+ * them out too. The broadcast is per change, not per line: a transcript
+ * repeats the model on every record.
+ */
+function applyModel(
+  agentId: number,
+  agent: AgentState,
+  agents: AgentStateStore,
+  record: unknown,
+  provider?: HookProvider | null,
+): void {
+  const model = (record as TranscriptRecord | null)?.message?.model;
+  if (typeof model !== 'string' || !model) return;
+  const tier = provider?.modelTier?.(model);
+  if (model === agent.model && tier === agent.modelTier) return;
+  agent.model = model;
+  agent.modelTier = tier;
+  agents.broadcast(
+    tier === undefined
+      ? { type: 'agentModel', id: agentId, model }
+      : { type: 'agentModel', id: agentId, model, tier },
+  );
 }
 
 /** The provider's window for whichever model wrote this record. */
@@ -183,6 +214,7 @@ export function seedContextUsage(
       continue;
     }
     applyContextTokens(agentId, agent, agents, tokens, true, windowFor(record, provider));
+    applyModel(agentId, agent, agents, record, provider);
     return;
   }
   if (sidechain) {

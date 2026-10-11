@@ -17,6 +17,7 @@ import {
   CONTEXT_GAUGE_WIDTH_PX,
   CONTEXT_WARN_THRESHOLD,
   LABEL_LAYOUT_DIM_OPACITY,
+  RARITY_SHIMMER_SEC,
   TEAM_LEAD_COLOR,
   TEAM_ROLE_COLOR,
   TILE_SIZE,
@@ -24,6 +25,8 @@ import {
 } from '../../constants.js';
 import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../engine/officeState.js';
+import { isShowModelFlairEnabled } from '../engine/renderer.js';
+import { characterFlair, Rarity, rarityColor } from '../flair/modelFlair.js';
 import { areaSignRect, type LabelItem, layoutLabels, type Rect } from '../labelLayout.js';
 import { overlayProjection } from '../projection.js';
 import {
@@ -112,6 +115,7 @@ function CompactLabel({
   top,
   dy,
   dim,
+  rarity,
   tripwire,
   onAckTripwire,
 }: {
@@ -123,15 +127,27 @@ function CompactLabel({
   top: number;
   dy: number;
   dim: boolean;
+  /** Rarity of the agent's model: colors the text and rims the label. Absent = plain label. */
+  rarity: Rarity | undefined;
   tripwire: { count: number; severity: TripwireSeverity } | undefined;
   onAckTripwire: (id: number, count: number) => void;
 }) {
   const lines = content.mode === 'compact' ? content.lines : [];
+  // Rim via CSS outline, not border: it draws outside the box, so the label keeps
+  // the exact size the layout pass reserved for it. Markers and empty labels get none.
+  const rarityRim =
+    rarity && lines.length > 0
+      ? {
+          color: rarityColor(rarity),
+          outline: `1px solid ${rarityColor(rarity)}`,
+          background: 'var(--color-bg)',
+        }
+      : undefined;
   // An empty element still renders so every agent keeps its overlay node (tests
   // count them, and hover/select swap it for the full box in place).
   return (
     <div
-      className="absolute flex flex-col overflow-hidden"
+      className={`absolute flex flex-col overflow-hidden${rarity === Rarity.LEGENDARY && rarityRim ? ' rarity-shimmer' : ''}`}
       style={{
         left,
         top,
@@ -141,6 +157,10 @@ function CompactLabel({
         opacity: dim ? LABEL_LAYOUT_DIM_OPACITY : 1,
         pointerEvents: 'none',
         zIndex: COMPACT_LABEL_Z_INDEX,
+        ...rarityRim,
+        ...(rarity === Rarity.LEGENDARY && rarityRim
+          ? ({ '--rarity-shimmer-sec': `${RARITY_SHIMMER_SEC}s` } as React.CSSProperties)
+          : {}),
       }}
       data-testid="agent-overlay"
       data-agent-id={id}
@@ -317,6 +337,7 @@ export function ToolOverlay({
               top={project.toScreenY(ch.y + sit) + COMPACT_LABEL_FEET_GAP_PX}
               dy={placement?.dy ?? 0}
               dim={placement?.dim ?? false}
+              rarity={characterFlair(ch, officeState.models, isShowModelFlairEnabled()).rarity}
               tripwire={officeState.tripwires.get(id)}
               onAckTripwire={onAckTripwire}
             />

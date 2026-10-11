@@ -1,0 +1,16 @@
+{
+  "name": "sparkle",
+  "description": "Twinkle for Fable (3x3 plus).",
+  "width": 3,
+  "height": 3,
+  "palette": {
+    ".": "",
+    "W": "#fff2b0",
+    "Y": "#ffd65a"
+  },
+  "pixels": [
+    [".","Y","."],
+    ["Y","W","Y"],
+    [".","Y","."]
+  ]
+}

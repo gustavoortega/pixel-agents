@@ -9,6 +9,7 @@ export interface AdapterSettings {
   lastSeenVersion: string;
   alwaysShowLabels: boolean;
   ghostHeadlessAgents: boolean;
+  showModelFlair: boolean;
   watchAllSessions: boolean;
   hooksInfoShown: boolean;
   showAreas: boolean;
@@ -27,6 +28,7 @@ export const ADAPTER_SETTING_KEYS = [
   'lastSeenVersion',
   'alwaysShowLabels',
   'ghostHeadlessAgents',
+  'showModelFlair',
   'watchAllSessions',
   'hooksInfoShown',
   'showAreas',
@@ -65,6 +67,7 @@ const DEFAULT_ADAPTER_SETTINGS: AdapterSettings = {
   lastSeenVersion: '',
   alwaysShowLabels: false,
   ghostHeadlessAgents: false,
+  showModelFlair: true,
   watchAllSessions: false,
   hooksInfoShown: false,
   showAreas: false,
@@ -146,6 +149,10 @@ function parseAdapterSettings(raw: unknown): AdapterSettings {
       typeof obj.ghostHeadlessAgents === 'boolean'
         ? obj.ghostHeadlessAgents
         : DEFAULT_ADAPTER_SETTINGS.ghostHeadlessAgents,
+    showModelFlair:
+      typeof obj.showModelFlair === 'boolean'
+        ? obj.showModelFlair
+        : DEFAULT_ADAPTER_SETTINGS.showModelFlair,
     watchAllSessions:
       typeof obj.watchAllSessions === 'boolean'
         ? obj.watchAllSessions

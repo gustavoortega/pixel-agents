@@ -77,6 +77,7 @@ import {
   GLOBAL_KEY_HOOKS_INFO_SHOWN,
   GLOBAL_KEY_LAST_SEEN_VERSION,
   GLOBAL_KEY_SHOW_AREAS,
+  GLOBAL_KEY_SHOW_MODEL_FLAIR,
   GLOBAL_KEY_SOUND_ENABLED,
   GLOBAL_KEY_WATCH_ALL_SESSIONS,
   LAYOUT_REVISION_KEY,
@@ -532,6 +533,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         this.adapter.setSetting(GLOBAL_KEY_LAST_SEEN_VERSION, message.version as string);
       } else if (message.type === 'setAlwaysShowLabels') {
         this.adapter.setSetting(GLOBAL_KEY_ALWAYS_SHOW_LABELS, message.enabled);
+      } else if (message.type === 'setShowModelFlair') {
+        this.adapter.setSetting(GLOBAL_KEY_SHOW_MODEL_FLAIR, message.enabled);
       } else if (message.type === 'setGhostHeadlessAgents') {
         this.adapter.setSetting(GLOBAL_KEY_GHOST_HEADLESS_AGENTS, message.enabled);
       } else if (message.type === 'setHooksEnabled') {
@@ -642,6 +645,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           GLOBAL_KEY_GHOST_HEADLESS_AGENTS,
           false,
         );
+        const showModelFlair = this.adapter.getSetting<boolean>(GLOBAL_KEY_SHOW_MODEL_FLAIR, true);
         this.runtime.watchAllSessions.current = watchAllSessions;
         // settingsLoaded.hooksEnabled stays a single boolean carrying the
         // CLAUDE provider's preference until the Settings UI grows a
@@ -658,6 +662,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           watchAllSessions,
           alwaysShowLabels,
           ghostHeadlessAgents,
+          showModelFlair,
           hooksEnabled,
           hooksInfoShown,
           externalAssetDirectories: config.externalAssetDirectories,

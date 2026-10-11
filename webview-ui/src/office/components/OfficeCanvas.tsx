@@ -296,6 +296,11 @@ export function OfficeCanvas({
           officeState.pets,
           officeState.tripwires,
           officeState.areaUsage,
+          {
+            models: officeState.models,
+            companions: officeState.companions.values(),
+            nowMs: performance.now(),
+          },
         );
         offsetRef.current = { x: offsetX, y: offsetY };
 

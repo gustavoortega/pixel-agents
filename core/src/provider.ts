@@ -70,6 +70,12 @@ export type AgentEvent =
     }
   | { kind: 'sessionEnd'; reason?: string };
 
+// ── Model tiers ───────────────────────────────────────────────
+
+/** Capability rank of a model within its provider: 1 smallest ... 4 largest.
+ *  The office draws a rarity look from it, so it is a ranking, not a model id. */
+export type ModelTier = 1 | 2 | 3 | 4;
+
 // ── Hook-based Provider (CLIs with hooks APIs) ────────────────
 
 export interface HookProvider {
@@ -134,6 +140,9 @@ export interface HookProvider {
   /** How this CLI's transcripts report token usage. Present = the token ledger can
    *  total usage across sessions. See `TranscriptUsageSource`. */
   readonly transcriptUsage?: TranscriptUsageSource;
+  /** Tier of a model id this CLI reports in its transcripts. Undefined for an
+   *  id it cannot place: unknown means no flair, never the lowest tier. */
+  modelTier?(model: string): ModelTier | undefined;
 
   // ── Optional file fallback (heuristic mode) ──
 

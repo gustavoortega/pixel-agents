@@ -18,6 +18,9 @@ interface SettingsModalProps {
   /** Whether headless agents (adopted, no terminal to focus) render translucent. */
   ghostHeadlessAgents: boolean;
   onToggleGhostHeadlessAgents: () => void;
+  /** Whether each agent shows its model's rarity, equipment and companion. */
+  showModelFlair: boolean;
+  onToggleShowModelFlair: () => void;
   externalAssetDirectories: string[];
   watchAllSessions: boolean;
   onToggleWatchAllSessions: () => void;
@@ -50,6 +53,8 @@ export function SettingsModal({
   onToggleAlwaysShowOverlay,
   ghostHeadlessAgents,
   onToggleGhostHeadlessAgents,
+  showModelFlair,
+  onToggleShowModelFlair,
   externalAssetDirectories,
   watchAllSessions,
   onToggleWatchAllSessions,
@@ -223,6 +228,11 @@ export function SettingsModal({
           onChange={onToggleGhostHeadlessAgents}
         />
       )}
+      <Checkbox
+        label="Show Model Flair"
+        checked={showModelFlair}
+        onChange={onToggleShowModelFlair}
+      />
       {showAreasAvailable && (
         <Checkbox label="Show Areas" checked={showAreas} onChange={onToggleShowAreas} />
       )}

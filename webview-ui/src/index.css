@@ -212,3 +212,26 @@
     opacity: 0.3;
   }
 }
+
+/* Legendary label plate: a bright band sweeping across the plate. The label is
+   already absolutely positioned and clips its overflow, so the band needs only
+   the pseudo-element. No blur, so it keeps the hard-edged pixel look. */
+.rarity-shimmer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 30%;
+  left: -40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  animation: rarity-shimmer var(--rarity-shimmer-sec, 2.4s) ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes rarity-shimmer {
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 130%;
+  }
+}

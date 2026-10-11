@@ -73,6 +73,7 @@ const KEY_SOUND_ENABLED = 'pixel-agents.soundEnabled';
 const KEY_LAST_SEEN_VERSION = 'pixel-agents.lastSeenVersion';
 const KEY_ALWAYS_SHOW_LABELS = 'pixel-agents.alwaysShowLabels';
 const KEY_GHOST_HEADLESS_AGENTS = 'pixel-agents.ghostHeadlessAgents';
+const KEY_SHOW_MODEL_FLAIR = 'pixel-agents.showModelFlair';
 const KEY_WATCH_ALL_SESSIONS = 'pixel-agents.watchAllSessions';
 const KEY_HOOKS_INFO_SHOWN = 'pixel-agents.hooksInfoShown';
 const KEY_SHOW_AREAS = 'pixel-agents.showAreas';
@@ -187,6 +188,10 @@ export function handleClientMessage(
 
     case 'setAlwaysShowLabels':
       adapter?.setSetting(KEY_ALWAYS_SHOW_LABELS, msg.enabled);
+      break;
+
+    case 'setShowModelFlair':
+      adapter?.setSetting(KEY_SHOW_MODEL_FLAIR, msg.enabled);
       break;
 
     case 'setGhostHeadlessAgents':
@@ -453,6 +458,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     watchAllSessions,
     alwaysShowLabels: adapter?.getSetting(KEY_ALWAYS_SHOW_LABELS, false) ?? false,
     ghostHeadlessAgents: adapter?.getSetting(KEY_GHOST_HEADLESS_AGENTS, false) ?? false,
+    showModelFlair: adapter?.getSetting(KEY_SHOW_MODEL_FLAIR, true) ?? true,
     hooksEnabled,
     hooksInfoShown: adapter?.getSetting(KEY_HOOKS_INFO_SHOWN, false) ?? false,
     externalAssetDirectories: cfg.externalAssetDirectories,

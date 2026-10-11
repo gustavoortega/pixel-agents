@@ -87,6 +87,8 @@ function App() {
     alwaysShowLabels,
     ghostHeadlessAgents,
     setGhostHeadlessAgents,
+    showModelFlair,
+    setShowModelFlair,
     hooksEnabled,
     hooksInstalled,
     hooksStatusSeq,
@@ -144,6 +146,13 @@ function App() {
     setGhostHeadlessAgents(next);
     transport.send({ type: 'setGhostHeadlessAgents', enabled: next });
   }, [ghostHeadlessAgents, setGhostHeadlessAgents]);
+
+  // Toggle the model look. setShowModelFlair also updates the renderer's module copy.
+  const handleToggleShowModelFlair = useCallback(() => {
+    const next = !showModelFlair;
+    setShowModelFlair(next);
+    transport.send({ type: 'setShowModelFlair', enabled: next });
+  }, [showModelFlair, setShowModelFlair]);
 
   const handleSelectAgent = useCallback((id: number) => {
     transport.send({ type: 'focusAgent', id });
@@ -556,6 +565,8 @@ function App() {
         onToggleAlwaysShowOverlay={handleToggleAlwaysShowOverlay}
         ghostHeadlessAgents={ghostHeadlessAgents}
         onToggleGhostHeadlessAgents={handleToggleGhostHeadlessAgents}
+        showModelFlair={showModelFlair}
+        onToggleShowModelFlair={handleToggleShowModelFlair}
         externalAssetDirectories={externalAssetDirectories}
         watchAllSessions={watchAllSessions}
         onToggleWatchAllSessions={() => {
