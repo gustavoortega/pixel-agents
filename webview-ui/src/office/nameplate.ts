@@ -3,6 +3,7 @@
  * collision layout reserves the plate the DOM will actually draw. Pure; no DOM.
  */
 
+import { ART_DENSITY } from '../../../core/src/assets/constants.js';
 import {
   CHARACTER_SPRITE_HEIGHT_PX,
   NAMEPLATE_BADGE_GOLD,
@@ -10,6 +11,8 @@ import {
   NAMEPLATE_BG,
   NAMEPLATE_BORDER_COLOR,
   NAMEPLATE_BORDER_PX,
+  NAMEPLATE_COMPACT_BG,
+  NAMEPLATE_COMPACT_LINE_PX,
   NAMEPLATE_HEAD_GAP_PX,
   NAMEPLATE_LINE1_PX,
   NAMEPLATE_LINE2_PX,
@@ -20,10 +23,10 @@ import {
   NAMEPLATE_SLOT_CLEARANCE_PX,
   NAMEPLATE_SUB_BG,
   NAMEPLATE_TEXT_COLOR,
+  PLATE_COMPACT_MAX_LEVEL,
   PLATE_SCALE_FIT_FLOOR,
   PLATE_SCALE_MAX,
   PLATE_SCALE_MIN,
-  PLATE_TITLE_MIN_SCALE,
 } from '../constants.js';
 import { ANCHORS } from './flair/accessories.js';
 import type { Rarity } from './flair/modelFlair.js';
@@ -46,9 +49,9 @@ export function plateScale(zoom: number, fitZoomWholeMap: number): number {
   );
 }
 
-/** The title line (`sub`) only shows at full size; below it the plate is `Lv N  Name`. */
-export function plateShowsTitle(scale: number): boolean {
-  return scale >= PLATE_TITLE_MIN_SCALE;
+/** Plates are one-line compact (`Lv N  Name`, no title) up to zoom level 3; from 4x the full two-line plate shows. */
+export function plateIsCompact(zoom: number): boolean {
+  return zoom / ART_DENSITY <= PLATE_COMPACT_MAX_LEVEL;
 }
 
 /**
@@ -76,8 +79,9 @@ export function plateSide(dir: Direction): PlateSide {
 }
 
 /** Height of the plate itself in CSS px, with its border and hard shadow. 0 when it has no lines. */
-export function plateBoxHeight(c: NameplateContent): number {
-  const lines = (c.badge || c.name ? NAMEPLATE_LINE1_PX : 0) + (c.sub ? NAMEPLATE_LINE2_PX : 0);
+export function plateBoxHeight(c: NameplateContent, compact = false): number {
+  const line1 = compact ? NAMEPLATE_COMPACT_LINE_PX : NAMEPLATE_LINE1_PX;
+  const lines = (c.badge || c.name ? line1 : 0) + (c.sub ? NAMEPLATE_LINE2_PX : 0);
   return lines > 0
     ? lines + 2 * NAMEPLATE_PAD_Y_PX + 2 * NAMEPLATE_BORDER_PX + NAMEPLATE_SHADOW_PX
     : 0;
@@ -108,9 +112,9 @@ export interface NameplateStyle {
 
 /** Plate colors for a tier. Rarity (tiers 2-4) colors only the Lv badge, never the border; tier 1
  *  and an unknown model (null) keep the gold badge. */
-export function nameplateStyle(rarity: Rarity | null): NameplateStyle {
+export function nameplateStyle(rarity: Rarity | null, compact = false): NameplateStyle {
   return {
-    bg: NAMEPLATE_BG,
+    bg: compact ? NAMEPLATE_COMPACT_BG : NAMEPLATE_BG,
     text: NAMEPLATE_TEXT_COLOR,
     subBg: NAMEPLATE_SUB_BG,
     border: NAMEPLATE_BORDER_COLOR,

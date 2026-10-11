@@ -1,6 +1,6 @@
 {
   "name": "zz",
-  "description": "Napping Z glyphs: a 5 px and a 7 px pixel Z, white with a 1 px dark outline, padded to 8x8 and 10x10. The engine spawns them at `dx`/`dy` (WORLD px from the sprite top-left, over the bowed head of idle frame 1) and lets them rise and fade, at most two per agent. Art density 2.",
+  "description": "Napping Z glyphs: a 5 px and a 7 px pixel Z, white with a 1 px dark outline, padded to 8x8 and 10x10. The engine spawns them at `dx`/`dy` (WORLD px from the sprite top-left: 6 px above the sprite top and 10 px right, clear of the head from every side) and lets them rise and fade, at most two per agent. Art density 2.",
   "density": 2,
   "palette": {
     ".": "",
@@ -8,7 +8,7 @@
     "o": "#2a2440"
   },
   "dx": 10,
-  "dy": 5,
+  "dy": -6,
   "small": [
     ["o","o","o","o","o","o","o","."],
     ["o","W","W","W","W","W","o","."],

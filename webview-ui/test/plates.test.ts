@@ -1,12 +1,101 @@
 /**
- * Plates scale with the zoom relative to the whole-map fit, and drop their title line when small.
+ * Plates scale with the zoom relative to the whole-map fit; up to zoom level 3 (the HUD's "Nx")
+ * they are one compact `Lv N  Name` line, from 4x the full two-line plate. Hover or selection
+ * always shows the full box. The kind is checked through the real overlay render.
  *
  * Run with: npm test
  */
 
-import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { plateAnchorAboveY, plateScale, plateShowsTitle } from '../src/office/nameplate.js';
+import { NAMEPLATE_COMPACT_BG } from '../src/constants.js';
+import { ToolOverlay } from '../src/office/components/ToolOverlay.js';
+import { OfficeState } from '../src/office/engine/officeState.js';
+import { plateAnchorAboveY, plateScale } from '../src/office/nameplate.js';
+import type { OfficeLayout } from '../src/office/types.js';
+import { TileType } from '../src/office/types.js';
+
+const TITLE = 'Refactor the parser';
+
+function overlayHtml(zoom: number, focus?: 'hover' | 'select'): string {
+  const cols = 12;
+  const rows = 9;
+  const layout: OfficeLayout = {
+    version: 1,
+    cols,
+    rows,
+    tiles: new Array<TileType>(cols * rows).fill(TileType.FLOOR_1),
+    furniture: [],
+  };
+  const os = new OfficeState(layout);
+  os.addAgent(1);
+  os.setSessionTitle(1, TITLE);
+  os.setRoster(1, {
+    memberId: 'ada',
+    name: 'Ada',
+    level: 7,
+    xp: 1,
+    xpToNext: 10,
+    streak: 0,
+    mood: 'happy',
+  });
+  if (focus === 'hover') os.hoveredAgentId = 1;
+  if (focus === 'select') os.selectedAgentId = 1;
+  const container = {
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 900 }),
+  } as unknown as HTMLDivElement;
+  return renderToStaticMarkup(
+    createElement(ToolOverlay, {
+      officeState: os,
+      agents: [1],
+      agentTools: {},
+      subagentTools: {},
+      subagentCharacters: [],
+      containerRef: { current: container },
+      zoom,
+      panRef: { current: { x: 0, y: 0 } },
+      onCloseAgent: () => {},
+      onAckTripwire: () => {},
+    }),
+  );
+}
+
+describe('plate kind by zoom level', () => {
+  const saved = globalThis.window;
+  beforeEach(() => {
+    (globalThis as { window?: unknown }).window = { devicePixelRatio: 1 };
+  });
+  afterEach(() => {
+    (globalThis as { window?: unknown }).window = saved;
+  });
+
+  it.each([4, 6])('zoom %i (level <= 3): one line, badge and name, no title, 13 px', (zoom) => {
+    const html = overlayHtml(zoom);
+    expect(html).toContain('Lv 7');
+    expect(html).toContain('Ada');
+    expect(html).not.toContain(TITLE);
+    expect(html).toContain('font-size:13px');
+    expect(html).toContain(`--plate-bg:${NAMEPLATE_COMPACT_BG}`);
+  });
+
+  it.each([8, 10])('zoom %i (level >= 4): the full plate with its title line', (zoom) => {
+    const html = overlayHtml(zoom);
+    expect(html).toContain('Lv 7');
+    expect(html).toContain(TITLE);
+    expect(html).not.toContain('font-size:13px');
+  });
+
+  it.each(['hover', 'select'] as const)(
+    '%s at a compact zoom shows the full box, not the plate',
+    (focus) => {
+      const html = overlayHtml(4, focus);
+      expect(html).toContain('Ada');
+      expect(html).not.toMatch(/class="nameplate /);
+    },
+  );
+});
 
 describe('plateScale', () => {
   it.each([
@@ -18,12 +107,6 @@ describe('plateScale', () => {
     [2, 3, 2 / 3],
   ])('zoom %i against fit %i -> %f', (zoom, fit, expected) => {
     expect(plateScale(zoom, fit)).toBeCloseTo(expected, 10);
-  });
-
-  it('shows the title line only at full size or bigger', () => {
-    expect(plateShowsTitle(plateScale(2, 3))).toBe(false);
-    expect(plateShowsTitle(plateScale(3, 3))).toBe(true);
-    expect(plateShowsTitle(plateScale(5, 3))).toBe(true);
   });
 });
 
