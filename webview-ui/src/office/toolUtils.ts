@@ -1,4 +1,12 @@
-import { TRIPWIRE_COLOR_HIGH, TRIPWIRE_COLOR_LOW, TRIPWIRE_COLOR_MEDIUM } from '../constants.js';
+import {
+  COMPACT_LABEL_GAP_PX,
+  COMPACT_LABEL_MIN_WIDTH_PX,
+  COMPACT_LABEL_SEAT_PITCH_TILES,
+  TILE_SIZE,
+  TRIPWIRE_COLOR_HIGH,
+  TRIPWIRE_COLOR_LOW,
+  TRIPWIRE_COLOR_MEDIUM,
+} from '../constants.js';
 
 /** Map status prefixes back to tool names for animation selection */
 const STATUS_TO_TOOL: Record<string, string> = {
@@ -54,6 +62,101 @@ export function shouldPlayTripwireSound(
   next: { severity: TripwireSeverity },
 ): boolean {
   return !prev || TRIPWIRE_SEVERITY_RANK[next.severity] > TRIPWIRE_SEVERITY_RANK[prev.severity];
+}
+
+export type AgentStatus = 'active' | 'idle' | 'waiting' | 'permission';
+
+/** Status as exposed on the overlay (`data-status`), so e2e and styling need not read text. */
+export function agentStatus(ch: {
+  isActive: boolean;
+  bubbleType: 'permission' | 'waiting' | null;
+}): AgentStatus {
+  if (ch.bubbleType === 'permission') return 'permission';
+  if (ch.bubbleType === 'waiting') return 'waiting';
+  return ch.isActive ? 'active' : 'idle';
+}
+
+/**
+ * Glyph drawn above an agent's head. Only an idle agent with nothing else in
+ * the above-head slot gets one: a speech bubble or a tripwire beacon owns that
+ * slot, and an active agent shows its typing animation instead. The idle
+ * "waiting for input" state draws no bubble, so it counts as bubble-free.
+ */
+export function statusGlyph(
+  ch: {
+    isActive: boolean;
+    bubbleType: 'permission' | 'waiting' | null;
+    waitingAwaitingInput?: boolean;
+  },
+  hasTripwire = false,
+): 'z' | null {
+  if (ch.isActive || hasTripwire) return null;
+  const drawsBubble = ch.bubbleType && !(ch.bubbleType === 'waiting' && ch.waitingAwaitingInput);
+  return drawsBubble ? null : 'z';
+}
+
+/** Max CSS width of a compact label: one seat's slot minus a gap. `/ dpr` matches overlayProjection. */
+export function compactLabelMaxWidth(zoom: number, dpr: number): number {
+  return Math.max(
+    0,
+    (COMPACT_LABEL_SEAT_PITCH_TILES * TILE_SIZE * zoom) / dpr - COMPACT_LABEL_GAP_PX,
+  );
+}
+
+export type OverlayLine =
+  { kind: 'label'; text: string; suffix: string } | { kind: 'tripwire'; text: string };
+
+export type OverlayContent =
+  { mode: 'full' } | { mode: 'marker' } | { mode: 'compact'; lines: OverlayLine[] };
+
+/**
+ * What an agent's overlay shows. Hovered or selected -> today's full box.
+ * Otherwise a one-line compact label (session label, " +N" for live
+ * sub-agents, plus the tripwire line), or just a marker when there is no room.
+ */
+export function overlayContent(state: {
+  expanded: boolean;
+  label: string | null;
+  subCount: number;
+  tripwire?: { ruleName: string; count: number } | null;
+  maxWidth: number;
+}): OverlayContent {
+  if (state.expanded) return { mode: 'full' };
+  if (state.maxWidth < COMPACT_LABEL_MIN_WIDTH_PX) return { mode: 'marker' };
+  const lines: OverlayLine[] = [];
+  if (state.label) {
+    lines.push({
+      kind: 'label',
+      text: state.label,
+      suffix: state.subCount > 0 ? ` +${state.subCount}` : '',
+    });
+  }
+  if (state.tripwire) {
+    lines.push({
+      kind: 'tripwire',
+      text: tripwireLabel(state.tripwire.ruleName, state.tripwire.count),
+    });
+  }
+  return { mode: 'compact', lines };
+}
+
+/**
+ * Which element an agent gets: the full box, the compact label, or none.
+ * Sub-agents have no compact label (their parent shows +N); they get the full
+ * box when they or their parent are hovered or selected.
+ */
+export function showOverlay(s: {
+  isSub: boolean;
+  isSelected: boolean;
+  isHovered: boolean;
+  parentSelected: boolean;
+  parentHovered: boolean;
+  alwaysShow: boolean;
+}): 'full' | 'compact' | null {
+  const self = s.isSelected || s.isHovered;
+  if (s.isSub) return self || s.parentSelected || s.parentHovered ? 'full' : null;
+  if (self) return 'full';
+  return s.alwaysShow ? 'compact' : null;
 }
 
 // ── Provider capabilities (tool taxonomy for rendering decisions) ────────────

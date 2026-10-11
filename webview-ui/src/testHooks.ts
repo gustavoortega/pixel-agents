@@ -86,7 +86,7 @@ declare global {
         toolId?: string;
         parentToolId?: string;
       }>;
-      selectAgent?: (id: number) => void;
+      selectAgent?: (id: number | null) => void;
     };
   }
 }

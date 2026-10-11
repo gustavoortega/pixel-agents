@@ -5,9 +5,9 @@ import {
   AREA_LABEL_FALLBACK_COLOR,
   AREA_LABEL_FONT_SIZE_PX,
   AREA_LABEL_MIN_FONT_SIZE_PX,
-  AREA_LABEL_SHADOW_ALPHA,
-  AREA_LABEL_SHADOW_COLOR,
   AREA_OVERLAY_ALPHA,
+  AREA_SIGN_PADDING_PX,
+  AREA_SIGN_PLATE_COLOR,
   BUBBLE_FADE_DURATION_SEC,
   BUBBLE_SITTING_OFFSET_PX,
   BUBBLE_VERTICAL_OFFSET_PX,
@@ -33,6 +33,8 @@ import {
   GRID_LINE_COLOR,
   HEADLESS_CHARACTER_ALPHA,
   HOVERED_OUTLINE_ALPHA,
+  IDLE_GLYPH_COLOR,
+  IDLE_GLYPH_SHADOW_COLOR,
   OUTLINE_Z_SORT_OFFSET,
   ROTATE_BUTTON_BG,
   SEAT_AVAILABLE_COLOR,
@@ -47,6 +49,7 @@ import {
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
+import { areaSignRect } from '../labelLayout.js';
 import { mapOffset } from '../projection.js';
 import {
   getCarpetJunctionSprite,
@@ -61,7 +64,7 @@ import {
   BUBBLE_WAITING_SPRITE,
   getCharacterSprites,
 } from '../sprites/spriteData.js';
-import { tripwireColor, type TripwireSeverity } from '../toolUtils.js';
+import { statusGlyph, tripwireColor, type TripwireSeverity } from '../toolUtils.js';
 import type {
   AreaDefinition,
   CarpetTile,
@@ -232,9 +235,9 @@ export function renderAreaOverlay(
 }
 
 /**
- * Render the centroid label for each Area, ABOVE characters/bubbles. Centroid
- * = arithmetic mean of all tile centers belonging to a given label. Pixel-art
- * drop shadow (no blur) for legibility on light backgrounds.
+ * Render a room sign for each Area, ABOVE characters/bubbles: a dark plate on
+ * the wall row above the area with the label in the area's colour (placement
+ * in `areaSignRect`, shared with the label layout so labels avoid the signs).
  *
  * @internal
  */
@@ -243,7 +246,6 @@ export function renderAreaLabels(
   areaTiles: Array<string | null> | undefined,
   areas: AreaDefinition[] | undefined,
   cols: number,
-  rows: number,
   offsetX: number,
   offsetY: number,
   zoom: number,
@@ -251,49 +253,27 @@ export function renderAreaLabels(
   if (!areaTiles || areaTiles.length === 0) return;
   if (!areas || areas.length === 0) return;
 
-  const s = TILE_SIZE * zoom;
-  const colorMap = new Map<string, string>();
-  for (const a of areas) colorMap.set(a.label, a.color);
-
-  // Centroid accumulator: label → { sumX, sumY, count }.
-  const centroids = new Map<string, { sumX: number; sumY: number; count: number }>();
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const label = areaTiles[r * cols + c];
-      if (!label) continue;
-      const acc = centroids.get(label);
-      if (acc) {
-        acc.sumX += c;
-        acc.sumY += r;
-        acc.count += 1;
-      } else {
-        centroids.set(label, { sumX: c, sumY: r, count: 1 });
-      }
-    }
-  }
-
-  if (centroids.size === 0) return;
-
   const fontSize = Math.max(AREA_LABEL_FONT_SIZE_PX * zoom, AREA_LABEL_MIN_FONT_SIZE_PX);
+  const pad = AREA_SIGN_PADDING_PX * zoom;
 
   ctx.save();
   ctx.font = `bold ${fontSize}px 'FS Pixel Sans'`;
-  ctx.textAlign = 'center';
+  ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
 
-  for (const [label, acc] of centroids) {
-    const cx = offsetX + (acc.sumX / acc.count + 0.5) * s;
-    const cy = offsetY + (acc.sumY / acc.count + 0.5) * s;
+  for (const area of areas) {
+    const rect = areaSignRect(areaTiles, cols, area.label, zoom);
+    if (!rect) continue;
+    const x = Math.round(offsetX + rect.x * zoom);
+    const y = Math.round(offsetY + rect.y * zoom);
 
-    // Pixel-art drop shadow (1px right + down, no blur).
-    ctx.globalAlpha = AREA_LABEL_SHADOW_ALPHA;
-    ctx.fillStyle = AREA_LABEL_SHADOW_COLOR;
-    ctx.fillText(label, cx + 1, cy + 1);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = AREA_SIGN_PLATE_COLOR;
+    ctx.fillRect(x, y, Math.round(rect.w * zoom), Math.round(rect.h * zoom));
 
-    // Main label — area's own color, falling back to white if missing.
     ctx.globalAlpha = AREA_LABEL_ALPHA;
-    ctx.fillStyle = colorMap.get(label) ?? AREA_LABEL_FALLBACK_COLOR;
-    ctx.fillText(label, cx, cy);
+    ctx.fillStyle = area.color || AREA_LABEL_FALLBACK_COLOR;
+    ctx.fillText(area.label, x + pad, y + Math.round((rect.h * zoom) / 2));
   }
   ctx.restore();
 }
@@ -797,6 +777,40 @@ function renderTripwireBeacon(
   ctx.restore();
 }
 
+/**
+ * Idle "z" from canvas primitives (3x5 cells), static on purpose: a room full
+ * of bobbing glyphs would be noise. Centered on the head, bottom at `bottomY`.
+ */
+function renderIdleGlyph(
+  ctx: CanvasRenderingContext2D,
+  centerX: number,
+  bottomY: number,
+  zoom: number,
+): void {
+  const cell = Math.max(1, Math.round(zoom));
+  const left = Math.round(centerX) - Math.floor((3 * cell) / 2);
+  const top = Math.round(bottomY) - 5 * cell;
+  // Rows of the z as [startCell, widthCells].
+  const rows: Array<[number, number]> = [
+    [0, 3],
+    [2, 1],
+    [1, 1],
+    [0, 1],
+    [0, 3],
+  ];
+  ctx.save();
+  for (const [color, dx] of [
+    [IDLE_GLYPH_SHADOW_COLOR, 1],
+    [IDLE_GLYPH_COLOR, 0],
+  ] as const) {
+    ctx.fillStyle = color;
+    rows.forEach(([start, width], r) => {
+      ctx.fillRect(left + start * cell + dx, top + r * cell + dx, width * cell, cell);
+    });
+  }
+  ctx.restore();
+}
+
 function renderBubbles(
   ctx: CanvasRenderingContext2D,
   characters: Character[],
@@ -840,6 +854,11 @@ function renderBubbles(
     const tripwire = tripwires?.get(ch.id);
     if (tripwire) {
       renderTripwireBeacon(ctx, offsetX + ch.x * zoom, topY, zoom, tripwire.severity);
+    }
+
+    // Shares the above-head slot with bubbles and the beacon; statusGlyph yields to both.
+    if (statusGlyph(ch, !!tripwire)) {
+      renderIdleGlyph(ctx, offsetX + ch.x * zoom, topY, zoom);
     }
   }
 }
@@ -1010,7 +1029,7 @@ export function renderFrame(
 
   // Area labels (above bubbles + characters, below editor overlays)
   if (showAreas) {
-    renderAreaLabels(ctx, areaTiles, areas, cols, rows, offsetX, offsetY, zoom);
+    renderAreaLabels(ctx, areaTiles, areas, cols, offsetX, offsetY, zoom);
   }
 
   // Editor overlays

@@ -222,6 +222,29 @@ export const AUTO_ON_SIDE_DEPTH = 2;
 export const CHARACTER_HIT_HALF_WIDTH = 8;
 export const CHARACTER_HIT_HEIGHT = 24;
 export const TOOL_OVERLAY_VERTICAL_OFFSET = 32;
+/** Seat pitch in tiles: compact labels may not be wider than one seat's slot minus a gap. */
+export const COMPACT_LABEL_SEAT_PITCH_TILES = 4;
+export const COMPACT_LABEL_GAP_PX = 8;
+/** Below this width a compact label is just a marker (it would be a few letters of ellipsis). */
+export const COMPACT_LABEL_MIN_WIDTH_PX = 90;
+/** One text line of a compact label, CSS px; the layout pass stacks colliding labels by this. */
+export const COMPACT_LABEL_LINE_HEIGHT_PX = 18;
+/** Clear space between the character's feet and the compact label, CSS px. */
+export const COMPACT_LABEL_FEET_GAP_PX = 2;
+/** Pixel-style drop shadow keeping the bare compact label legible on any floor colour. */
+export const COMPACT_LABEL_TEXT_SHADOW = '1px 1px 0 rgba(0, 0, 0, 0.9)';
+/** Extra clearance a displaced label keeps from what it was pushed off, CSS px. */
+export const LABEL_LAYOUT_PAD_PX = 2;
+/** A label pushed further than this many lines stays put and dims instead. */
+export const LABEL_LAYOUT_MAX_DISPLACEMENT_LINES = 3;
+export const LABEL_LAYOUT_DIM_OPACITY = 0.35;
+/** Room sign plate: padding and per-glyph width estimate (no measureText, so it stays pure). */
+export const AREA_SIGN_PADDING_PX = 2;
+export const AREA_SIGN_GLYPH_WIDTH_EM = 0.4;
+export const AREA_SIGN_PLATE_COLOR = 'rgba(0, 0, 0, 0.7)';
+/** "z" glyph of an idle agent. */
+export const IDLE_GLYPH_COLOR = '#b8c4e0';
+export const IDLE_GLYPH_SHADOW_COLOR = 'rgba(0, 0, 0, 0.6)';
 
 // ── Greeter + Intro bubble ──────────────────────────────────
 /** Reserved character id for the Intro's greeter. Far outside both real agent
