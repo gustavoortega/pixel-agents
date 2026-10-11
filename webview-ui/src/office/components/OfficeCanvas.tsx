@@ -393,6 +393,12 @@ export function OfficeCanvas({
             fixtures: lightFixtures(layout.furniture),
             shafts: shaftsFor(layout, new Date()),
           },
+          {
+            effects: officeState.fx.active,
+            weather: officeState.weather,
+            nowMs: Date.now(),
+          },
+          officeState.deskProps,
         );
         offsetRef.current = { x: offsetX, y: offsetY };
 

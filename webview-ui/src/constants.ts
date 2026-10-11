@@ -566,3 +566,67 @@ export const LOUNGE_FURNITURE_TYPE = 'COFFEE_TABLE';
 /** The fit frames at least this many rooms (or the whole map when it has fewer). */
 export const FIT_MIN_ROOMS = 2;
 export const FIT_CENTER_EASE_MS = 300;
+
+// ── Cozy FX: XP pops, level-ups, mood weather ───────────────────
+/** At most this many pops and level-ups play at once, office-wide. Weather is outside this budget. */
+export const FX_MAX_CONCURRENT = 3;
+/** Level-ups over the budget wait here; the oldest is dropped past this. */
+export const FX_LEVEL_UP_QUEUE_MAX = 6;
+export const FX_POP_MS = 900;
+export const FX_SPARKLE_MS = 600;
+export const FX_SPARKLE_PARTICLES = 6;
+export const FX_LEVEL_UP_MS = 2500;
+export const FX_PILLAR_MS = 1200;
+export const FX_CONFETTI_MS = 1600;
+export const FX_CONFETTI_PARTICLES = 16;
+/** Confetti gravity, world px/s^2. */
+export const FX_CONFETTI_GRAVITY = 90;
+export const FX_PILLAR_HEIGHT_PX = 56;
+export const FX_PILLAR_WIDTH_PX = 14;
+export const FX_PILLAR_TOP_COLOR = 'rgba(255, 240, 150, 0)';
+export const FX_PILLAR_BOTTOM_COLOR = 'rgba(255, 230, 110, 0.75)';
+export const FX_SPARKLE_COLORS = ['#fff2b0', '#ffd65a'] as const;
+export const FX_CONFETTI_COLORS = ['#ffe066', '#5fb85a', '#3d8bff', '#ff6b6b', '#fff4dc'] as const;
+export const FX_TEXT_COLOR = '#ffe066';
+export const FX_TEXT_OUTLINE = '#3b2412';
+export const FX_POP_RISE_PX = 18;
+export const FX_TEXT_FONT_PX = 22;
+export const FX_BANNER_FONT_PX = 26;
+/** Storm clouds last this long after the frustrated mood starts, fading over the last part. */
+export const FX_STORM_MS = 20_000;
+export const FX_STORM_FADE_MS = 2000;
+export const FX_STORM_MAX = 2;
+export const FX_STORM_CLOUD_COLOR = '#6f7a8c';
+export const FX_STORM_CLOUD_SHADE = '#525b6b';
+export const FX_RAIN_COLOR = '#8fc6ff';
+export const FX_RAIN_DROPS = 3;
+export const FX_RAIN_PERIOD_MS = 700;
+export const FX_HEART_COLOR = '#ff6b8a';
+export const FX_HEART_MS = 1500;
+export const FX_HEART_RISE_PX = 10;
+export const FX_HEART_REPEAT_MS = 30_000;
+/** Office-wide: no second heart inside this window. */
+export const FX_HEART_GLOBAL_GAP_MS = 10_000;
+/** Weather floats this far above the bubble anchor, world px. */
+export const FX_WEATHER_RISE_PX = 4;
+
+// ── Cozy FX: desk props unlocked by level ───────────────────────
+export const DESK_PROP_SLOTS_MAX = 2;
+/** How many desk tiles either side of the monitor a prop slot may be. */
+export const DESK_PROP_REACH_TILES = 3;
+export const DESK_PROP_Z_OFFSET = 0.01;
+/** Gap between a prop's base and the bottom of its desk tile, world px. */
+export const DESK_PROP_FEET_INSET_PX = 5;
+
+// ── Cozy FX: full box ───────────────────────────────────────────
+/** Height one roster row adds to the full box, CSS px. */
+export const FULL_BOX_ROW_PX = 14;
+export const FULL_BOX_XP_BAR_BG = '#e9d2a8';
+export const FULL_BOX_XP_BAR_FILL = '#5fb85a';
+export const FULL_BOX_STREAK_COLOR = '#ff8a2a';
+export const FULL_BOX_MOOD_COLORS = {
+  happy: '#5fb85a',
+  neutral: '#9d9d9d',
+  frustrated: '#8fc6ff',
+  alarmed: '#ff4d4d',
+} as const;

@@ -13,6 +13,7 @@ import {
   CONTEXT_GAUGE_HEIGHT_PX,
   CONTEXT_GAUGE_WIDTH_PX,
   CONTEXT_WARN_THRESHOLD,
+  FULL_BOX_ROW_PX,
   LABEL_LAYOUT_DIM_OPACITY,
   NAMEPLATE_LINE1_PX,
   NAMEPLATE_LINE2_PX,
@@ -34,6 +35,7 @@ import type { OfficeState } from '../engine/officeState.js';
 import { isShowModelFlairEnabled } from '../engine/renderer.js';
 import { ANCHORS } from '../flair/accessories.js';
 import { characterFlair, Rarity } from '../flair/modelFlair.js';
+import { fullBoxRows } from '../fullBox.js';
 import {
   areaSignRect,
   clampPlate,
@@ -67,7 +69,9 @@ import {
   type TripwireSeverity,
 } from '../toolUtils.js';
 import type { Character, ToolActivity } from '../types.js';
-import { CharacterState,Direction, IdlePose } from '../types.js';
+import { CharacterState, Direction, IdlePose } from '../types.js';
+import { FullBoxRoster } from './FullBoxRoster.js';
+import { FxText } from './FxText.js';
 
 // Both turn-end states show the green checkmark bubble. A finished turn (Stop)
 // shows ONLY the checkmark (the label falls through to its normal idle text);
@@ -440,6 +444,12 @@ export function ToolOverlay({
 
   return (
     <>
+      <FxText
+        officeState={officeState}
+        scale={scale}
+        toScreenX={project.toScreenX}
+        toScreenY={project.toScreenY}
+      />
       {allIds.map((id) => {
         const ch = officeState.characters.get(id);
         const plan = plans.get(id);
@@ -537,6 +547,13 @@ export function ToolOverlay({
         const teamRoleLabel = ch.isTeamLead ? 'LEAD' : ch.agentName || null;
         const label = agentLabel(officeState.sessionTitles.get(id), ch.folderName);
         const tripwire = officeState.tripwires.get(id);
+        const rosterRows = fullBoxRows({
+          roster: officeState.rosters.get(id),
+          model: {
+            id: officeState.models.get(id)?.model ?? '',
+            rarity: characterFlair(ch, officeState.models, isShowModelFlairEnabled()).rarity,
+          },
+        });
         const hasExtraLines = !!(label || teamRoleLabel || tripwire);
 
         // Context gauge. Every agent gets one — lead, teammate, adopted,
@@ -551,7 +568,8 @@ export function ToolOverlay({
             className="absolute flex flex-col items-center -translate-x-1/2"
             style={{
               left: screenX,
-              top: screenY - (hasExtraLines ? 34 : 28),
+              // The box grows downward from `top`, so each roster row lifts it to keep the character clear.
+              top: screenY - (hasExtraLines ? 34 : 28) - rosterRows.length * FULL_BOX_ROW_PX,
               pointerEvents: isSelected ? 'auto' : 'none',
               zIndex: FULL_BOX_Z_INDEX,
             }}
@@ -613,6 +631,7 @@ export function ToolOverlay({
                     {label}
                   </span>
                 )}
+                <FullBoxRoster rows={rosterRows} />
               </div>
               {isSelected && !isSub && (
                 <Button

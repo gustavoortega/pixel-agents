@@ -29,8 +29,12 @@ import {
   tableCompanionTile,
   updateCompanion,
 } from '../flair/companion.js';
+import type { DeskPropKind } from '../flair/deskProps.js';
+import { companionDeskTile, deskSlots, pcTileForSeat, propPlacements } from '../flair/deskProps.js';
 import { type HeroCandidate, heroPerRoom } from '../flair/hero.js';
 import { modelFlair } from '../flair/modelFlair.js';
+import { FxEngine } from '../fx/fxEngine.js';
+import { MoodWeather } from '../fx/moodWeather.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
   createDefaultLayout,
@@ -93,6 +97,11 @@ export class OfficeState {
   rosters: Map<number, AgentRosterInfo> = new Map();
   /** Newest transient roster event per agent, kept for later effects. No animation reads it yet. */
   rosterEvents: Map<number, RosterEventInfo & { level?: number; at: number }> = new Map();
+  /** XP pops and level-ups in flight (budgeted) and the ambient mood weather (capped, not budgeted). */
+  fx = new FxEngine();
+  weather = new MoodWeather();
+  /** Props on each seated agent's desk, from its level; rebuilt every update. */
+  deskProps: Array<{ kind: DeskPropKind; col: number; row: number; zY: number }> = [];
   /** Share (0..1) of the current 5-hour block per Area label, for the thin bar on each room sign. */
   areaUsage: ReadonlyMap<string, number> = new Map();
   /** Model and tier by agent id, from `agentModel`. Keyed by id for the same reason as
@@ -649,6 +658,7 @@ export class OfficeState {
     this.tripwires.delete(id);
     this.rosters.delete(id);
     this.rosterEvents.delete(id);
+    this.fx.forget(id);
     this.models.delete(id);
     this.companions.delete(id);
     const ch = this.characters.get(id);
@@ -1221,6 +1231,7 @@ export class OfficeState {
 
   setRosterEvent(id: number, event: RosterEventInfo & { level?: number }, now: number): void {
     this.rosterEvents.set(id, { ...event, at: now });
+    this.fx.onRosterEvent(id, event, now);
   }
 
   /** No model clears it: the character goes back to its plain look. */
@@ -1306,6 +1317,10 @@ export class OfficeState {
     }
 
     this.updateCompanions(dt);
+    this.updateDeskProps();
+    const now = Date.now();
+    this.fx.tick(now);
+    this.weather.update(new Map([...this.rosters].map(([id, r]) => [id, r.mood])), now);
 
     // ── Pet FSM ────────────────────────────────────────────────
     for (const pet of this.pets) {
@@ -1507,6 +1522,57 @@ export class OfficeState {
       });
     }
     return out;
+  }
+
+  /**
+   * Level props on each seated agent's desk. Slots exclude the monitor and the companion's cell
+   * (every agent's, so a prop never lands where another agent's companion would sit).
+   */
+  private updateDeskProps(): void {
+    const seated: Array<{ id: number; pc: Tile; across: Tile; level: number }> = [];
+    for (const id of [...this.characters.keys()].sort((a, b) => a - b)) {
+      const ch = this.characters.get(id)!;
+      const level = this.rosters.get(id)?.level ?? 0;
+      const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
+      if (ch.isSubagent || !seat || ch.state === CharacterState.WALK) continue;
+      if (seat.seatCol !== ch.tileCol || seat.seatRow !== ch.tileRow) continue;
+      const { dCol, dRow } = seatFacingOffset(seat.facingDir);
+      const pc = pcTileForSeat({
+        seat: { col: seat.seatCol, row: seat.seatRow },
+        facing: { col: dCol, row: dRow },
+        depth: AUTO_ON_FACING_DEPTH,
+        electronicsTiles: this.electronicsTiles,
+      });
+      if (!pc) continue;
+      seated.push({ id, pc, across: dCol === 0 ? { col: 1, row: 0 } : { col: 0, row: 1 }, level });
+    }
+    const blocked = new Set<string>();
+    for (const s of seated) {
+      const c = companionDeskTile(s.pc);
+      blocked.add(`${c.col},${c.row}`);
+    }
+    const out: typeof this.deskProps = [];
+    for (const s of seated) {
+      if (s.level < 5) continue;
+      const slots = deskSlots({
+        pc: s.pc,
+        across: s.across,
+        deskTiles: this.deskTiles,
+        electronicsTiles: this.electronicsTiles,
+        blocked,
+      });
+      for (const p of propPlacements(s.level, slots)) {
+        const key = `${p.tile.col},${p.tile.row}`;
+        blocked.add(key);
+        out.push({
+          kind: p.kind,
+          col: p.tile.col,
+          row: p.tile.row,
+          zY: this.deskTiles.get(key) ?? 0,
+        });
+      }
+    }
+    this.deskProps = out;
   }
 
   /** Area label of the room an agent sits in (its seat, else the tile it stands on); null outside every area. */
