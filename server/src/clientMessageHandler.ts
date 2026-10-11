@@ -7,6 +7,7 @@ import type { LoadedAssets, LoadedCharacterSprites, LoadedPetSprites } from './a
 import {
   getHooksConsent,
   getHooksEnabled,
+  parseTokenBudget,
   readConfig,
   setHooksEnabled,
   writeConfig,
@@ -18,6 +19,7 @@ import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
 import { broadcastRoster, stripRosterLook } from './rosterAgent.js';
+import type { TokenLedger } from './tokenLedger.js';
 import { ackTripwire } from './tripwires.js';
 
 type WsSend = (message: Record<string, unknown>) => void;
@@ -54,6 +56,8 @@ export interface ClientMessageContext {
   onSetHooksEnabled?: SetHooksEnabledSideEffect;
   /** Reload assets after an external-asset-directory change. Needs the dist root, known only to cli.ts. */
   onReloadAssets?: ReloadAssetsSideEffect;
+  /** Token usage source: its snapshot rides the connect handshake and budget/area changes refresh it. */
+  tokenLedger?: TokenLedger;
   /**
    * Whether this client may send messages that reach OUTSIDE `~/.pixel-agents/`
    * — today only `setHooksEnabled`, which grants machine-wide consent to modify
@@ -278,6 +282,20 @@ export function handleClientMessage(
       const cfg = readConfig();
       cfg.standalone.areaMappings = rawMappings as Record<string, string[]>;
       writeConfig(cfg);
+      ctx.tokenLedger?.refresh();
+      break;
+    }
+
+    case 'setTokenBudgets': {
+      const cfg = readConfig();
+      const budget5h = parseTokenBudget(msg.budget5h);
+      const budgetWeek = parseTokenBudget(msg.budgetWeek);
+      if (budget5h === undefined) delete cfg.standalone.tokenBudget5h;
+      else cfg.standalone.tokenBudget5h = budget5h;
+      if (budgetWeek === undefined) delete cfg.standalone.tokenBudgetWeek;
+      else cfg.standalone.tokenBudgetWeek = budgetWeek;
+      writeConfig(cfg);
+      ctx.tokenLedger?.refresh();
       break;
     }
 
@@ -483,6 +501,9 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     type: 'areaMappingsLoaded',
     mappings: cfg.standalone.areaMappings ?? {},
   });
+
+  // 4c. Token usage (a `scanning` stub until the ledger's first pass completes).
+  if (ctx.tokenLedger) send({ ...ctx.tokenLedger.snapshot() });
 
   // Sync runtime refs with the persisted settings so scanners behave correctly
   // from the first tick after a server restart.

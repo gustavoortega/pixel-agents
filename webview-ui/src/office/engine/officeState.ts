@@ -71,6 +71,8 @@ export class OfficeState {
   rosters: Map<number, AgentRosterInfo> = new Map();
   /** Newest transient roster event per agent, kept for later effects. No animation reads it yet. */
   rosterEvents: Map<number, RosterEventInfo & { level?: number; at: number }> = new Map();
+  /** Share (0..1) of the current 5-hour block per Area label, for the thin bar on each room sign. */
+  areaUsage: ReadonlyMap<string, number> = new Map();
   pets: Pet[] = [];
   /** Accumulated time for furniture animation frame cycling */
   furnitureAnimTimer = 0;
@@ -115,6 +117,10 @@ export class OfficeState {
 
   setAreaMappings(mappings: Record<string, string[]>): void {
     this.areaMappings = mappings;
+  }
+
+  setAreaUsage(shares: ReadonlyMap<string, number>): void {
+    this.areaUsage = shares;
   }
 
   constructor(layout?: OfficeLayout) {

@@ -295,6 +295,7 @@ export function OfficeCanvas({
           activeAreaLabel,
           officeState.pets,
           officeState.tripwires,
+          officeState.areaUsage,
         );
         offsetRef.current = { x: offsetX, y: offsetY };
 

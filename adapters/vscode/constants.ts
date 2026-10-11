@@ -35,6 +35,9 @@ export const SETTING_KEY_AREA_MAPPINGS = 'pixel-agents.areaMappings';
 // ── VS Code Settings (contributes.configuration keys) ───────
 export const CONFIG_KEY_AUTO_SHOW_PANEL = 'pixel-agents.autoShowPanel';
 export const CONFIG_KEY_AUTO_SPAWN_AGENT = 'pixel-agents.autoSpawnAgent';
+/** Token budgets in cost-weighted tokens. Unset / non-positive = no budget. The Usage panel writes them here. */
+export const CONFIG_KEY_TOKEN_BUDGET_5H = 'pixel-agents.tokenBudget5h';
+export const CONFIG_KEY_TOKEN_BUDGET_WEEK = 'pixel-agents.tokenBudgetWeek';
 
 // ── VS Code Identifiers ─────────────────────────────────────
 export const VIEW_ID = 'pixel-agents.panelView';

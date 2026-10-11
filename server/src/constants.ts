@@ -117,3 +117,16 @@ export const PALETTE_COUNT = 6;
  *  clientMessageHandler to guard saveAgentSeats payloads from a remote or
  *  hand-edited source corrupting the stored values with out-of-range values. */
 export const HUE_SHIFT_MAX_DEG = 360;
+
+// ── Token ledger ──
+/** Transcripts untouched for longer than this are never read, and cached records older than this are pruned. */
+export const TOKEN_LEDGER_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
+export const TOKEN_LEDGER_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+export const TOKEN_LEDGER_BLOCK_MS = 5 * 60 * 60 * 1000;
+/** Incremental re-read cadence, and the floor between two `tokenUsage` broadcasts. */
+export const TOKEN_LEDGER_TICK_MS = 30_000;
+/** Cache flush cadence while running (shutdown flushes synchronously). */
+export const TOKEN_LEDGER_CACHE_FLUSH_MS = 10 * 60 * 1000;
+export const TOKEN_LEDGER_READ_HIGH_WATER_MARK = 1024 * 1024;
+export const TOKEN_LEDGER_TOP_SESSIONS = 15;
+export const TOKEN_LEDGER_CACHE_FILE = 'ledger-cache.json';

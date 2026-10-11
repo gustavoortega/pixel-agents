@@ -43,6 +43,7 @@ export type ServerMessage =
   | ExternalAssetDirectoriesUpdated
   | AreaMappingsLoaded
   | WorkspaceFolders
+  | TokenUsage
   | AgentDiagnostics;
 
 export type ClientMessage =
@@ -68,7 +69,8 @@ export type ClientMessage =
   | SaveAreaMappings
   | SetShowAreas
   | RequestDiagnostics
-  | AckTripwire;
+  | AckTripwire
+  | SetTokenBudgets;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -362,6 +364,50 @@ export interface WorkspaceFolder {
   path: string;
 }
 
+export interface TokenUsage {
+  type: 'tokenUsage';
+  generatedAt: number;
+  scanning?: boolean;
+  block?: TokenWindow;
+  week?: TokenWindow;
+  biggestBlock?: number;
+  budget5h?: number;
+  budgetWeek?: number;
+}
+
+export interface TokenWindow {
+  source: TokenWindowSource;
+  start: number;
+  end: number;
+  total: number;
+  raw: number;
+  budgetPct?: number;
+  byArea: TokenAreaTotal[];
+  bySession: TokenSessionTotal[];
+}
+
+export type TokenWindowSource = 'quota' | 'estimated';
+
+export interface TokenAreaTotal {
+  area: string | null;
+  folder: string;
+  total: number;
+  raw: number;
+  share?: number;
+  budgetPct?: number;
+}
+
+export interface TokenSessionTotal {
+  sessionId: string;
+  title?: string;
+  area: string | null;
+  folder: string;
+  total: number;
+  raw: number;
+  models: Record<string, number>;
+  rawModels: Record<string, number[]>;
+}
+
 export interface AgentDiagnostics {
   type: 'agentDiagnostics';
   agents: Record<string, any>[];
@@ -486,4 +532,10 @@ export interface AckTripwire {
   type: 'ackTripwire';
   id: number;
   count: number;
+}
+
+export interface SetTokenBudgets {
+  type: 'setTokenBudgets';
+  budget5h?: number;
+  budgetWeek?: number;
 }

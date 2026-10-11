@@ -94,6 +94,35 @@ describe('configPersistence: areas', () => {
     });
   });
 
+  // ── token budgets ────────────────────────────────────────────
+
+  describe('token budgets', () => {
+    function readWith(standalone: Record<string, unknown>) {
+      fs.mkdirSync(path.join(tempHome, '.pixel-agents'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tempHome, '.pixel-agents', 'config.json'),
+        JSON.stringify({ standalone }),
+      );
+      return readConfig().standalone;
+    }
+
+    it('is unset by default: the keys are absent, not zero', () => {
+      const s = readConfig().standalone;
+      expect(s).not.toHaveProperty('tokenBudget5h');
+      expect(s).not.toHaveProperty('tokenBudgetWeek');
+    });
+
+    it.each([
+      ['a positive number', 5_000_000, 5_000_000],
+      ['zero', 0, undefined],
+      ['a negative number', -5, undefined],
+      ['a numeric string', '5000', undefined],
+      ['null', null, undefined],
+    ])('%s', (_name, raw, expected) => {
+      expect(readWith({ tokenBudget5h: raw }).tokenBudget5h).toBe(expected);
+    });
+  });
+
   // ── per-provider hooks consent + preference ──────────────────
 
   describe('hooksConsent / hooksEnabled maps', () => {

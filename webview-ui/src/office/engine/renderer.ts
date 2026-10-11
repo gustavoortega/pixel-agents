@@ -8,6 +8,8 @@ import {
   AREA_OVERLAY_ALPHA,
   AREA_SIGN_PADDING_PX,
   AREA_SIGN_PLATE_COLOR,
+  AREA_SIGN_USAGE_BAR_HEIGHT_PX,
+  AREA_SIGN_USAGE_TRACK_COLOR,
   BUBBLE_FADE_DURATION_SEC,
   BUBBLE_SITTING_OFFSET_PX,
   BUBBLE_VERTICAL_OFFSET_PX,
@@ -249,6 +251,7 @@ export function renderAreaLabels(
   offsetX: number,
   offsetY: number,
   zoom: number,
+  areaUsage?: ReadonlyMap<string, number>,
 ): void {
   if (!areaTiles || areaTiles.length === 0) return;
   if (!areas || areas.length === 0) return;
@@ -274,6 +277,19 @@ export function renderAreaLabels(
     ctx.globalAlpha = AREA_LABEL_ALPHA;
     ctx.fillStyle = area.color || AREA_LABEL_FALLBACK_COLOR;
     ctx.fillText(area.label, x + pad, y + Math.round((rect.h * zoom) / 2));
+
+    // Thin usage bar: this Area's share of the current 5-hour block, along the plate's bottom edge.
+    const share = areaUsage?.get(area.label);
+    if (share !== undefined && share > 0) {
+      const plateW = Math.round(rect.w * zoom);
+      const barH = Math.max(1, Math.round(AREA_SIGN_USAGE_BAR_HEIGHT_PX * zoom));
+      const barY = y + Math.round(rect.h * zoom) - barH;
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = AREA_SIGN_USAGE_TRACK_COLOR;
+      ctx.fillRect(x, barY, plateW, barH);
+      ctx.fillStyle = area.color || AREA_LABEL_FALLBACK_COLOR;
+      ctx.fillRect(x, barY, Math.max(1, Math.round(plateW * Math.min(1, share))), barH);
+    }
   }
   ctx.restore();
 }
@@ -962,6 +978,7 @@ export function renderFrame(
   activeAreaLabel?: string | null,
   pets?: Pet[],
   tripwires?: ReadonlyMap<number, { severity: TripwireSeverity }>,
+  areaUsage?: ReadonlyMap<string, number>,
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -1029,7 +1046,7 @@ export function renderFrame(
 
   // Area labels (above bubbles + characters, below editor overlays)
   if (showAreas) {
-    renderAreaLabels(ctx, areaTiles, areas, cols, offsetX, offsetY, zoom);
+    renderAreaLabels(ctx, areaTiles, areas, cols, offsetX, offsetY, zoom, areaUsage);
   }
 
   // Editor overlays

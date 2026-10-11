@@ -31,6 +31,7 @@ import { FileStateAdapter } from './fileStateAdapter.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
 import { RosterStore } from './roster.js';
 import { PixelAgentsServer } from './server.js';
+import { TokenLedger } from './tokenLedger.js';
 import { loadTripwireRules } from './tripwireConfig.js';
 
 // ── Argument parsing ──────────────────────────────────────────
@@ -154,6 +155,20 @@ async function main(): Promise<void> {
     // Create runtime first (before server.start, so we can pass it in)
     const runtime = new AgentRuntime(store, claudeProvider, loadTripwireRules());
 
+    // Token ledger: started after the server is up (never from createHttpServer, which tests build directly).
+    const usageSource = claudeProvider.transcriptUsage;
+    const tokenLedger = usageSource
+      ? new TokenLedger({
+          source: usageSource,
+          getAreaMappings: () => readConfig().standalone.areaMappings,
+          getBudgets: () => {
+            const { tokenBudget5h, tokenBudgetWeek } = readConfig().standalone;
+            return { budget5h: tokenBudget5h, budgetWeek: tokenBudgetWeek };
+          },
+          onChange: (message) => store.broadcast({ ...message }),
+        })
+      : undefined;
+
     // Wire hook events: HTTP POST -> runtime -> hookEventHandler -> agents
     server.onHookEvent((providerId, event) => {
       runtime.handleHookEvent(providerId, event);
@@ -246,6 +261,7 @@ async function main(): Promise<void> {
       assetCache,
       onSetHooksEnabled,
       onReloadAssets,
+      tokenLedger,
     });
     currentConfig = { port: config.port, token: config.token };
 
@@ -291,6 +307,9 @@ async function main(): Promise<void> {
       );
     }
 
+    // Background scan of ~/.claude/projects for the Usage panel; the first pass reports `scanning: true`.
+    tokenLedger?.start();
+
     // Start scanning for external sessions (Claude running in user's terminal)
     const cwd = process.cwd();
     const dirs = claudeProvider.getSessionDirs?.(cwd);
@@ -317,6 +336,7 @@ async function main(): Promise<void> {
     // ── Graceful shutdown ──
     function shutdown(): void {
       console.log('\nShutting down...');
+      tokenLedger?.dispose();
       runtime.dispose();
       roster.dispose();
       server.stop();

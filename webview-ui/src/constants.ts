@@ -242,6 +242,9 @@ export const LABEL_LAYOUT_DIM_OPACITY = 0.35;
 export const AREA_SIGN_PADDING_PX = 2;
 export const AREA_SIGN_GLYPH_WIDTH_EM = 0.4;
 export const AREA_SIGN_PLATE_COLOR = 'rgba(0, 0, 0, 0.7)';
+/** Thin usage bar along the bottom of a room sign: track colour and height in world px. */
+export const AREA_SIGN_USAGE_TRACK_COLOR = 'rgba(255, 255, 255, 0.18)';
+export const AREA_SIGN_USAGE_BAR_HEIGHT_PX = 1;
 /** "z" glyph of an idle agent. */
 export const IDLE_GLYPH_COLOR = '#b8c4e0';
 export const IDLE_GLYPH_SHADOW_COLOR = 'rgba(0, 0, 0, 0.6)';

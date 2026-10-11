@@ -131,6 +131,10 @@ export interface HookProvider {
    *  or not a string is absent, never an empty title. */
   extractSessionTitle?(record: unknown): { customTitle?: string; aiTitle?: string } | null;
 
+  /** How this CLI's transcripts report token usage. Present = the token ledger can
+   *  total usage across sessions. See `TranscriptUsageSource`. */
+  readonly transcriptUsage?: TranscriptUsageSource;
+
   // ── Optional file fallback (heuristic mode) ──
 
   /** Session directories to scan. Undefined = no file fallback. */
@@ -164,3 +168,60 @@ export interface HookProvider {
 
 // TODO(provider type taxonomy): FileProvider (polling-only CLIs) and StreamProvider
 // (push-based external services) will be added alongside the first real second provider
+
+/** One deduplicable usage report found in a transcript line. Counts are raw
+ *  tokens: [input, cache-creation, cache-read, output]. */
+export interface UsageRecord {
+  /** Stable per-message id. The same message can be copied across lines and files (streaming repeats, resumed or
+   *  forked sessions), so the ledger counts each id once. */
+  messageId: string;
+  /** The session the record claims. Records written by sub-agents carry their parent's session id. */
+  sessionId: string;
+  /** Epoch ms. */
+  ts: number;
+  model: string;
+  usage: [number, number, number, number];
+}
+
+/** A provider quota announcement: the window it limits and when that window resets (epoch ms). */
+export interface QuotaSignal {
+  window: 'block' | 'week';
+  ts: number;
+  resetsAt: number;
+}
+
+/** What one transcript line yields; any subset may be present. */
+export interface UsageLine {
+  usage?: UsageRecord;
+  quota?: QuotaSignal;
+  /** Title record: the session it names and the title kinds it carries. */
+  title?: { sessionId: string; customTitle?: string; aiTitle?: string };
+}
+
+/** A transcript file the ledger should read. */
+export interface UsageTranscript {
+  path: string;
+  /** Name of the project directory holding the file (the area-mapping identity), top level only. */
+  projectDirName: string;
+  /** Session id implied by the path, used when a record carries none. */
+  fallbackSessionId: string;
+  size: number;
+  mtimeMs: number;
+}
+
+/**
+ * The provider-owned half of the token ledger: where transcripts live and how a
+ * line reads. Everything CLI-specific (directory layout, record shape, quota
+ * fields) stays behind this seam; the ledger only sees `UsageLine`s.
+ */
+export interface TranscriptUsageSource {
+  /** Lines containing none of these substrings are skipped without a JSON parse. */
+  readonly linePrefilters: readonly string[];
+  /** Transcripts under `root` modified at or after `minMtimeMs`, including sub-agent transcripts. */
+  listTranscripts(root: string, minMtimeMs: number): Promise<UsageTranscript[]>;
+  /** Root directory holding every project. */
+  usageRoot(): string;
+  /** Parse one line; null when it carries nothing the ledger uses. `fallbackSessionId` stands in for a record that
+   *  names no session. */
+  parseUsageLine(line: string, fallbackSessionId: string): UsageLine | null;
+}
