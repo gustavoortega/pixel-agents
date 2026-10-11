@@ -751,9 +751,9 @@ export function buildFlair(): Record<string, Json> {
   out['zz.json'] = {
     name: 'zz',
     description:
-      'Napping Z glyphs: a 5 px and a 7 px pixel Z, white with a 1 px dark outline, padded to 8x8 and 10x10. The engine spawns them at `dx`/`dy` (WORLD px from the sprite top-left: 6 px above the sprite top and 10 px right, clear of the head from every side) and lets them rise and fade, at most two per agent. Art density 2.',
+      'Napping Z glyphs: a 5 px and a 7 px pixel Z, cream (#fff4dc) with a 1 px dark brown (#3b2412) outline, padded to 8x8 and 10x10. The engine spawns them at `dx`/`dy` (WORLD px from the sprite top-left: 6 px above the sprite top and 10 px right, clear of the head from every side) and lets them rise and fade, at most two per agent. Art density 2.',
     density: DENSITY,
-    palette: { '.': '', W: '#ffffff', o: '#2a2440' },
+    palette: { '.': '', W: '#fff4dc', o: '#3b2412' },
     dx: world(20),
     dy: world(-12),
     small: cells(zSmall),

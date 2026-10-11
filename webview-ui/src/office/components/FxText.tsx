@@ -6,19 +6,19 @@ import {
   FX_TEXT_COLOR,
   FX_TEXT_FONT_PX,
   FX_TEXT_OUTLINE,
+  FX_TEXT_OUTLINE_PX,
 } from '../../constants.js';
 import type { OfficeState } from '../engine/officeState.js';
 import type { Rect } from '../labelLayout.js';
 import { spriteHeadTopY } from '../nameplate.js';
 import { seatedDrawOffsetPx } from '../seatDraw.js';
 
-
 const FX_TEXT_Z_INDEX = 41;
 const OUTLINE = [
-  `2px 2px 0 ${FX_TEXT_OUTLINE}`,
-  `-2px 2px 0 ${FX_TEXT_OUTLINE}`,
-  `2px -2px 0 ${FX_TEXT_OUTLINE}`,
-  `-2px -2px 0 ${FX_TEXT_OUTLINE}`,
+  `${FX_TEXT_OUTLINE_PX}px ${FX_TEXT_OUTLINE_PX}px 0 ${FX_TEXT_OUTLINE}`,
+  `-${FX_TEXT_OUTLINE_PX}px ${FX_TEXT_OUTLINE_PX}px 0 ${FX_TEXT_OUTLINE}`,
+  `${FX_TEXT_OUTLINE_PX}px -${FX_TEXT_OUTLINE_PX}px 0 ${FX_TEXT_OUTLINE}`,
+  `-${FX_TEXT_OUTLINE_PX}px -${FX_TEXT_OUTLINE_PX}px 0 ${FX_TEXT_OUTLINE}`,
 ].join(', ');
 
 /**
