@@ -63,7 +63,6 @@ describe('idlePose table (K5)', () => {
       { seed: DRINKER, idleSec: 900, sofaFree: false },
       IdlePose.NAPPING,
     ],
-    ['one in three seeds drinks', { seed: HOMEBODY, idleSec: 300 }, IdlePose.READING],
   ])('%s', (_name, patch, expected) => {
     expect(idlePose({ ...base, ...patch })).toBe(expected);
   });

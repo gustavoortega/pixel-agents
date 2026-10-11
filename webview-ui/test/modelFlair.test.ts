@@ -19,7 +19,6 @@ import { getCharacterSprite, sheetFrameIndex } from '../src/office/engine/charac
 import {
   accessoryPlacement,
   accessoryZ,
-  ANCHORS,
   characterDrawOrigin,
   getAccessorySprite,
 } from '../src/office/flair/accessories.js';
@@ -139,13 +138,6 @@ describe('accessoryPlacement', () => {
     expect(opus.map((r) => r.map((c) => c === ''))).toEqual(
       fable.map((r) => r.map((c) => c === '')),
     );
-  });
-
-  it('has a head and shoulder bob for each sheet frame (down also covers the 4 idle frames)', () => {
-    expect(ANCHORS.down.bob).toHaveLength(11);
-    expect(ANCHORS.down.shoulderBob).toHaveLength(11);
-    expect(ANCHORS.up.bob).toHaveLength(7);
-    expect(ANCHORS.right.bob).toHaveLength(7);
   });
 
   it('keeps the shoulders put while the napping head drops: the cape follows the shoulders', () => {

@@ -265,7 +265,7 @@ export function refitView(
  * centred; a bigger one is clamped so no void shows on either side: the offset stays in
  * [view - map, 0].
  */
-export function clampOffset(view: number, mapPx: number, offset: number): number {
+function clampOffset(view: number, mapPx: number, offset: number): number {
   if (mapPx <= view) return Math.floor((view - mapPx) / 2);
   return Math.max(view - mapPx, Math.min(0, offset));
 }
@@ -307,7 +307,7 @@ export function clampPan(
  * The offset a zoom change leaves the map at, so the world point under `anchor` (canvas device px:
  * the viewport centre for buttons, the cursor for the wheel) stays under it.
  */
-export function zoomAbout(anchor: Point, offset: Point, fromZoom: number, toZoom: number): Point {
+function zoomAbout(anchor: Point, offset: Point, fromZoom: number, toZoom: number): Point {
   const k = toZoom / fromZoom;
   return { x: anchor.x - (anchor.x - offset.x) * k, y: anchor.y - (anchor.y - offset.y) * k };
 }

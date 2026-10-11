@@ -267,6 +267,9 @@ export const NAMEPLATE_HEAD_GAP_PX = 2;
 export const NAMEPLATE_SLOT_CLEARANCE_PX = 16;
 /** Height of a character sprite frame, px: its head top row is measured from its top edge. */
 export const CHARACTER_SPRITE_HEIGHT_PX = 32;
+/** The head box overlay plates must keep clear of: the sprite's top rows, a little wider than the body. */
+export const CHARACTER_HEAD_WIDTH_PX = 32;
+export const CHARACTER_HEAD_HEIGHT_PX = 24;
 /** Plates scale with the zoom relative to the zoom at which the whole map fits, between these. */
 export const PLATE_SCALE_MIN = 0.6;
 export const PLATE_SCALE_MAX = 1.5;

@@ -12,21 +12,6 @@ import { shouldShowXpPop } from '../toolUtils.js';
  * clock; drawing lives in fxRender.ts and the DOM text in ToolOverlay.
  */
 
-export const FxKind = {
-  SPARKLE: 'sparkle',
-  XP_TEXT: 'xpText',
-  PILLAR: 'pillar',
-  CONFETTI: 'confetti',
-  BANNER: 'banner',
-} as const;
-export type FxKind = (typeof FxKind)[keyof typeof FxKind];
-
-/** Which effects a roster event asks for. A level-up replaces the pop instead of stacking on it. */
-export function fxForRosterEvent(event: RosterEventInfo): FxKind[] {
-  if (event.kind === 'levelUp') return [FxKind.PILLAR, FxKind.CONFETTI, FxKind.BANNER];
-  return shouldShowXpPop(event, undefined, 0) ? [FxKind.SPARKLE, FxKind.XP_TEXT] : [];
-}
-
 export interface ActiveFx {
   kind: 'pop' | 'levelUp';
   agentId: number;
@@ -51,8 +36,6 @@ export class FxEngine {
   private lastPopAt = new Map<number, number>();
 
   onRosterEvent(agentId: number, event: RosterEventInfo & { level?: number }, now: number): void {
-    const kinds = fxForRosterEvent(event);
-    if (kinds.length === 0) return;
     if (event.kind === 'levelUp') {
       this.levelUp(agentId, event.level ?? 0, now);
       return;
