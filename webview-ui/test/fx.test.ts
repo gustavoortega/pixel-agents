@@ -173,7 +173,8 @@ describe('storm cloud placement', () => {
     return bottom;
   }
 
-  const headTopDevice = OY + Math.round(spriteHeadTopY(seated.y, seatedDrawOffsetPx(seated)) * ZOOM);
+  const headTopDevice =
+    OY + Math.round(spriteHeadTopY(seated.y, seatedDrawOffsetPx(seated)) * ZOOM);
 
   it('face-on: the cloud floats above the stack top, not inside the head', () => {
     const headTop = spriteHeadTopY(seated.y, seatedDrawOffsetPx(seated));
@@ -188,5 +189,34 @@ describe('storm cloud placement', () => {
     const belowFeet = headTop + CHARACTER_SPRITE_HEIGHT_PX + 10;
     const anchors = new Map([[seated.id, weatherAnchorY(belowFeet, headTop)]]);
     expect(cloudBottom(anchors)).toBeLessThanOrEqual(headTopDevice);
+  });
+});
+
+describe('storm cloud art', () => {
+  it('paints a light body, a darker underside, three blue drops and one gold bolt', () => {
+    const weather = new MoodWeather();
+    const ch = { id: 7, x: 100, y: 200, state: CharacterState.TYPE } as Character;
+    weather.update(new Map([[ch.id, 'frustrated' as const]]), 0);
+    let fill = '';
+    const cells = new Map<string, number>();
+    const ctx = {
+      save() {},
+      restore() {},
+      set fillStyle(v: string) {
+        fill = v;
+      },
+      set globalAlpha(_v: number) {},
+      fillRect() {
+        cells.set(fill, (cells.get(fill) ?? 0) + 1);
+      },
+    } as unknown as CanvasRenderingContext2D;
+    renderFx(ctx, { effects: [], weather, nowMs: 1000 }, [ch], 0, 0, 4);
+    // The art colors are the spec, pinned here on purpose: a constant edit must turn this red.
+    /* eslint-disable pixel-agents/no-inline-colors */
+    expect(cells.get('#b9bfcc')).toBe(8);
+    expect(cells.get('#8a90a0')).toBe(5);
+    expect(cells.get('#8fc6ff')).toBe(3);
+    expect(cells.get('#ffe066')).toBe(4);
+    /* eslint-enable pixel-agents/no-inline-colors */
   });
 });

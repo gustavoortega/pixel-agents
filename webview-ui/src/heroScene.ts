@@ -7,10 +7,11 @@
  */
 
 import type { ServerMessage } from '../../core/src/messages.js';
-import { NAP_AFTER_IDLE_SEC } from './constants.js';
+import { FX_POP_MS, NAP_AFTER_IDLE_SEC } from './constants.js';
 import { fitView } from './office/camera.js';
 import { overrideOfficeClock } from './office/clock.js';
 import type { ActiveFx } from './office/fx/fxEngine.js';
+import { forceFullPlates } from './office/nameplate.js';
 import { IdlePose } from './office/types.js';
 
 /** Layout the scene loads instead of the bundled default, relative to the assets base. */
@@ -32,8 +33,8 @@ export function heroZoomFor(
 export const HERO_HOUR = 16;
 export const HERO_MINUTE = 30;
 
-/** A pop plays for FX_POP_MS (0.9 s); one every 1.5 s keeps it on screen most of the time. */
-export const HERO_XP_POP_MS = 1500;
+/** A pop plays for FX_POP_MS; the next starts once it is gone, so only one is ever on screen. */
+export const HERO_XP_POP_MS = FX_POP_MS + 100;
 const STAGE_TICK_MS = 250;
 /** Just under the storm's 20 s life, so the cloud is replaced before it starts to fade. */
 export const HERO_STORM_RESTART_MS = 17_000;
@@ -128,14 +129,14 @@ export const HERO_AGENTS: readonly HeroAgent[] = [
 ];
 
 /**
- * Seats by chair uid in hero-layout.json. Linus (napping) sits face-on: the nap pose is only drawn
- * from the front. Grace takes a back-view chair: a face-on agent's plate sits right above the head
- * and covers the small storm cloud, a back-view agent's plate sits below the feet.
+ * Seats by chair uid in hero-layout.json, all on the top row and face-on: the nap pose is only
+ * drawn from the front, and the storm cloud is anchored above the plate stack (over Grace's plate,
+ * never in her head).
  */
 export const HERO_SEATS: Readonly<Record<number, string>> = {
   1: 'f-v9-0008',
   2: 'f-v9-0014',
-  3: 'f-v9-0017',
+  3: 'f-v9-0020',
   4: 'f-v9-0002',
 };
 
@@ -227,7 +228,10 @@ export function startHeroStage(
   nowMs: () => number = Date.now,
 ): () => void {
   overrideOfficeClock(() => heroClock(nowMs()));
+  forceFullPlates(true);
   const pop = (): void => {
+    // One element per pop: never stack a second one over a pop that is still rising.
+    if (os.fx.active.some((a) => a.kind === 'pop' && a.agentId === HERO_XP_AGENT_ID)) return;
     os.fx.active.push({
       kind: 'pop',
       agentId: HERO_XP_AGENT_ID,
@@ -266,5 +270,6 @@ export function startHeroStage(
     clearInterval(stormTimer);
     clearTimeout(stormGap);
     overrideOfficeClock(null);
+    forceFullPlates(false);
   };
 }

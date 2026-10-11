@@ -43,6 +43,9 @@ export type PlateSide = 'above' | 'below';
  * unreadable or a billboard.
  */
 export function plateScale(zoom: number, fitZoomWholeMap: number): number {
+  // The staged README scene frames one room as the whole map, which would pin the ratio at 1; it
+  // shows its plates (and the FX text riding them) at full size instead.
+  if (fullPlates) return PLATE_SCALE_MAX;
   return Math.max(
     PLATE_SCALE_MIN,
     Math.min(PLATE_SCALE_MAX, zoom / Math.max(PLATE_SCALE_FIT_FLOOR, fitZoomWholeMap)),
@@ -51,7 +54,14 @@ export function plateScale(zoom: number, fitZoomWholeMap: number): number {
 
 /** Plates are one-line compact (`Lv N  Name`, no title) up to zoom level 3; from 4x the full two-line plate shows. */
 export function plateIsCompact(zoom: number): boolean {
-  return zoom / ART_DENSITY <= PLATE_COMPACT_MAX_LEVEL;
+  return !fullPlates && zoom / ART_DENSITY <= PLATE_COMPACT_MAX_LEVEL;
+}
+
+let fullPlates = false;
+
+/** Dev-only (the README hero scene): keeps the two-line plate at any zoom, since a 1x display fits the room at a compact zoom. */
+export function forceFullPlates(on: boolean): void {
+  fullPlates = on;
 }
 
 /** World y of the top of the sprite's head: `y` is the tile centre, `sit` the draw offset. */

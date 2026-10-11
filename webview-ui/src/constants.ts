@@ -676,7 +676,8 @@ export const FIT_CENTER_EASE_MS = 300;
 export const FX_MAX_CONCURRENT = 3;
 /** Level-ups over the budget wait here; the oldest is dropped past this. */
 export const FX_LEVEL_UP_QUEUE_MAX = 6;
-export const FX_POP_MS = 900;
+/** A "+N XP" pop lives this long: one DOM element that rises FX_POP_RISE_PX over it. */
+export const FX_POP_MS = 2400;
 export const FX_SPARKLE_MS = 600;
 export const FX_SPARKLE_PARTICLES = 6;
 export const FX_LEVEL_UP_MS = 2500;
@@ -693,15 +694,18 @@ export const FX_SPARKLE_COLORS = ['#fff2b0', '#ffd65a'] as const;
 export const FX_CONFETTI_COLORS = ['#ffe066', '#5fb85a', '#3d8bff', '#ff6b6b', '#fff4dc'] as const;
 export const FX_TEXT_COLOR = '#ffe066';
 export const FX_TEXT_OUTLINE = '#3b2412';
-export const FX_POP_RISE_PX = 18;
+export const FX_POP_RISE_PX = 70;
+/** FX text outline thickness, CSS px (four-direction text-shadow). */
+export const FX_TEXT_OUTLINE_PX = 2;
 export const FX_TEXT_FONT_PX = 22;
 export const FX_BANNER_FONT_PX = 26;
 /** Storm clouds last this long after the frustrated mood starts, fading over the last part. */
 export const FX_STORM_MS = 20_000;
 export const FX_STORM_FADE_MS = 2000;
 export const FX_STORM_MAX = 2;
-export const FX_STORM_CLOUD_COLOR = '#6f7a8c';
-export const FX_STORM_CLOUD_SHADE = '#525b6b';
+export const FX_STORM_CLOUD_COLOR = '#b9bfcc';
+export const FX_STORM_CLOUD_SHADE = '#8a90a0';
+export const FX_STORM_BOLT_COLOR = '#ffe066';
 export const FX_RAIN_COLOR = '#8fc6ff';
 export const FX_RAIN_DROPS = 3;
 export const FX_RAIN_PERIOD_MS = 700;

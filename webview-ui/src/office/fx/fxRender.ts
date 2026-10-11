@@ -18,6 +18,7 @@ import {
   FX_SPARKLE_COLORS,
   FX_SPARKLE_MS,
   FX_SPARKLE_PARTICLES,
+  FX_STORM_BOLT_COLOR,
   FX_STORM_CLOUD_COLOR,
   FX_STORM_CLOUD_SHADE,
   FX_WEATHER_RISE_PX,
@@ -79,6 +80,13 @@ const CLOUD_CELLS: ReadonlyArray<[number, number, boolean]> = [
   [2, 2, true],
   [3, 2, true],
   [4, 2, true],
+];
+// The bolt under the cloud: a two-step zigzag, [col, row] from the cloud's top-left.
+const BOLT_CELLS: ReadonlyArray<[number, number]> = [
+  [3, 3],
+  [2, 4],
+  [3, 4],
+  [2, 5],
 ];
 const HEART_CELLS: ReadonlyArray<[number, number]> = [
   [0, 0],
@@ -204,8 +212,11 @@ export function renderFx(
     const age = fx.weather.stormAge(ch.id, fx.nowMs);
     for (let i = 0; i < FX_RAIN_DROPS; i++) {
       const phase = ((age / FX_RAIN_PERIOD_MS + i / FX_RAIN_DROPS) % 1) * 4;
-      ctx.fillRect(left + (1 + i) * zoom, top + (3 + Math.floor(phase)) * zoom, zoom, zoom);
+      // Drops fall on every other column, clear of the bolt between them.
+      ctx.fillRect(left + i * 2 * zoom, top + (3 + Math.floor(phase)) * zoom, zoom, zoom);
     }
+    ctx.fillStyle = FX_STORM_BOLT_COLOR;
+    for (const [c, r] of BOLT_CELLS) ctx.fillRect(left + c * zoom, top + r * zoom, zoom, zoom);
   }
 
   ctx.fillStyle = FX_HEART_COLOR;
