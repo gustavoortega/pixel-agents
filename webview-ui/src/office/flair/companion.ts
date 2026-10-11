@@ -68,31 +68,6 @@ export function companionTile(input: {
 }
 
 /**
- * The desk tile a seated hero's companion sits on: one tile right of the monitor the seat faces.
- * Null when the seat faces no monitor within `depth` tiles, or that tile is not desk surface
- * (or is taken); the caller then falls back to the floor rule.
- */
-export function deskCompanionTile(input: {
-  seat: Tile;
-  /** Unit step of the seat's facing. */
-  facing: Tile;
-  depth: number;
-  electronicsTiles: ReadonlySet<string>;
-  deskTiles: ReadonlyMap<string, number>;
-  isTaken: (tile: Tile) => boolean;
-}): Tile | null {
-  const { seat, facing, depth, electronicsTiles, deskTiles, isTaken } = input;
-  for (let d = 1; d <= depth; d++) {
-    const monitor = { col: seat.col + facing.col * d, row: seat.row + facing.row * d };
-    if (!electronicsTiles.has(`${monitor.col},${monitor.row}`)) continue;
-    const tile = { col: monitor.col + 1, row: monitor.row };
-    const key = `${tile.col},${tile.row}`;
-    return deskTiles.has(key) && !electronicsTiles.has(key) && !isTaken(tile) ? tile : null;
-  }
-  return null;
-}
-
-/**
  * Where the companion of an agent sitting on a sofa rests: on the coffee table in front of it. The
  * first table tile along the seat's facing line, else the table tile beside that one (right, then
  * left). Null when the sofa faces no table or every candidate is taken.

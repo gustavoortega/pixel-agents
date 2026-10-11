@@ -63,7 +63,8 @@ export function createCharacter(
   const center = tileCenter(col, row);
   return {
     id,
-    state: initialActive ? CharacterState.TYPE : CharacterState.IDLE,
+    // Working at a seat types; with no seat there is nothing to sit at, so it stands.
+    state: initialActive && seatId ? CharacterState.TYPE : CharacterState.IDLE,
     dir: seat ? seat.facingDir : Direction.DOWN,
     x: center.x,
     y: center.y,
@@ -164,13 +165,9 @@ export function updateCharacter(
       if (ch.seatTimer < 0) ch.seatTimer = 0; // clear turn-end sentinel
       // If became active, pathfind to seat
       if (ch.isActive) {
-        if (!ch.seatId) {
-          // No seat assigned — type in place
-          ch.state = CharacterState.TYPE;
-          ch.frame = 0;
-          ch.frameTimer = 0;
-          break;
-        }
+        // Nothing to sit at: it stands where it is. TYPE would draw the seated pose and sit
+        // offset over bare floor, with the shadow a tile below the feet.
+        if (!ch.seatId) break;
         const seat = seats.get(ch.seatId);
         if (seat) {
           const path = findPath(
@@ -277,8 +274,7 @@ export function updateCharacter(
 
         if (ch.isActive) {
           if (!ch.seatId) {
-            // No seat — type in place
-            ch.state = CharacterState.TYPE;
+            ch.state = CharacterState.IDLE;
           } else {
             const seat = seats.get(ch.seatId);
             if (seat && ch.tileCol === seat.seatCol && ch.tileRow === seat.seatRow) {

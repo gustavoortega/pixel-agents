@@ -26,18 +26,11 @@ import {
   advanceTrail,
   companionTile,
   createCompanion,
-  deskCompanionTile,
   tableCompanionTile,
   updateCompanion,
 } from '../flair/companion.js';
 import type { DeskPropKind } from '../flair/deskProps.js';
-import {
-  companionDeskTile,
-  deskSlots,
-  nearestTile,
-  pcForSeat,
-  propPlacements,
-} from '../flair/deskProps.js';
+import { deskSlots, nearestTile, pcForSeat, propPlacements } from '../flair/deskProps.js';
 import { type HeroCandidate, heroPerRoom } from '../flair/hero.js';
 import { modelFlair } from '../flair/modelFlair.js';
 import { FxEngine } from '../fx/fxEngine.js';
@@ -111,6 +104,8 @@ export class OfficeState {
   fx = new FxEngine();
   weather = new MoodWeather();
   /** Props on each seated agent's desk, from its level; rebuilt every update. */
+  /** Desk cells the heroes' companions took on the last update; props leave them alone. */
+  private companionDeskCells = new Set<string>();
   deskProps: Array<{ kind: DeskPropKind; col: number; row: number; zY: number }> = [];
   /** Share (0..1) of the current 5-hour block per Area label, for the thin bar on each room sign. */
   areaUsage: ReadonlyMap<string, number> = new Map();
@@ -1592,35 +1587,15 @@ export class OfficeState {
    * (every agent's, so a prop never lands where another agent's companion would sit).
    */
   private updateDeskProps(): void {
-    const seated: Array<{ id: number; pc: Tile; across: Tile; seat: Tile; level: number }> = [];
+    const seated: Array<{ pc: Tile; across: Tile; seat: Tile; level: number }> = [];
     for (const id of [...this.characters.keys()].sort((a, b) => a - b)) {
       const ch = this.characters.get(id)!;
       const level = this.rosters.get(id)?.level ?? 0;
-      const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
-      if (ch.isSubagent || !seat || ch.state === CharacterState.WALK) continue;
-      if (seat.seatCol !== ch.tileCol || seat.seatRow !== ch.tileRow) continue;
-      const pcUid = this.pcBySeat.get(seat.uid);
-      const pc = pcUid
-        ? nearestTile(
-            { col: seat.seatCol, row: seat.seatRow },
-            this.electronicsById.get(pcUid) ?? [],
-          )
-        : null;
-      if (!pc) continue;
-      const { dCol } = seatFacingOffset(seat.facingDir);
-      seated.push({
-        id,
-        pc,
-        across: dCol === 0 ? { col: 1, row: 0 } : { col: 0, row: 1 },
-        seat: { col: seat.seatCol, row: seat.seatRow },
-        level,
-      });
+      const desk = this.seatedDesk(ch);
+      if (desk) seated.push({ ...desk, level });
     }
-    const blocked = new Set<string>();
-    for (const s of seated) {
-      const c = companionDeskTile(s.pc);
-      blocked.add(`${c.col},${c.row}`);
-    }
+    // The companions' desk cells are spoken for before any prop takes a slot.
+    const blocked = new Set(this.companionDeskCells);
     const out: typeof this.deskProps = [];
     for (const s of seated) {
       if (s.level < 5) continue;
@@ -1646,6 +1621,23 @@ export class OfficeState {
     this.deskProps = out;
   }
 
+  /**
+   * The desk a character sits at, or null (a helper, a walker, one off its seat, or a seat with no
+   * PC of its own). `pc` is the tile of the PC the seat owns, so a pod never borrows the opposite
+   * desk's; `across` runs along the desk.
+   */
+  private seatedDesk(ch: Character): { pc: Tile; across: Tile; seat: Tile } | null {
+    const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
+    if (ch.isSubagent || !seat || ch.state === CharacterState.WALK) return null;
+    if (seat.seatCol !== ch.tileCol || seat.seatRow !== ch.tileRow) return null;
+    const pcUid = this.pcBySeat.get(seat.uid);
+    const seatTile = { col: seat.seatCol, row: seat.seatRow };
+    const pc = pcUid ? nearestTile(seatTile, this.electronicsById.get(pcUid) ?? []) : null;
+    if (!pc) return null;
+    const { dCol } = seatFacingOffset(seat.facingDir);
+    return { pc, across: dCol === 0 ? { col: 1, row: 0 } : { col: 0, row: 1 }, seat: seatTile };
+  }
+
   /** Area label of the room an agent sits in (its seat, else the tile it stands on); null outside every area. */
   roomOf(ch: Character): string | null {
     const tiles = this.layout.areaTiles;
@@ -1668,6 +1660,7 @@ export class OfficeState {
     const occupied = new Set<string>();
     for (const ch of this.characters.values()) occupied.add(`${ch.tileCol},${ch.tileRow}`);
     const taken = new Set<string>();
+    this.companionDeskCells = new Set<string>();
     const isFree = (t: Tile): boolean => {
       const key = `${t.col},${t.row}`;
       return (
@@ -1708,8 +1701,6 @@ export class OfficeState {
       const moving = ch.state === CharacterState.WALK;
       c.trail = moving ? advanceTrail(c.trail, c.lastAgentTile, agentTile) : [];
       c.lastAgentTile = agentTile;
-      const seat = !moving && ch.seatId ? this.seats.get(ch.seatId) : undefined;
-      const atSeat = !!seat && seat.seatCol === agentTile.col && seat.seatRow === agentTile.row;
       let target: Tile | null = null;
       c.deskZY = null;
       // The lounge's hero on a sofa keeps its companion on the coffee table in front of it.
@@ -1725,17 +1716,24 @@ export class OfficeState {
           isTaken: (t) => taken.has(`${t.col},${t.row}`),
         });
         if (target) c.deskZY = this.tableTiles.get(`${target.col},${target.row}`) ?? null;
-      } else if (seat && atSeat) {
-        const { dCol, dRow } = seatFacingOffset(seat.facingDir);
-        target = deskCompanionTile({
-          seat: agentTile,
-          facing: { col: dCol, row: dRow },
-          depth: AUTO_ON_FACING_DEPTH,
-          electronicsTiles: this.electronicsTiles,
-          deskTiles: this.deskTiles,
-          isTaken: (t) => taken.has(`${t.col},${t.row}`),
-        });
-        if (target) c.deskZY = this.deskTiles.get(`${target.col},${target.row}`) ?? null;
+      } else {
+        // A hero at its own desk puts its companion on that desk: the first free slot beside the
+        // PC its seat owns, never another seat's desk.
+        const desk = !moving && !sofa ? this.seatedDesk(ch) : undefined;
+        if (desk) {
+          target =
+            deskSlots({
+              ...desk,
+              deskTiles: this.deskTiles,
+              electronicsTiles: this.electronicsTiles,
+              blocked: taken,
+            })[0] ?? null;
+          if (target) {
+            const key = `${target.col},${target.row}`;
+            c.deskZY = this.deskTiles.get(key) ?? null;
+            this.companionDeskCells.add(key);
+          }
+        }
       }
       target ??= companionTile({ moving, agentTile, trail: c.trail, isFree });
       if (target) taken.add(`${target.col},${target.row}`);
