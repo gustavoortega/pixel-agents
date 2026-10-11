@@ -75,3 +75,19 @@ export function overlayProjection(
     toWorldLength: (cssPx) => (cssPx * dpr) / zoom,
   };
 }
+
+/** The map's rectangle in CSS px within the overlay container, from the same projection that
+ *  positions the labels, so a layer sized to the map moves with it frame for frame. */
+export function mapRectCss(
+  project: OverlayProjection,
+  layout: { cols: number; rows: number },
+): { left: number; top: number; width: number; height: number } {
+  const left = project.toScreenX(0);
+  const top = project.toScreenY(0);
+  return {
+    left,
+    top,
+    width: project.toScreenX(layout.cols * TILE_SIZE) - left,
+    height: project.toScreenY(layout.rows * TILE_SIZE) - top,
+  };
+}

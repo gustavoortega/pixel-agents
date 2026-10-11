@@ -3,7 +3,7 @@
  *
  * Rules:
  *   no-inline-colors  — flag hex/rgb/rgba/hsl/hsla color literals (centralize in constants)
- *   pixel-shadow      — flag box-shadow values not using var(--pixel-shadow) or 2px 2px 0px
+ *   pixel-shadow      — flag box-shadow values not using var(--pixel-shadow), var(--brand-shadow) or 2px 2px 0px
  *   pixel-font        — flag font-family values not referencing FS Pixel Sans
  */
 
@@ -71,11 +71,12 @@ const pixelShadow = {
     type: 'suggestion',
     docs: {
       description:
-        'Require box-shadow values to use var(--pixel-shadow) or the 2px 2px 0px pattern.',
+        'Require box-shadow values to use var(--pixel-shadow), var(--brand-shadow) or the 2px 2px 0px pattern.',
     },
     schema: [],
     messages: {
-      found: 'Use `var(--pixel-shadow)` or a hard offset `2px 2px 0px` shadow.',
+      found:
+        'Use `var(--pixel-shadow)`, `var(--brand-shadow)` or a hard offset `2px 2px 0px` shadow.',
     },
   },
   create(context) {
@@ -85,7 +86,13 @@ const pixelShadow = {
         const value = node.value;
         if (value.type !== 'Literal' || typeof value.value !== 'string') return;
         const text = value.value;
-        if (text.includes('var(--pixel-shadow)') || text.includes('2px 2px 0px')) return;
+        if (
+          text.includes('var(--pixel-shadow)') ||
+          text.includes('var(--brand-shadow)') ||
+          text.includes('2px 2px 0px')
+        ) {
+          return;
+        }
         context.report({ node: value, messageId: 'found' });
       },
     };

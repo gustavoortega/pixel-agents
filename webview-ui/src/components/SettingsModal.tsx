@@ -13,14 +13,15 @@ interface SettingsModalProps {
   onClose: () => void;
   isDebugMode: boolean;
   onToggleDebugMode: () => void;
-  alwaysShowOverlay: boolean;
-  onToggleAlwaysShowOverlay: () => void;
   /** Whether headless agents (adopted, no terminal to focus) render translucent. */
   ghostHeadlessAgents: boolean;
   onToggleGhostHeadlessAgents: () => void;
   /** Whether each agent shows its model's rarity, equipment and companion. */
   showModelFlair: boolean;
   onToggleShowModelFlair: () => void;
+  /** Whether the time-of-day tint and the monitor/lamp glows are drawn. */
+  cozyLighting: boolean;
+  onToggleCozyLighting: () => void;
   externalAssetDirectories: string[];
   watchAllSessions: boolean;
   onToggleWatchAllSessions: () => void;
@@ -49,12 +50,12 @@ export function SettingsModal({
   onClose,
   isDebugMode,
   onToggleDebugMode,
-  alwaysShowOverlay,
-  onToggleAlwaysShowOverlay,
   ghostHeadlessAgents,
   onToggleGhostHeadlessAgents,
   showModelFlair,
   onToggleShowModelFlair,
+  cozyLighting,
+  onToggleCozyLighting,
   externalAssetDirectories,
   watchAllSessions,
   onToggleWatchAllSessions,
@@ -88,7 +89,7 @@ export function SettingsModal({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Settings">
+    <Modal isOpen={isOpen} onClose={onClose} title="Settings" brand>
       {/* Open Sessions Folder opens an OS file manager — impossible in the browser. */}
       {!isBrowserRuntime && (
         <MenuItem
@@ -150,10 +151,10 @@ export function SettingsModal({
             value={assetDirDraft}
             placeholder="Absolute asset directory path"
             onChange={(e) => setAssetDirDraft(e.target.value)}
-            className="flex-1 min-w-0 text-xs py-2 px-4 bg-bg border-2 border-border rounded-none text-text"
+            className="flex-1 min-w-0 text-xs py-2 px-4 bg-brand-paper-2 border-2 border-brand-ink rounded-none text-brand-ink"
           />
           <Button
-            variant="default"
+            variant="brand"
             size="sm"
             onClick={() => {
               const path = assetDirDraft.trim();
@@ -179,7 +180,7 @@ export function SettingsModal({
       {externalAssetDirectories.map((dir) => (
         <div key={dir} className="flex items-center justify-between py-4 px-10 gap-8">
           <span
-            className="text-xs text-text-muted overflow-hidden text-ellipsis whitespace-nowrap"
+            className="text-xs opacity-70 overflow-hidden text-ellipsis whitespace-nowrap"
             title={dir}
           >
             {dir.split(/[/\\]/).pop() ?? dir}
@@ -188,7 +189,7 @@ export function SettingsModal({
             variant="ghost"
             size="sm"
             onClick={() => transport.send({ type: 'removeExternalAssetDirectory', path: dir })}
-            className="shrink-0"
+            className="shrink-0 text-brand-ink!"
           >
             x
           </Button>
@@ -214,11 +215,6 @@ export function SettingsModal({
         checked={hooksInstalled}
         onChange={onToggleHooksEnabled}
       />
-      <Checkbox
-        label="Always Show Labels"
-        checked={alwaysShowOverlay}
-        onChange={onToggleAlwaysShowOverlay}
-      />
       {/* Headless agents are the office's only terminal-less citizens in VS Code.
           Standalone has no terminals at all, so nothing there would ever ghost. */}
       {!isBrowserRuntime && (
@@ -233,10 +229,11 @@ export function SettingsModal({
         checked={showModelFlair}
         onChange={onToggleShowModelFlair}
       />
+      <Checkbox label="Cozy Lighting" checked={cozyLighting} onChange={onToggleCozyLighting} />
       {showAreasAvailable && (
         <Checkbox label="Show Areas" checked={showAreas} onChange={onToggleShowAreas} />
       )}
-      <div className="py-4 px-10 text-xs text-text-muted">
+      <div className="py-4 px-10 text-xs opacity-70">
         Optional usage budgets (cost-weighted tokens)
       </div>
       {(
@@ -256,7 +253,7 @@ export function SettingsModal({
             defaultValue={value ?? ''}
             placeholder="unset"
             onBlur={sendBudgets}
-            className="w-120 min-w-0 text-xs py-2 px-4 bg-bg border-2 border-border rounded-none text-text"
+            className="w-120 min-w-0 text-xs py-2 px-4 bg-brand-paper-2 border-2 border-brand-ink rounded-none text-brand-ink"
           />
         </label>
       ))}

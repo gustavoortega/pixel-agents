@@ -53,7 +53,7 @@ function boards(h: number, groove: number, base: number, joint: number, seed: nu
     }
     const n = noise(x + row * 7, y, seed);
     if (ly === 1) {
-      return base + 6;
+      return base + 3;
     }
     if (n > 0.9) {
       return base + joint;
@@ -82,7 +82,7 @@ function checker(size: number, light: number, dark: number): FloorFn {
 
 const FLOORS: FloorFn[] = [
   // floor_0: wood planks (the default floor)
-  boards(4, 0x91, 0xa9, 8, 1),
+  boards(4, 0x9d, 0xa9, 4, 1),
   // floor_1: cream tile, light grout
   gridTile(16, 0xe4, 0xa7, 2),
   // floor_2: tile, dark grout

@@ -1,5 +1,5 @@
 /**
- * Layout of the always-on overlay text: compact agent labels and room signs.
+ * Layout of the always-on overlay text: agent nameplates and room signs.
  *
  * Pure geometry with no DOM or canvas access. Labels are laid out in CSS
  * pixels, signs in world units (the projection converts them), so the sign
@@ -9,6 +9,8 @@
 import {
   AREA_LABEL_FONT_SIZE_PX,
   AREA_LABEL_MIN_FONT_SIZE_PX,
+  AREA_SIGN_DOT_GAP_PX,
+  AREA_SIGN_DOT_PX,
   AREA_SIGN_GLYPH_WIDTH_EM,
   AREA_SIGN_PADDING_PX,
   COMPACT_LABEL_LINE_HEIGHT_PX,
@@ -34,6 +36,9 @@ export interface LabelItem {
   y: number;
   w: number;
   h: number;
+  /** Direction a colliding plate is pushed: down for a plate under the feet (default), up for
+   *  one above the head, so a displaced plate never lands on its own character's face. */
+  grow?: 'down' | 'up';
 }
 
 export interface LabelPlacement {
@@ -46,7 +51,8 @@ function intersects(a: Rect, b: Rect): boolean {
 }
 
 /**
- * Pushes colliding labels down, never sideways. Items are placed by tile row,
+ * Pushes colliding labels away from their character (down, or up for plates above the head),
+ * never sideways. Items are placed by tile row,
  * then tile column, then id, so the result does not depend on sub-tile
  * position and labels do not swap places while someone walks. A label that
  * would move further than a few lines stays at its anchor and dims instead.
@@ -64,15 +70,18 @@ export function layoutLabels(
   for (const it of order) {
     const rect: Rect = { x: it.x - it.w / 2, y: it.y, w: it.w, h: it.h };
     let dy = 0;
+    const up = it.grow === 'up';
     for (;;) {
       const cur = { ...rect, y: rect.y + dy };
       const hit =
         obstacles.find((o) => intersects(cur, o)) ?? placed.find((p) => intersects(cur, p));
       if (!hit) break;
-      dy += hit.y + hit.h - cur.y + LABEL_LAYOUT_PAD_PX;
-      if (dy > maxDisplacement) break;
+      dy += up
+        ? -(cur.y + cur.h - hit.y + LABEL_LAYOUT_PAD_PX)
+        : hit.y + hit.h - cur.y + LABEL_LAYOUT_PAD_PX;
+      if (Math.abs(dy) > maxDisplacement) break;
     }
-    if (dy > maxDisplacement) {
+    if (Math.abs(dy) > maxDisplacement) {
       out.set(it.id, { dy: 0, dim: true });
       placed.push(rect);
     } else {
@@ -116,7 +125,11 @@ export function areaSignRect(
   // Same font rule as the canvas text, converted from device px to world units.
   const fontPx = Math.max(AREA_LABEL_FONT_SIZE_PX * zoom, AREA_LABEL_MIN_FONT_SIZE_PX);
   const pad = AREA_SIGN_PADDING_PX * zoom;
-  const w = (label.length * fontPx * AREA_SIGN_GLYPH_WIDTH_EM + 2 * pad) / zoom;
+  const w =
+    (label.length * fontPx * AREA_SIGN_GLYPH_WIDTH_EM +
+      2 * pad +
+      (AREA_SIGN_DOT_PX + AREA_SIGN_DOT_GAP_PX) * zoom) /
+    zoom;
   const h = (fontPx + 2 * pad) / zoom;
 
   if (minRow - 1 < 0) {

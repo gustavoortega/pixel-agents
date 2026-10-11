@@ -9,6 +9,8 @@ import assert from 'node:assert/strict';
 
 import { test } from 'vitest';
 
+import { Rarity } from '../src/office/flair/modelFlair.js';
+import { nameplateHeight, plateSide } from '../src/office/nameplate.js';
 import {
   compactLabelMaxWidth,
   overlayContent,
@@ -16,6 +18,7 @@ import {
   showOverlay,
   statusGlyph,
 } from '../src/office/toolUtils.js';
+import { Direction } from '../src/office/types.js';
 
 test('statusGlyph: only an idle agent with nothing else above its head gets a z', () => {
   const idle = { isActive: false, bubbleType: null };
@@ -38,34 +41,33 @@ test('statusGlyph: only an idle agent with nothing else above its head gets a z'
   }
 });
 
-test('compactLabelMaxWidth is the seat pitch minus a gap, in CSS px', () => {
-  assert.equal(compactLabelMaxWidth(3, 1), 184);
-  assert.equal(compactLabelMaxWidth(2, 2), 56);
+test('compactLabelMaxWidth is the pod pitch minus a gap, in CSS px', () => {
+  assert.equal(compactLabelMaxWidth(4, 1), 152);
+  assert.equal(compactLabelMaxWidth(2, 2), 32);
   assert.equal(compactLabelMaxWidth(0.1, 1), 0); // clamped, never negative
 });
 
-test('overlayContent: compact label, +N, tripwire line, full on hover, marker when narrow', () => {
+test('overlayContent: plate lines, +N, tripwire pill, full on hover, marker when narrow', () => {
   const base = { expanded: false, label: 'Fix login', subCount: 0, maxWidth: 184 };
   const tripwire = { ruleName: 'Dotenv file access', count: 2 };
+  const plain = { badge: null, name: '', pill: null, rarity: null };
 
+  // No roster member yet: the session label takes the name line.
   assert.deepEqual(overlayContent(base), {
     mode: 'compact',
-    lines: [{ kind: 'label', text: 'Fix login', suffix: '' }],
+    plate: { ...plain, name: 'Fix login', sub: null },
   });
   assert.deepEqual(overlayContent({ ...base, subCount: 2 }), {
     mode: 'compact',
-    lines: [{ kind: 'label', text: 'Fix login', suffix: ' +2' }],
+    plate: { ...plain, name: 'Fix login +2', sub: null },
   });
   assert.deepEqual(overlayContent({ ...base, tripwire }), {
     mode: 'compact',
-    lines: [
-      { kind: 'label', text: 'Fix login', suffix: '' },
-      { kind: 'tripwire', text: '⚠ Dotenv file access ×2' },
-    ],
+    plate: { ...plain, name: 'Fix login', sub: null, pill: '⚠ Dotenv file access ×2' },
   });
-  assert.deepEqual(overlayContent({ ...base, label: null }), { mode: 'compact', lines: [] });
+  assert.deepEqual(overlayContent({ ...base, label: null }), { mode: 'compact', plate: null });
   assert.deepEqual(overlayContent({ ...base, expanded: true }), { mode: 'full' });
-  // Hovering must still open the full box when the compact label has no room.
+  // Hovering must still open the full box when the plate has no room.
   assert.deepEqual(overlayContent({ ...base, expanded: true, maxWidth: 56 }), { mode: 'full' });
   assert.deepEqual(overlayContent({ ...base, maxWidth: 89 }), { mode: 'marker' });
   assert.equal(overlayContent({ ...base, maxWidth: 90 }).mode, 'compact');
@@ -78,36 +80,66 @@ test('showOverlay: sub-agents have no compact label but follow their parent', ()
     isHovered: false,
     parentSelected: false,
     parentHovered: false,
-    alwaysShow: false,
   };
   const cases: Array<[string, Partial<typeof none>, 'full' | 'compact' | null]> = [
-    ['agent, nothing', {}, null],
-    ['agent, always-show', { alwaysShow: true }, 'compact'],
-    ['agent, hovered', { isHovered: true, alwaysShow: true }, 'full'],
+    // The nameplate is permanent: no setting gates it.
+    ['agent, nothing', {}, 'compact'],
+    ['agent, hovered', { isHovered: true }, 'full'],
     ['agent, selected', { isSelected: true }, 'full'],
-    ['sub, always-show', { isSub: true, alwaysShow: true }, null],
+    ['sub, nothing', { isSub: true }, null],
     ['sub, hovered', { isSub: true, isHovered: true }, 'full'],
     ['sub, selected', { isSub: true, isSelected: true }, 'full'],
     ['sub, parent hovered', { isSub: true, parentHovered: true }, 'full'],
     ['sub, parent selected', { isSub: true, parentSelected: true }, 'full'],
     // A parent's hover does not open a sibling agent's box.
-    ['agent, parent flags ignored', { parentHovered: true, parentSelected: true }, null],
+    ['agent, parent flags ignored', { parentHovered: true, parentSelected: true }, 'compact'],
   ];
   for (const [name, patch, expected] of cases) {
     assert.equal(showOverlay({ ...none, ...patch }), expected, name);
   }
 });
 
-test('overlayContent: the level badge rides the label line, and shows without a label', () => {
+test('overlayContent: badge and member name on line 1, session label on line 2', () => {
   const base = { expanded: false, label: 'Fix login', subCount: 1, maxWidth: 184 };
-  assert.deepEqual(overlayContent({ ...base, level: 7 }), {
+  assert.deepEqual(overlayContent({ ...base, level: 7, name: 'Nova' }), {
     mode: 'compact',
-    lines: [{ kind: 'label', text: 'Fix login', suffix: ' +1', badge: 'Lv7' }],
+    plate: { badge: 'Lv 7', name: 'Nova', sub: 'Fix login +1', pill: null, rarity: null },
   });
-  assert.deepEqual(overlayContent({ ...base, label: null, subCount: 0, level: 1 }), {
+  // The badge shows without a label too.
+  assert.deepEqual(overlayContent({ ...base, label: null, subCount: 0, level: 1, name: 'Nova' }), {
     mode: 'compact',
-    lines: [{ kind: 'label', text: '', suffix: '', badge: 'Lv1' }],
+    plate: { badge: 'Lv 1', name: 'Nova', sub: null, pill: null, rarity: null },
   });
+});
+
+test('overlayContent: rarity colors the border for tiers 2-4 only', () => {
+  const base = { expanded: false, label: 'x', subCount: 0, maxWidth: 184, level: 1, name: 'N' };
+  const rarityOf = (rarity?: Rarity) => {
+    const c = overlayContent({ ...base, rarity });
+    return c.mode === 'compact' ? c.plate?.rarity : 'not-compact';
+  };
+  assert.equal(rarityOf(undefined), null, 'unknown model');
+  assert.equal(rarityOf(Rarity.COMMON), null, 'tier 1');
+  assert.equal(rarityOf(Rarity.RARE), 'rare');
+  assert.equal(rarityOf(Rarity.EPIC), 'epic');
+  assert.equal(rarityOf(Rarity.LEGENDARY), 'legendary');
+});
+
+test('plateSide: facing the camera puts the plate above the head, facing away below the feet', () => {
+  assert.equal(plateSide(Direction.DOWN), 'above');
+  assert.equal(plateSide(Direction.UP), 'below');
+  // Walkers and sideways characters keep their face clear too.
+  assert.equal(plateSide(Direction.LEFT), 'above');
+  assert.equal(plateSide(Direction.RIGHT), 'above');
+});
+
+test('nameplateHeight reserves the real box: plate lines, border, shadow and the pill', () => {
+  const full = { badge: 'Lv 1', name: 'N', sub: 's', rarity: null, pill: null };
+  const oneLine = { ...full, sub: null };
+  const withPill = { ...full, pill: '⚠ r' };
+  assert.ok(nameplateHeight(full) > nameplateHeight(oneLine), 'second line adds height');
+  assert.ok(nameplateHeight(withPill) > nameplateHeight(full), 'pill adds height');
+  assert.equal(nameplateHeight({ ...full, badge: null, name: '', sub: null }), 0);
 });
 
 test('shouldShowXpPop: only a ship, a level-up or a big bonus, once per cooldown', () => {

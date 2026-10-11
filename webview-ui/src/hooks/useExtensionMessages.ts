@@ -13,6 +13,7 @@ import type { ExistingAgentMeta, PendingAgent } from '../office/engine/existingA
 import { reconcileExistingAgents } from '../office/engine/existingAgents.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import {
+  setCozyLighting as setRendererCozyLighting,
   setGhostHeadlessAgents as setRendererGhostHeadlessAgents,
   setShowModelFlair as setRendererShowModelFlair,
 } from '../office/engine/renderer.js';
@@ -102,6 +103,8 @@ interface ExtensionMessageState {
   setGhostHeadlessAgents: (v: boolean) => void;
   showModelFlair: boolean;
   setShowModelFlair: (v: boolean) => void;
+  cozyLighting: boolean;
+  setCozyLighting: (v: boolean) => void;
   hooksEnabled: boolean;
   setHooksEnabled: (v: boolean) => void;
   /** Actual install state per provider (hooksStatus messages) — absent/false
@@ -158,6 +161,7 @@ export function useExtensionMessages(
   const [alwaysShowLabels, setAlwaysShowLabels] = useState(false);
   const [ghostHeadlessAgents, setGhostHeadlessAgentsState] = useState(false);
   const [showModelFlair, setShowModelFlairState] = useState(true);
+  const [cozyLighting, setCozyLightingState] = useState(true);
   const [hooksEnabled, setHooksEnabled] = useState(true);
   const [hooksInstalled, setHooksInstalled] = useState<Record<string, boolean>>({});
   const [hooksStatusSeq, setHooksStatusSeq] = useState<Record<string, number>>({});
@@ -183,6 +187,12 @@ export function useExtensionMessages(
   const applyShowModelFlair = useCallback((enabled: boolean) => {
     setShowModelFlairState(enabled);
     setRendererShowModelFlair(enabled);
+  }, []);
+
+  // Same pairing: the tint is React (DOM div), the glows read the renderer's copy each frame.
+  const applyCozyLighting = useCallback((enabled: boolean) => {
+    setCozyLightingState(enabled);
+    setRendererCozyLighting(enabled);
   }, []);
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
@@ -687,6 +697,9 @@ export function useExtensionMessages(
         if (typeof msg.showModelFlair === 'boolean') {
           applyShowModelFlair(msg.showModelFlair as boolean);
         }
+        if (typeof msg.cozyLighting === 'boolean') {
+          applyCozyLighting(msg.cozyLighting as boolean);
+        }
         if (typeof msg.hooksEnabled === 'boolean') {
           setHooksEnabled(msg.hooksEnabled as boolean);
         }
@@ -846,6 +859,8 @@ export function useExtensionMessages(
     setGhostHeadlessAgents: applyGhostHeadlessAgents,
     showModelFlair,
     setShowModelFlair: applyShowModelFlair,
+    cozyLighting,
+    setCozyLighting: applyCozyLighting,
     hooksEnabled,
     hooksInstalled,
     hooksStatusSeq,

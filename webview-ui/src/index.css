@@ -45,6 +45,17 @@
   --color-ink-bar: #b9783c;
   --color-ink-bar-over: #b5462f;
 
+  /* Brand kit: warm paper, ink outlines, hard offset shadow */
+  --brand-ink: #3b2412;
+  --brand-paper: #f6e3bd;
+  --brand-paper-2: #e9d2a8;
+  --brand-gold: #f6c64a;
+  --brand-rust: #c0563f;
+  --brand-shadow: 0 4px 0 var(--brand-ink);
+
+  /* Page behind the map: warm dark room, the vignette stays on top */
+  --page-bg: radial-gradient(ellipse at center, #3a2a20 0%, #140d08 100%);
+
   /* Shadow */
   --shadow-pixel: 2px 2px 0px #0a0a14;
 
@@ -99,8 +110,15 @@
   --color-ink-bar: var(--color-ink-bar);
   --color-ink-bar-over: var(--color-ink-bar-over);
 
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-paper: var(--brand-paper);
+  --color-brand-paper-2: var(--brand-paper-2);
+  --color-brand-gold: var(--brand-gold);
+  --color-brand-rust: var(--brand-rust);
+
   /* Shadow */
   --shadow-pixel: var(--shadow-pixel);
+  --shadow-brand: var(--brand-shadow);
 }
 
 @layer base {
@@ -116,6 +134,40 @@
 }
 
 @layer components {
+  /* Brand surfaces: paper, 3 px ink border, hard 4 px shadow. */
+  .brand-panel {
+    background: var(--brand-paper);
+    color: var(--brand-ink);
+    border: 3px solid var(--brand-ink);
+    border-radius: 0;
+    box-shadow: var(--brand-shadow);
+  }
+
+  /* Brand button: same paper plate, presses down onto its shadow. Colors live here, not in
+     Tailwind utilities, so the Button variants stay free of palette classes. */
+  .brand-btn {
+    background: var(--brand-paper);
+    color: var(--brand-ink);
+    border: 3px solid var(--brand-ink);
+    border-radius: 0;
+    box-shadow: var(--brand-shadow);
+    cursor: pointer;
+  }
+  .brand-btn:hover:not(:disabled) {
+    background: var(--brand-paper-2);
+  }
+  .brand-btn:active:not(:disabled) {
+    transform: translateY(2px);
+    box-shadow: 0 2px 0 var(--brand-ink);
+  }
+  .brand-btn-active {
+    background: var(--brand-gold);
+  }
+  .brand-btn:disabled {
+    opacity: var(--btn-disabled-opacity);
+    cursor: default;
+  }
+
   /* Panel with standard pixel-art border + shadow */
   .pixel-panel {
     @apply bg-bg border-2 border-border rounded-none shadow-pixel;

@@ -17,6 +17,8 @@ const variants = {
   disabled: `${base} bg-btn-bg border-transparent cursor-default opacity-[var(--btn-disabled-opacity)]`,
   accent: `${base} bg-accent! hover:bg-accent-bright! border-accent hover:border-accent-bright`,
   ghost: `${base} bg-transparent text-text-muted border-transparent hover:text-text`,
+  brand: 'brand-btn',
+  brandActive: 'brand-btn brand-btn-active',
 } as const;
 
 type ButtonVariant = keyof typeof variants;

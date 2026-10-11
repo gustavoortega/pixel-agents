@@ -293,6 +293,25 @@ describe('configPersistence: areas', () => {
       expect(cfg.standalone.areaMappings).toEqual({});
     });
 
+    it('cozyLighting is on by default, per namespace, and a non-boolean falls back to on', () => {
+      expect(readConfig().vscode.cozyLighting).toBe(true);
+      expect(readConfig().standalone.cozyLighting).toBe(true);
+
+      const cfg = readConfig();
+      cfg.vscode.cozyLighting = false;
+      writeConfig(cfg);
+      expect(readConfig().vscode.cozyLighting).toBe(false);
+      expect(readConfig().standalone.cozyLighting).toBe(true);
+
+      const configDir = path.join(tempHome, '.pixel-agents');
+      fs.writeFileSync(
+        path.join(configDir, 'config.json'),
+        JSON.stringify({ vscode: { cozyLighting: 'off' } }),
+        'utf-8',
+      );
+      expect(readConfig().vscode.cozyLighting).toBe(true);
+    });
+
     it('keeps namespaces isolated when only one writes mappings', () => {
       const cfg = readConfig();
       cfg.vscode.areaMappings = { frontend: ['Engineering'] };

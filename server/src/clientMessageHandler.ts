@@ -74,6 +74,7 @@ const KEY_LAST_SEEN_VERSION = 'pixel-agents.lastSeenVersion';
 const KEY_ALWAYS_SHOW_LABELS = 'pixel-agents.alwaysShowLabels';
 const KEY_GHOST_HEADLESS_AGENTS = 'pixel-agents.ghostHeadlessAgents';
 const KEY_SHOW_MODEL_FLAIR = 'pixel-agents.showModelFlair';
+const KEY_COZY_LIGHTING = 'pixel-agents.cozyLighting';
 const KEY_WATCH_ALL_SESSIONS = 'pixel-agents.watchAllSessions';
 const KEY_HOOKS_INFO_SHOWN = 'pixel-agents.hooksInfoShown';
 const KEY_SHOW_AREAS = 'pixel-agents.showAreas';
@@ -192,6 +193,10 @@ export function handleClientMessage(
 
     case 'setShowModelFlair':
       adapter?.setSetting(KEY_SHOW_MODEL_FLAIR, msg.enabled);
+      break;
+
+    case 'setCozyLighting':
+      adapter?.setSetting(KEY_COZY_LIGHTING, msg.enabled);
       break;
 
     case 'setGhostHeadlessAgents':
@@ -459,6 +464,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     alwaysShowLabels: adapter?.getSetting(KEY_ALWAYS_SHOW_LABELS, false) ?? false,
     ghostHeadlessAgents: adapter?.getSetting(KEY_GHOST_HEADLESS_AGENTS, false) ?? false,
     showModelFlair: adapter?.getSetting(KEY_SHOW_MODEL_FLAIR, true) ?? true,
+    cozyLighting: adapter?.getSetting(KEY_COZY_LIGHTING, true) ?? true,
     hooksEnabled,
     hooksInfoShown: adapter?.getSetting(KEY_HOOKS_INFO_SHOWN, false) ?? false,
     externalAssetDirectories: cfg.externalAssetDirectories,

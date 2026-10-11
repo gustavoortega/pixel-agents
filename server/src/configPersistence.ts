@@ -10,6 +10,7 @@ export interface AdapterSettings {
   alwaysShowLabels: boolean;
   ghostHeadlessAgents: boolean;
   showModelFlair: boolean;
+  cozyLighting: boolean;
   watchAllSessions: boolean;
   hooksInfoShown: boolean;
   showAreas: boolean;
@@ -29,6 +30,7 @@ export const ADAPTER_SETTING_KEYS = [
   'alwaysShowLabels',
   'ghostHeadlessAgents',
   'showModelFlair',
+  'cozyLighting',
   'watchAllSessions',
   'hooksInfoShown',
   'showAreas',
@@ -68,6 +70,7 @@ const DEFAULT_ADAPTER_SETTINGS: AdapterSettings = {
   alwaysShowLabels: false,
   ghostHeadlessAgents: false,
   showModelFlair: true,
+  cozyLighting: true,
   watchAllSessions: false,
   hooksInfoShown: false,
   showAreas: false,
@@ -153,6 +156,10 @@ function parseAdapterSettings(raw: unknown): AdapterSettings {
       typeof obj.showModelFlair === 'boolean'
         ? obj.showModelFlair
         : DEFAULT_ADAPTER_SETTINGS.showModelFlair,
+    cozyLighting:
+      typeof obj.cozyLighting === 'boolean'
+        ? obj.cozyLighting
+        : DEFAULT_ADAPTER_SETTINGS.cozyLighting,
     watchAllSessions:
       typeof obj.watchAllSessions === 'boolean'
         ? obj.watchAllSessions

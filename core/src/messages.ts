@@ -59,6 +59,7 @@ export type ClientMessage =
   | SetAlwaysShowLabels
   | SetGhostHeadlessAgents
   | SetShowModelFlair
+  | SetCozyLighting
   | SetHooksEnabled
   | HooksConsentResponse
   | SetHooksInfoShown
@@ -335,6 +336,7 @@ export interface SettingsLoaded {
   alwaysShowLabels: boolean;
   ghostHeadlessAgents: boolean;
   showModelFlair: boolean;
+  cozyLighting: boolean;
   hooksEnabled: boolean;
   hooksInfoShown: boolean;
   externalAssetDirectories: string[];
@@ -481,6 +483,11 @@ export interface SetGhostHeadlessAgents {
 
 export interface SetShowModelFlair {
   type: 'setShowModelFlair';
+  enabled: boolean;
+}
+
+export interface SetCozyLighting {
+  type: 'setCozyLighting';
   enabled: boolean;
 }
 
