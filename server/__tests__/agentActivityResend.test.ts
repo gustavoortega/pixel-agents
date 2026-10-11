@@ -1,7 +1,12 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import { resendAgentActivity } from '../src/agentActivityResend.js';
 import { AgentStateStore } from '../src/agentStateStore.js';
+import { RosterStore } from '../src/roster.js';
+import { claimRosterMember } from '../src/rosterAgent.js';
 import type { AgentState } from '../src/types.js';
 
 function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
@@ -44,6 +49,35 @@ function resendActivityWithoutTitlesOrAlarms(
     }
   }, store);
 }
+
+describe('resendAgentActivity roster', () => {
+  it('replays agentRoster for rostered agents only, after the tripwire message', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-resend-roster-'));
+    const store = new AgentStateStore();
+    const roster = new RosterStore({ filePath: path.join(dir, 'roster.json') });
+    roster.attach(store);
+    const rostered = createTestAgent({ id: 1, sessionId: 's1' });
+    claimRosterMember(rostered, store);
+    store.set(1, rostered);
+    store.set(2, createTestAgent({ id: 2, sessionId: 's2' }));
+
+    const sent: Array<Record<string, unknown>> = [];
+    resendAgentActivity((msg) => sent.push(msg), store);
+    roster.dispose();
+    fs.rmSync(dir, { recursive: true, force: true });
+
+    const forAgent = (id: number) => sent.filter((m) => m.id === id).map((m) => m.type);
+    expect(forAgent(1)).toEqual(['agentSessionTitle', 'agentTripwireClear', 'agentRoster']);
+    expect(forAgent(2)).toEqual(['agentSessionTitle', 'agentTripwireClear']);
+    expect(sent.find((m) => m.type === 'agentRoster')).toMatchObject({
+      id: 1,
+      level: 1,
+      xp: 0,
+      xpToNext: 100,
+      mood: 'neutral',
+    });
+  });
+});
 
 describe('resendAgentActivity', () => {
   it('sends messages in order: team info, tools, waiting, context, title, tripwire', () => {

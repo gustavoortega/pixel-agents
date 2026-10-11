@@ -3,6 +3,7 @@ import * as path from 'path';
 import type { AgentEvent, HookProvider } from '../../core/src/provider.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { SESSION_END_GRACE_MS } from './constants.js';
+import { broadcastRoster } from './rosterAgent.js';
 import type { SessionRouter } from './sessionRouter.js';
 import { getInlineTeammates, hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
@@ -10,6 +11,7 @@ import { notifyBackgroundAgentCompleted } from './transcriptParser.js';
 import { DEFAULT_TRIPWIRE_RULES } from './tripwireDefaults.js';
 import { applyTripwireHit, evaluateTripwires, type TripwireRule } from './tripwires.js';
 import type { AgentState } from './types.js';
+import { applyXpEvent, newXpTurnState, type XpEvent } from './xp.js';
 
 const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
 
@@ -327,7 +329,14 @@ export class HookEventHandler {
     // Tripwires run before any display skip below (Task/Agent, inline teammates), so
     // tool calls the office does not draw are still checked. Alert-only: the hook
     // script ignores the response, so there is nothing to deny with.
-    if (normEvent.kind === 'toolStart') this.checkTripwires(normEvent, agent, agentId);
+    if (normEvent.kind === 'toolStart') {
+      this.checkTripwires(normEvent, agent, agentId);
+      // Same spot as the tripwires on purpose: a lead with inline teammates returns early in
+      // handlePreToolUse, and its tools still count.
+      this.awardXp(agent, { kind: 'toolStart', ships: normEvent.ships });
+    }
+    // Before the team gate below: a finished sub-agent pays its parent with or without teams.
+    if (normEvent.kind === 'subagentEnd') this.awardXp(agent, { kind: 'subagentEnd' });
 
     // Dispatch on normalized AgentEvent.kind, not raw hook event names.
     // The TeammateIdle / TaskCompleted hooks normalize to `subagentTurnEnd` -- both
@@ -338,9 +347,9 @@ export class HookEventHandler {
       case 'toolStart':
         return this.handlePreToolUse(normEvent, agent, agentId);
       case 'toolEnd':
-        // Both PostToolUse and PostToolUseFailure normalize to toolEnd. Distinguishing
-        // them inside handlers would require extra info; the existing behavior was
-        // identical for both (agentToolDone + clear currentHookToolId), so one branch suffices.
+        this.awardXp(agent, { kind: 'toolEnd', failed: normEvent.failed });
+        // Both PostToolUse and PostToolUseFailure normalize to toolEnd. The display handler
+        // treats them alike (agentToolDone + clear currentHookToolId); only XP tells them apart.
         return this.handlePostToolUse(agent, agentId);
       case 'subagentStart':
         return this.provider.team ? this.handleSubagentStart(event, agent, agentId) : undefined;
@@ -383,6 +392,39 @@ export class HookEventHandler {
     if (!rule) return;
     console.log(`[Pixel Agents] Tripwire ${rule.id} agent ${agentId}`);
     this.agents.broadcast(applyTripwireHit(agent, rule));
+    // An alarm changes the member's mood.
+    broadcastRoster(agent, this.agents);
+  }
+
+  /**
+   * Feed one hook event to the XP rules for the agent's roster member. Hook events only:
+   * transcript turn_duration never calls this, so a turn is never counted twice.
+   */
+  private awardXp(agent: AgentState, event: XpEvent): void {
+    const roster = this.agents.roster;
+    const member = agent.rosterId ? roster?.getMember(agent.rosterId) : undefined;
+    if (!roster || !member) return;
+    agent.xpTurn ??= newXpTurnState();
+    const result = applyXpEvent(member, agent.xpTurn, event);
+    if (Object.keys(result.change).length === 0) return;
+    roster.award(member.id, result.change);
+    broadcastRoster(agent, this.agents);
+    if (result.xpDelta > 0) {
+      this.agents.broadcast({
+        type: 'rosterEvent',
+        id: agent.id,
+        kind: 'xp',
+        amount: result.xpDelta,
+      });
+    }
+    if (result.levelUp !== undefined) {
+      this.agents.broadcast({
+        type: 'rosterEvent',
+        id: agent.id,
+        kind: 'levelUp',
+        level: result.levelUp,
+      });
+    }
   }
 
   /**
@@ -659,6 +701,7 @@ export class HookEventHandler {
 
   /** Handle Stop: Claude finished responding, mark agent as waiting. */
   private handleStop(agent: AgentState, agentId: number, awaitingInput = false): void {
+    this.awardXp(agent, { kind: 'turnEnd', awaitingInput });
     this.markAgentWaiting(agent, agentId, awaitingInput);
   }
 

@@ -754,6 +754,22 @@ export function useExtensionMessages(
         os.setTripwire(id, alarm);
       } else if (msg.type === 'agentTripwireClear') {
         os.setTripwire(msg.id as number, undefined);
+      } else if (msg.type === 'agentRoster') {
+        os.setRoster(msg.id, {
+          memberId: msg.memberId,
+          name: msg.name,
+          level: msg.level,
+          xp: msg.xp,
+          xpToNext: msg.xpToNext,
+          streak: msg.streak,
+          mood: msg.mood,
+        });
+      } else if (msg.type === 'rosterEvent') {
+        os.setRosterEvent(
+          msg.id,
+          { kind: msg.kind, amount: msg.amount, level: msg.level },
+          Date.now(),
+        );
       }
     };
     const unsubscribe = transport.onMessage(handler);

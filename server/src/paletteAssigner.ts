@@ -24,6 +24,11 @@ export function setPaletteCount(count: number): void {
   currentPaletteCount = Math.max(1, Math.floor(count));
 }
 
+/** Palettes currently available (bundled plus any from external asset directories). */
+export function getPaletteCount(): number {
+  return currentPaletteCount;
+}
+
 /**
  * Assign palette and hueShift to an agent if not already set.
  * Uses the diversity algorithm to pick a palette that's least used among

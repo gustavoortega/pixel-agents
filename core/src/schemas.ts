@@ -34,6 +34,8 @@ export interface PersistedAgent {
   palette?: number;
   /** Hue shift in degrees (0-360). Persisted alongside palette. */
   hueShift?: number;
+  /** Roster member this agent held (server/src/roster.ts). Reclaimed on restore. */
+  rosterId?: string;
 }
 
 /** Agent seat assignment with visual identity

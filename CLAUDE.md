@@ -40,6 +40,9 @@ server/                              Lifecycle runtime + Fastify HTTP/WS server
     tripwires.ts                     Tripwire engine (pure): evaluateTripwires, applyTripwireHit, ackTripwire
     tripwireDefaults.ts              Built-in tripwire rule pack (14 rules)
     tripwireConfig.ts                Loads ~/.pixel-agents/tripwires.json over the defaults (validated, once at startup)
+    roster.ts                        RosterStore: persistent crew over ~/.pixel-agents/roster.json (O_EXCL lockfile, holds by pid, re-read + delta merge on write)
+    rosterAgent.ts                   claimRosterMember, agentRoster message, roster-owned palette for seats
+    xp.ts                            XP rules (pure): applyXpEvent, levelForXp, moodFor, isShipCommand
     dismissalTracker.ts              Unified dismissal state (replaces four legacy globals)
     hookEventHandler.ts              Dispatches normalized AgentEvent into runtime
     httpServer.ts                    Fastify: POST /api/hooks/:providerId, GET /api/health, GET /ws, SPA (standalone)
@@ -330,6 +333,7 @@ Per-agent runtime data: provider reference, session key, transcript-fallback fie
   vscode-state.json        { agents, seats }
   standalone-state.json    { agents, seats }
   layout.json              OfficeLayout (shared across surfaces)
+  roster.json              { version, members (xp, counters, lastFolder), holds } shared by both surfaces
   server.json              { port, pid, authToken }
   hooks/claude-hook.js     Bundled hook script (CJS, shebang)
 ```

@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { appendFileSync } from 'node:fs';
 
 import type { StateAdapter } from '../../core/src/adapter.js';
+import type { RosterStore } from './roster.js';
 import type { AgentState, PersistedAgent } from './types.js';
 
 /**
@@ -48,6 +49,9 @@ export class AgentStateStore {
   readonly nextAgentId = { current: 1 };
   readonly nextTerminalIndex = { current: 1 };
   private adapter: StateAdapter | undefined;
+  /** Set by RosterStore.attach on the main store only. Shadow stores never get one, so
+   *  sub-agents neither claim a member nor earn XP. */
+  roster: RosterStore | undefined;
 
   // ── Adapter ──────────────────────────────────────────────────
 
@@ -173,6 +177,7 @@ export class AgentStateStore {
           agent.backgroundAgentToolIds.size > 0 ? [...agent.backgroundAgentToolIds] : undefined,
         palette: agent.palette,
         hueShift: agent.hueShift,
+        rosterId: agent.rosterId,
       });
     }
     this.adapter.saveAgents(persisted);

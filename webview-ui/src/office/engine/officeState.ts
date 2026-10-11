@@ -27,7 +27,7 @@ import {
 import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
 import { getPetCount, getPetName } from '../sprites/petSpriteData.js';
 import { getLoadedCharacterCount } from '../sprites/spriteData.js';
-import type { TripwireAlarm } from '../toolUtils.js';
+import type { AgentRosterInfo, RosterEventInfo, TripwireAlarm } from '../toolUtils.js';
 import type {
   Character,
   FurnitureInstance,
@@ -66,6 +66,11 @@ export class OfficeState {
   /** Tripwire alarms by agent id. Keyed by id for the same reason as sessionTitles:
    *  an alarm can arrive before the (buffered) agentCreated does. */
   tripwires: Map<number, TripwireAlarm> = new Map();
+  /** Roster member data by agent id. Same reason as sessionTitles: it is sent at claim time,
+   *  before the (buffered) agentCreated. */
+  rosters: Map<number, AgentRosterInfo> = new Map();
+  /** Newest transient roster event per agent, kept for later effects. No animation reads it yet. */
+  rosterEvents: Map<number, RosterEventInfo & { level?: number; at: number }> = new Map();
   pets: Pet[] = [];
   /** Accumulated time for furniture animation frame cycling */
   furnitureAnimTimer = 0;
@@ -560,6 +565,8 @@ export class OfficeState {
   removeAgent(id: number): void {
     this.sessionTitles.delete(id);
     this.tripwires.delete(id);
+    this.rosters.delete(id);
+    this.rosterEvents.delete(id);
     const ch = this.characters.get(id);
     if (!ch) return;
     if (ch.matrixEffect === 'despawn') return; // already despawning
@@ -1099,6 +1106,14 @@ export class OfficeState {
   setSessionTitle(id: number, title: string | undefined): void {
     if (title) this.sessionTitles.set(id, title);
     else this.sessionTitles.delete(id);
+  }
+
+  setRoster(id: number, roster: AgentRosterInfo): void {
+    this.rosters.set(id, roster);
+  }
+
+  setRosterEvent(id: number, event: RosterEventInfo & { level?: number }, now: number): void {
+    this.rosterEvents.set(id, { ...event, at: now });
   }
 
   /** Undefined clears the alarm. */

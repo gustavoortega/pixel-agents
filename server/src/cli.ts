@@ -8,6 +8,7 @@
  * Each connecting WebSocket client receives the full state on webviewReady.
  */
 
+import * as os from 'os';
 import * as path from 'path';
 
 import { AgentRuntime } from './agentRuntime.js';
@@ -25,9 +26,10 @@ import {
   grantHooksConsent,
   readConfig,
 } from './configPersistence.js';
-import { MAX_PORT, MIN_PORT } from './constants.js';
+import { LAYOUT_FILE_DIR, MAX_PORT, MIN_PORT, ROSTER_FILE_NAME } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
+import { RosterStore } from './roster.js';
 import { PixelAgentsServer } from './server.js';
 import { loadTripwireRules } from './tripwireConfig.js';
 
@@ -139,6 +141,11 @@ async function main(): Promise<void> {
   const store = new AgentStateStore();
   const adapter = new FileStateAdapter({ namespace: 'standalone' });
   store.setAdapter(adapter);
+  // One crew for every Pixel Agents process on this machine (VS Code shares the same file).
+  const roster = new RosterStore({
+    filePath: path.join(os.homedir(), LAYOUT_FILE_DIR, ROSTER_FILE_NAME),
+  });
+  roster.attach(store);
 
   // ── Create server ──
   const server = new PixelAgentsServer();
@@ -311,6 +318,7 @@ async function main(): Promise<void> {
     function shutdown(): void {
       console.log('\nShutting down...');
       runtime.dispose();
+      roster.dispose();
       server.stop();
       process.exit(0);
     }

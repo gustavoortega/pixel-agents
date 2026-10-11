@@ -34,6 +34,7 @@ import {
   setHooksEnabled as persistHooksEnabled,
   writeConfig,
 } from '../../server/src/configPersistence.js';
+import { LAYOUT_FILE_DIR, ROSTER_FILE_NAME } from '../../server/src/constants.js';
 import { setFolderNameResolver, setTerminalAdapter } from '../../server/src/fileWatcher.js';
 import type { LayoutWatcher } from '../../server/src/layoutPersistence.js';
 import {
@@ -51,6 +52,8 @@ import {
   hookProviderById,
   hookProviders,
 } from '../../server/src/providers/index.js';
+import { RosterStore } from '../../server/src/roster.js';
+import { broadcastRoster, stripRosterLook } from '../../server/src/rosterAgent.js';
 import { PixelAgentsServer } from '../../server/src/server.js';
 import { loadTripwireRules } from '../../server/src/tripwireConfig.js';
 import { ackTripwire } from '../../server/src/tripwires.js';
@@ -95,6 +98,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
   // Shared agent lifecycle core (timer Maps, scanners, hook handler, dismissal tracker)
   private runtime: AgentRuntime;
+  private roster: RosterStore;
 
   // Global session scanning dismissal tracking
   private globalDismissedFiles = new Set<string>();
@@ -182,6 +186,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     // Create shared runtime (owns timer Maps, scanners, hook handler, dismissal tracker)
     this.runtime = new AgentRuntime(this.store, claudeProvider, loadTripwireRules());
+    // Shared with the standalone server, so the crew and its XP are the same on both surfaces.
+    this.roster = new RosterStore({
+      filePath: path.join(os.homedir(), LAYOUT_FILE_DIR, ROSTER_FILE_NAME),
+    });
+    this.roster.attach(this.store);
 
     this.initServer();
   }
@@ -471,7 +480,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       } else if (message.type === 'saveAgentSeats') {
         // Store seat assignments in a separate key (never touched by persistAgents)
         console.log(`[Pixel Agents] State: saveAgentSeats:`, JSON.stringify(message.seats));
-        this.adapter.saveSeats(message.seats);
+        this.adapter.saveSeats(stripRosterLook(message.seats, this.store));
       } else if (message.type === 'saveLayout') {
         this.layoutWatcher?.markOwnWrite();
         writeLayoutToFile(message.layout as Record<string, unknown>);
@@ -479,7 +488,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         if (typeof message.id === 'number' && typeof message.count === 'number') {
           const agent = this.store.get(message.id);
           const reply = agent ? ackTripwire(agent, message.count) : null;
-          if (reply) this.store.broadcast(reply);
+          if (agent && reply) {
+            this.store.broadcast(reply);
+            broadcastRoster(agent, this.store);
+          }
         }
       } else if (message.type === 'setSoundEnabled') {
         this.adapter.setSetting(GLOBAL_KEY_SOUND_ENABLED, message.enabled);
@@ -1049,6 +1061,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     this.pixelAgentsServer?.stop();
     this.pixelAgentsServer = null;
     this.runtime.dispose();
+    this.roster.dispose();
     this.layoutWatcher?.dispose();
     this.layoutWatcher = null;
     this.store.dispose();

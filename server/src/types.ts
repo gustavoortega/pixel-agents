@@ -105,6 +105,17 @@ export interface AgentState {
   palette?: number;
   /** Hue shift in degrees (0-360). Rotates the base palette colors. */
   hueShift?: number;
+
+  // -- Roster + XP (server/src/roster.ts, server/src/xp.ts) --
+  /** Roster member this agent holds. Palette and hueShift come from the member. */
+  rosterId?: string;
+  /** Per-turn XP bookkeeping. Transient, never persisted. */
+  xpTurn?: {
+    xpToolsInTurn: boolean;
+    turnFailed: boolean;
+    pendingShip: boolean;
+    shipped: boolean;
+  };
 }
 
 export interface PersistedAgent {
@@ -134,4 +145,6 @@ export interface PersistedAgent {
   palette?: number;
   /** Hue shift in degrees (0-360). Persisted alongside palette. */
   hueShift?: number;
+  /** Roster member this agent held (server/src/roster.ts). Reclaimed on restore. */
+  rosterId?: string;
 }

@@ -38,6 +38,7 @@ import type { HookEvent } from './hookEventHandler.js';
 import { HookEventHandler } from './hookEventHandler.js';
 import { assignPaletteIfNeeded } from './paletteAssigner.js';
 import { PathSet, pathsMatch } from './pathKey.js';
+import { claimRosterMember } from './rosterAgent.js';
 import { SessionRouter } from './sessionRouter.js';
 import { SubagentWatch } from './subagentWatch.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
@@ -236,6 +237,7 @@ export class AgentRuntime {
         if (agent) {
           this.unregisterAgent(agent.sessionId);
           agent.sessionId = newSessionId;
+          this.store.roster?.rebindSession(agent.id, newSessionId);
           this.registerAgent(agent.sessionId, agent.id);
         }
       },
@@ -521,8 +523,10 @@ export class AgentRuntime {
         teamUsesTmux: p.teamUsesTmux,
         palette: p.palette,
         hueShift: p.hueShift,
+        rosterId: p.rosterId,
       };
 
+      claimRosterMember(agent, this.store);
       assignPaletteIfNeeded(agent, this.store);
       this.store.set(p.id, agent);
       this.knownJsonlFiles.add(p.jsonlFile);

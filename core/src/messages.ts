@@ -28,6 +28,8 @@ export type ServerMessage =
   | AgentSessionTitle
   | AgentTripwire
   | AgentTripwireClear
+  | AgentRoster
+  | RosterEvent
   | LayoutLoaded
   | FurnitureAssetsLoaded
   | CharacterSpritesLoaded
@@ -213,6 +215,30 @@ export interface AgentTripwireClear {
   type: 'agentTripwireClear';
   id: number;
 }
+
+export interface AgentRoster {
+  type: 'agentRoster';
+  id: number;
+  memberId: string;
+  name: string;
+  level: number;
+  xp: number;
+  xpToNext: number;
+  streak: number;
+  mood: RosterMood;
+}
+
+export type RosterMood = 'alarmed' | 'frustrated' | 'happy' | 'neutral';
+
+export interface RosterEvent {
+  type: 'rosterEvent';
+  id: number;
+  kind: RosterEventKind;
+  amount?: number;
+  level?: number;
+}
+
+export type RosterEventKind = 'xp' | 'levelUp';
 
 export interface LayoutLoaded {
   type: 'layoutLoaded';

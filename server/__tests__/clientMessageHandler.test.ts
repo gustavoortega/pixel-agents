@@ -478,6 +478,20 @@ describe('clientMessageHandler: saveAgentSeats palette sync', () => {
     expect(store.get(2)?.hueShift).toBe(60);
   });
 
+  it('cannot change the look of a rostered agent, but still saves its seat (R3)', () => {
+    store.set(1, createTestAgent({ id: 1, palette: 2, hueShift: 40, rosterId: 'm1' }));
+
+    handleClientMessage(
+      { type: 'saveAgentSeats', seats: { '1': { palette: 4, hueShift: 120, seatId: 'seat-a' } } },
+      (m) => sent.push(m),
+      ctx,
+    );
+
+    expect(store.get(1)?.palette).toBe(2);
+    expect(store.get(1)?.hueShift).toBe(40);
+    expect(store.getAdapter()?.loadSeats()['1']).toEqual({ seatId: 'seat-a' });
+  });
+
   it('drops an out-of-range palette and keeps the existing value', () => {
     store.set(1, createTestAgent({ id: 1, palette: 1, hueShift: 10 }));
 

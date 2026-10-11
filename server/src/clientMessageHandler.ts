@@ -17,6 +17,7 @@ import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
+import { broadcastRoster, stripRosterLook } from './rosterAgent.js';
 import { ackTripwire } from './tripwires.js';
 
 type WsSend = (message: Record<string, unknown>) => void;
@@ -112,7 +113,11 @@ export function handleClientMessage(
       const agent = store.get(msg.id);
       if (!agent) break;
       const reply = ackTripwire(agent, msg.count);
-      if (reply) store.broadcast(reply);
+      if (reply) {
+        store.broadcast(reply);
+        // Clearing the alarm changes the member's mood.
+        broadcastRoster(agent, store);
+      }
       break;
     }
 
@@ -144,7 +149,8 @@ export function handleClientMessage(
         for (const [idStr, meta] of Object.entries(seats)) {
           const id = Number(idStr);
           const agent = store.get(id);
-          if (agent) {
+          // The roster owns the look of a rostered agent: the webview may move its seat only.
+          if (agent && !agent.rosterId) {
             if (
               meta.palette !== undefined &&
               Number.isInteger(meta.palette) &&
@@ -163,7 +169,7 @@ export function handleClientMessage(
             }
           }
         }
-        adapter?.saveSeats(seats);
+        adapter?.saveSeats(stripRosterLook(seats, store));
       }
       break;
 
