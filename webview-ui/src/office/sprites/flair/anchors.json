@@ -1,0 +1,41 @@
+{
+  "down": {
+    "headTopY": 3,
+    "shoulderY": 15,
+    "bob": [
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      1
+    ]
+  },
+  "up": {
+    "headTopY": 3,
+    "shoulderY": 15,
+    "bob": [
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      1
+    ]
+  },
+  "right": {
+    "headTopY": 3,
+    "shoulderY": 15,
+    "bob": [
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      1
+    ]
+  }
+}
