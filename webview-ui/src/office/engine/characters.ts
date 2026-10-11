@@ -89,6 +89,24 @@ export function createCharacter(
   };
 }
 
+/**
+ * Tiles an idle agent may wander to: the ones in its seat's area, so agents
+ * stay in their own room. Falls back to every walkable tile when the seat has
+ * no area or its area has nowhere to walk.
+ */
+export function wanderCandidates(
+  walkableTiles: Array<{ col: number; row: number }>,
+  seat: { seatCol: number; seatRow: number } | undefined,
+  areaTiles: ReadonlyArray<string | null> | undefined,
+  cols: number,
+): Array<{ col: number; row: number }> {
+  if (!seat || !areaTiles || cols <= 0) return walkableTiles;
+  const area = areaTiles[seat.seatRow * cols + seat.seatCol];
+  if (!area) return walkableTiles;
+  const inArea = walkableTiles.filter((t) => areaTiles[t.row * cols + t.col] === area);
+  return inArea.length > 0 ? inArea : walkableTiles;
+}
+
 export function updateCharacter(
   ch: Character,
   dt: number,
@@ -96,6 +114,8 @@ export function updateCharacter(
   seats: Map<string, Seat>,
   tileMap: TileTypeVal[][],
   blockedTiles: Set<string>,
+  areaTiles?: ReadonlyArray<string | null>,
+  cols = 0,
 ): void {
   ch.frameTimer += dt;
 
@@ -186,8 +206,14 @@ export function updateCharacter(
             }
           }
         }
-        if (walkableTiles.length > 0) {
-          const target = walkableTiles[Math.floor(Math.random() * walkableTiles.length)];
+        const candidates = wanderCandidates(
+          walkableTiles,
+          ch.seatId ? seats.get(ch.seatId) : undefined,
+          areaTiles,
+          cols,
+        );
+        if (candidates.length > 0) {
+          const target = candidates[Math.floor(Math.random() * candidates.length)];
           const path = findPath(
             ch.tileCol,
             ch.tileRow,

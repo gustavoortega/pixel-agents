@@ -33,31 +33,69 @@ const OVERLAY_TIMEOUT_MS = 15_000;
  *    match, not after the state holds for N seconds.
  */
 
+/**
+ * An overlay shows its status text and role only in the full box, which the
+ * app renders just for the hovered or selected agent (and sub-agents of a
+ * hovered or selected parent). Everyone else gets a compact label with the
+ * session name only. So the text helpers below do not query the DOM as it
+ * stands: `scanOverlays` selects each agent in turn through the test hook and
+ * reads the full box, then clears the selection. Use `data-status` (see
+ * `getOverlaysByStatus`) when state is all a test needs.
+ */
 export function getAgentOverlays(frame: OverlaySurface): Locator {
   return frame.locator('[data-testid="agent-overlay"]');
 }
 
-export function getOverlayByText(frame: OverlaySurface, text: string): Locator {
-  return getAgentOverlays(frame).filter({ hasText: text });
+/** Locator over overlays by `data-status`: active | idle | waiting | permission. */
+export function getOverlaysByStatus(
+  frame: OverlaySurface,
+  status: 'active' | 'idle' | 'waiting' | 'permission',
+): Locator {
+  return frame.locator(`[data-testid="agent-overlay"][data-status="${status}"]`);
 }
 
-export function getOverlayByTexts(frame: OverlaySurface, texts: string[]): Locator {
-  return texts.reduce<Locator>(
-    (locator, text) => locator.filter({ hasText: text }),
-    getAgentOverlays(frame),
-  );
+export async function expectOverlayStatus(
+  frame: OverlaySurface,
+  status: 'active' | 'idle' | 'waiting' | 'permission',
+  timeout = OVERLAY_TIMEOUT_MS,
+): Promise<void> {
+  await expect(getOverlaysByStatus(frame, status).first()).toBeAttached({ timeout });
+}
+
+/**
+ * Every agent's full-box text. Sub-agents (negative ids) have no compact
+ * element, so they only appear while their parent is selected; scanning each
+ * root picks them up. Selection is cleared afterwards.
+ */
+async function scanOverlays(frame: OverlaySurface): Promise<Array<{ id: number; text: string }>> {
+  const seen = new Map<number, string>();
+  const rootIds = (await readAgentOverlayIds(frame)).filter((id) => id >= 0);
+  for (const rootId of rootIds) {
+    await selectCharacter(frame, rootId);
+    for (const { id, text } of await readRawOverlayTexts(frame)) {
+      // Only the selected agent and revealed sub-agents show the full box.
+      if (id === rootId || id < 0) seen.set(id, text);
+    }
+  }
+  await selectCharacter(frame, null);
+  return [...seen].map(([id, text]) => ({ id, text }));
+}
+
+function hasTexts(overlay: { text: string }, texts: string[]): boolean {
+  return texts.every((text) => overlay.text.includes(text));
 }
 
 export function getOverlayByAgentId(frame: OverlaySurface, agentId: number): Locator {
   return frame.locator(`[data-testid="agent-overlay"][data-agent-id="${agentId}"]`);
 }
 
+/** Counts agents including sub-agents (revealed through their parent), not DOM nodes. */
 export async function expectOverlayCount(
   frame: OverlaySurface,
   count: number,
   timeout = OVERLAY_TIMEOUT_MS,
 ): Promise<void> {
-  await expect(getAgentOverlays(frame)).toHaveCount(count, { timeout });
+  await expect.poll(async () => (await scanOverlays(frame)).length, { timeout }).toBe(count);
 }
 
 export async function expectOverlayVisible(
@@ -65,7 +103,7 @@ export async function expectOverlayVisible(
   text: string,
   timeout = OVERLAY_TIMEOUT_MS,
 ): Promise<void> {
-  await expect(getOverlayByText(frame, text).first()).toBeVisible({ timeout });
+  await expectOverlayVisibleWithTexts(frame, [text], timeout);
 }
 
 export async function expectOverlayVisibleWithTexts(
@@ -73,7 +111,9 @@ export async function expectOverlayVisibleWithTexts(
   texts: string[],
   timeout = OVERLAY_TIMEOUT_MS,
 ): Promise<void> {
-  await expect(getOverlayByTexts(frame, texts).first()).toBeVisible({ timeout });
+  await expect
+    .poll(async () => (await scanOverlays(frame)).some((o) => hasTexts(o, texts)), { timeout })
+    .toBe(true);
 }
 
 export async function expectOverlayVisibleForAgent(
@@ -82,9 +122,12 @@ export async function expectOverlayVisibleForAgent(
   text: string,
   timeout = OVERLAY_TIMEOUT_MS,
 ): Promise<void> {
-  await expect(getOverlayByAgentId(frame, agentId).filter({ hasText: text })).toBeVisible({
-    timeout,
-  });
+  await expect
+    .poll(
+      async () => (await scanOverlays(frame)).some((o) => o.id === agentId && hasTexts(o, [text])),
+      { timeout },
+    )
+    .toBe(true);
 }
 
 export async function expectNoOverlay(
@@ -92,7 +135,7 @@ export async function expectNoOverlay(
   text: string,
   timeout = 1_000,
 ): Promise<void> {
-  await expect(getOverlayByText(frame, text)).toHaveCount(0, { timeout });
+  await expectNoOverlayWithTexts(frame, [text], timeout);
 }
 
 export async function expectNoOverlayWithTexts(
@@ -100,7 +143,9 @@ export async function expectNoOverlayWithTexts(
   texts: string[],
   timeout = 1_000,
 ): Promise<void> {
-  await expect(getOverlayByTexts(frame, texts)).toHaveCount(0, { timeout });
+  await expect
+    .poll(async () => (await scanOverlays(frame)).some((o) => hasTexts(o, texts)), { timeout })
+    .toBe(false);
 }
 
 /**
@@ -134,24 +179,23 @@ export async function readAgentOverlayIds(frame: OverlaySurface): Promise<number
   });
 }
 
-export async function readAgentOverlayTexts(
+/** textContent of the overlay elements as currently rendered (compact or full). */
+async function readRawOverlayTexts(
   frame: OverlaySurface,
 ): Promise<Array<{ id: number; text: string }>> {
   return getAgentOverlays(frame).evaluateAll((elements) =>
     elements.flatMap((element) => {
-      const rawId = element.getAttribute('data-agent-id');
-      const id = Number(rawId);
-      if (!Number.isFinite(id)) {
-        return [];
-      }
-      return [
-        {
-          id,
-          text: element.textContent ?? '',
-        },
-      ];
+      const id = Number(element.getAttribute('data-agent-id'));
+      return Number.isFinite(id) ? [{ id, text: element.textContent ?? '' }] : [];
     }),
   );
+}
+
+/** Full-box text per agent (see `scanOverlays`), not the compact label text. */
+export async function readAgentOverlayTexts(
+  frame: OverlaySurface,
+): Promise<Array<{ id: number; text: string }>> {
+  return scanOverlays(frame);
 }
 
 /** Wait for a specific agent's overlay to disappear. Prefer this over a global
@@ -257,7 +301,10 @@ export async function expectTeammateSeatedNextToLead(
  *  — the same officeState.selectedAgentId a canvas click sets. Sub-agents use
  *  negative ids (first sub is -1). Selection is what reveals a sub-agent's
  *  live activity text in its overlay (hover shows only the subtask title). */
-export async function selectCharacter(frame: OverlaySurface, agentId: number): Promise<void> {
+export async function selectCharacter(
+  frame: OverlaySurface,
+  agentId: number | null,
+): Promise<void> {
   await frame.evaluate((id) => {
     window.__pixelAgentsTestHooks?.selectAgent?.(id);
   }, agentId);
@@ -268,11 +315,17 @@ export async function closeAgentFromOverlay(
   options: { agentId?: number; text?: string },
   timeout = OVERLAY_TIMEOUT_MS,
 ): Promise<void> {
-  const overlay =
-    options.agentId !== undefined
-      ? getOverlayByAgentId(frame, options.agentId).first()
-      : getOverlayByText(frame, options.text ?? '').first();
-  await expect(overlay).toBeVisible({ timeout });
+  // A text lookup resolves to an id first: the text lives in the full box,
+  // which only exists once the agent is selected.
+  let agentId = options.agentId;
+  if (agentId === undefined) {
+    const text = options.text ?? '';
+    await expectOverlayVisible(frame, text, timeout);
+    agentId = (await scanOverlays(frame)).find((o) => hasTexts(o, [text]))?.id;
+    if (agentId === undefined) throw new Error(`No agent overlay contains "${text}"`);
+  }
+  const overlay = getOverlayByAgentId(frame, agentId).first();
+  await expect(overlay).toBeAttached({ timeout });
 
   // Selecting an agent is what reveals its "Close agent" (×) button. The
   // production path selects via a canvas hit-test on the sprite; driving that
@@ -282,8 +335,7 @@ export async function closeAgentFromOverlay(
   // hook: it sets officeState.selectedAgentId (the same state a click sets),
   // and ToolOverlay re-renders every rAF, so the × button surfaces and becomes
   // clickable on the next frame. The overlay carries its agent id as
-  // data-agent-id, so the text-based lookup path resolves an id too.
-  const agentId = options.agentId ?? Number(await overlay.getAttribute('data-agent-id'));
+  // data-agent-id, which the text-based lookup resolves up front.
   await frame.evaluate((id) => {
     window.__pixelAgentsTestHooks?.selectAgent?.(id);
   }, agentId);
