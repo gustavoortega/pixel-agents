@@ -10,6 +10,7 @@ import {
   FIT_CENTER_EASE_MS,
   FIT_MARGIN_TILES,
   FIT_MIN_ZOOM,
+  FIT_TOP_PAD_TILES,
   TILE_SIZE,
   ZOOM_MAX,
   ZOOM_MIN,
@@ -61,7 +62,7 @@ export function occupiedTileBox(
 function withMargin(box: TileBox): TileBox {
   return {
     col0: box.col0 - FIT_MARGIN_TILES,
-    row0: box.row0 - FIT_MARGIN_TILES,
+    row0: box.row0 - FIT_MARGIN_TILES - FIT_TOP_PAD_TILES,
     col1: box.col1 + FIT_MARGIN_TILES,
     row1: box.row1 + FIT_MARGIN_TILES,
   };
@@ -92,7 +93,12 @@ export function fitView(
 ): FitResult {
   const devW = canvas.width * dpr;
   const devH = canvas.height * dpr;
-  const mapBox: TileBox = { col0: 0, row0: 0, col1: map.cols - 1, row1: map.rows - 1 };
+  const mapBox: TileBox = {
+    col0: 0,
+    row0: -FIT_TOP_PAD_TILES,
+    col1: map.cols - 1,
+    row1: map.rows - 1,
+  };
   const box = occupied ? withMargin(occupied) : mapBox;
   const fit = zoomToFit(box.col1 - box.col0 + 1, box.row1 - box.row0 + 1, devW, devH);
   const wholeMapFit = zoomToFit(map.cols, map.rows, devW, devH);

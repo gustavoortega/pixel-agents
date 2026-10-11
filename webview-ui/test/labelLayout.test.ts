@@ -12,9 +12,11 @@ import { test } from 'vitest';
 import { wanderCandidates } from '../src/office/engine/characters.js';
 import {
   areaSignRect,
+  clampPlate,
   type LabelItem,
   layoutLabels,
   type Rect,
+  roomFloorRect,
 } from '../src/office/labelLayout.js';
 import { compactLabelMaxWidth } from '../src/office/toolUtils.js';
 
@@ -110,6 +112,42 @@ test('areaSignRect: wall row above the area at its first column, centroid on row
   const c = areaSignRect(top, cols, 'Top', 1)!;
   assert.equal(c.x + c.w / 2, 2.5 * 16);
   assert.equal(c.y + c.h / 2, 2 * 16);
+});
+
+test('clampPlate: a plate above a seat in the top row ends inside the room floor', () => {
+  // Room floor: rows 2..5 of a 10 x 8 map, in CSS px at 16 px per tile.
+  const cols = 10;
+  const tiles: Array<string | null> = new Array(cols * 8).fill(null);
+  for (let r = 2; r <= 5; r++) for (let c = 1; c <= 8; c++) tiles[r * cols + c] = 'Eng';
+  const floor = roomFloorRect(tiles, cols, 8, 'Eng');
+  assert.deepEqual(floor, { x: 16, y: 32, w: 128, h: 64 });
+
+  // The plate of an agent in the top row sits above the floor, over the wall.
+  const above: Rect = { x: 40, y: 20, w: 50, h: 24 };
+  const fitted = clampPlate(above, floor);
+  assert.equal(fitted.y, floor.y, 'pushed down to the top edge of the floor');
+  assert.equal(fitted.x, above.x, 'only the axis that left the room moves');
+  assert.ok(fitted.y >= floor.y && fitted.x >= floor.x);
+  assert.ok(fitted.y + fitted.h <= floor.y + floor.h && fitted.x + fitted.w <= floor.x + floor.w);
+
+  // Against the side wall.
+  assert.equal(clampPlate({ x: 120, y: 40, w: 50, h: 24 }, floor).x, floor.x + floor.w - 50);
+});
+
+test('clampPlate: a plate in open floor is untouched', () => {
+  const floor: Rect = { x: 16, y: 32, w: 128, h: 64 };
+  const plate: Rect = { x: 40, y: 44, w: 50, h: 24 };
+  assert.deepEqual(clampPlate(plate, floor), plate);
+});
+
+test('roomFloorRect: the whole map outside every area', () => {
+  assert.deepEqual(roomFloorRect(undefined, 10, 8, null), { x: 0, y: 0, w: 160, h: 128 });
+  assert.deepEqual(roomFloorRect(new Array(80).fill(null), 10, 8, 'Nope'), {
+    x: 0,
+    y: 0,
+    w: 160,
+    h: 128,
+  });
 });
 
 test('wanderCandidates: stay in the seat area, else fall back to every walkable tile', () => {

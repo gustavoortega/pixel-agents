@@ -9,10 +9,10 @@
 import {
   AREA_LABEL_FONT_SIZE_PX,
   AREA_LABEL_MIN_FONT_SIZE_PX,
-  AREA_SIGN_DOT_GAP_PX,
-  AREA_SIGN_DOT_PX,
+  AREA_SIGN_BORDER_PX,
   AREA_SIGN_GLYPH_WIDTH_EM,
   AREA_SIGN_PADDING_PX,
+  AREA_SIGN_SHADOW_PX,
   COMPACT_LABEL_LINE_HEIGHT_PX,
   LABEL_LAYOUT_MAX_DISPLACEMENT_LINES,
   LABEL_LAYOUT_PAD_PX,
@@ -93,7 +93,7 @@ export function layoutLabels(
 }
 
 /**
- * Room sign for an area, in world units: on the wall row above the area's
+ * Room plaque for an area, in world units: on the wall row above the area's
  * bounding box, left-aligned half a tile in from its first column. An area
  * that starts on row 0 has no wall row above it, so its sign sits at the
  * centroid. Null when no tile carries the label.
@@ -125,12 +125,10 @@ export function areaSignRect(
   // Same font rule as the canvas text, converted from device px to world units.
   const fontPx = Math.max(AREA_LABEL_FONT_SIZE_PX * zoom, AREA_LABEL_MIN_FONT_SIZE_PX);
   const pad = AREA_SIGN_PADDING_PX * zoom;
-  const w =
-    (label.length * fontPx * AREA_SIGN_GLYPH_WIDTH_EM +
-      2 * pad +
-      (AREA_SIGN_DOT_PX + AREA_SIGN_DOT_GAP_PX) * zoom) /
-    zoom;
-  const h = (fontPx + 2 * pad) / zoom;
+  const border = AREA_SIGN_BORDER_PX * zoom;
+  const w = (label.length * fontPx * AREA_SIGN_GLYPH_WIDTH_EM + 2 * pad + 2 * border) / zoom;
+  // Border above and below the text, plus the hard shadow under the plate.
+  const h = (fontPx + 2 * border + AREA_SIGN_SHADOW_PX * zoom) / zoom;
 
   if (minRow - 1 < 0) {
     const cx = (sumCol / count + 0.5) * TILE_SIZE;
@@ -142,5 +140,54 @@ export function areaSignRect(
     y: (minRow - 1) * TILE_SIZE + (TILE_SIZE - h) / 2,
     w,
     h,
+  };
+}
+
+/**
+ * The plate moved the least that puts it inside `floor`: a plate never crosses a wall or the top
+ * edge of its room. A plate bigger than the floor on one axis is aligned to the floor's start
+ * there. A plate already inside comes back unchanged.
+ */
+export function clampPlate(plate: Rect, floor: Rect): Rect {
+  const fit = (pos: number, size: number, start: number, extent: number): number =>
+    Math.max(start, Math.min(pos, start + extent - size));
+  return {
+    ...plate,
+    x: fit(plate.x, plate.w, floor.x, floor.w),
+    y: fit(plate.y, plate.h, floor.y, floor.h),
+  };
+}
+
+/**
+ * Floor rect of the room a label belongs to, in world units: the bounding box of the area's
+ * tiles, or the whole map for an agent outside every area (or whose area has no tiles).
+ */
+export function roomFloorRect(
+  areaTiles: ReadonlyArray<string | null> | undefined,
+  cols: number,
+  rows: number,
+  label: string | null,
+): Rect {
+  const whole: Rect = { x: 0, y: 0, w: cols * TILE_SIZE, h: rows * TILE_SIZE };
+  if (!label || !areaTiles || cols <= 0) return whole;
+  let minCol = Infinity;
+  let minRow = Infinity;
+  let maxCol = -Infinity;
+  let maxRow = -Infinity;
+  for (let i = 0; i < areaTiles.length; i++) {
+    if (areaTiles[i] !== label) continue;
+    const c = i % cols;
+    const r = Math.floor(i / cols);
+    minCol = Math.min(minCol, c);
+    maxCol = Math.max(maxCol, c);
+    minRow = Math.min(minRow, r);
+    maxRow = Math.max(maxRow, r);
+  }
+  if (minCol === Infinity) return whole;
+  return {
+    x: minCol * TILE_SIZE,
+    y: minRow * TILE_SIZE,
+    w: (maxCol - minCol + 1) * TILE_SIZE,
+    h: (maxRow - minRow + 1) * TILE_SIZE,
   };
 }

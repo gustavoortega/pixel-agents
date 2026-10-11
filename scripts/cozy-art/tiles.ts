@@ -16,7 +16,8 @@ function gray(v: number): string {
 
 /** Deterministic per-pixel noise in 0..1, no randomness involved. */
 function noise(x: number, y: number, seed: number): number {
-  let h = Math.imul(x + 1, 374761393) ^ Math.imul(y + 1, 668265263) ^ Math.imul(seed + 1, 2147483647);
+  let h =
+    Math.imul(x + 1, 374761393) ^ Math.imul(y + 1, 668265263) ^ Math.imul(seed + 1, 2147483647);
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
 }
@@ -279,10 +280,35 @@ function isBorder(msCase: number, reach: number, x: number, y: number): boolean 
   );
 }
 
+/**
+ * Steps from a covered pixel to the nearest uncovered one along an axis (1 = on the rim).
+ * Capped, so a pixel deeper than `max` reports max + 1.
+ */
+function edgeDistance(msCase: number, reach: number, x: number, y: number, max: number): number {
+  let best = max + 1;
+  for (const [dx, dy] of [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ]) {
+    for (let k = 1; k < best; k++) {
+      if (!covered(msCase, reach, x + dx * k, y + dy * k)) {
+        best = k;
+        break;
+      }
+    }
+  }
+  return best;
+}
+
+/** The border line sits 2 steps from the edge; the plain rug's inner line runs 3 px further in. */
+const RUG_INNER_LINE_DISTANCE = 2 + 3;
+
 /** Per variant: how far the rug overhangs its tiles, and the interior pattern. */
 const CARPETS: Array<{ reach: number; pattern: (x: number, y: number) => boolean }> = [
-  // 0: plain weave, one accent thread crossing every 4 px
-  { reach: 12, pattern: (x, y) => x % 4 === 0 && y % 4 === 0 },
+  // 0: plain rug, no weave dots. The inner line is drawn in buildCarpets, which knows the case.
+  { reach: 12, pattern: () => false },
   // 1: argyle diamonds
   { reach: 10, pattern: (x, y) => Math.abs((x % 8) - 4) + Math.abs((y % 8) - 4) === 3 },
   // 2: polka dots
@@ -301,7 +327,11 @@ export function buildCarpets(): Record<string, Canvas> {
           if (!covered(msCase, reach, x, y)) {
             continue;
           }
-          const accent = isBorder(msCase, reach, x, y) || pattern(x, y);
+          // Variant 0 also gets a continuous line 3 px in from the border, never loose dots.
+          const innerLine =
+            v === 0 &&
+            edgeDistance(msCase, reach, x, y, RUG_INNER_LINE_DISTANCE) === RUG_INNER_LINE_DISTANCE;
+          const accent = isBorder(msCase, reach, x, y) || pattern(x, y) || innerLine;
           c.set(ox + x, oy + y, gray(accent ? ACCENT : MAIN));
         }
       }

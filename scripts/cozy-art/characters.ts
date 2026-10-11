@@ -5,7 +5,7 @@
  *   rows:   0 = down, 1 = up (back view, how seated agents are seen), 2 = right (left is a runtime flip)
  *   frames: 0 walk1, 1 walk2 (also idle), 2 walk3, 3 type1, 4 type2, 5 read1, 6 read2
  *
- * char_0..5 are palette swaps of that single base (hair, skin, outfit).
+ * char_0..11 are palette swaps of that single base (hair, skin, outfit).
  *
  * Map legend:
  *   o outline   h hair  H hair light  d hair dark   s skin  S skin shade  c blush  m mouth
@@ -166,9 +166,19 @@ function legsSide(backX: number, backLen: number, frontX: number, frontLen: numb
   return rows;
 }
 
-const SEATED_DOWN = ['....oppppppo....', '....oppppppo....', '...obbbooobbbo..', '...oooooooooo...'];
+const SEATED_DOWN = [
+  '....oppppppo....',
+  '....oppppppo....',
+  '...obbbooobbbo..',
+  '...oooooooooo...',
+];
 const SEATED_UP = ['....oppppppo....', '....oppppppo....', '....oppppppo....', '....oooooooo....'];
-const SEATED_RIGHT = ['....opppppppo...', '....opppppppo...', '.........obbbo..', '.........ooooo..'];
+const SEATED_RIGHT = [
+  '....opppppppo...',
+  '....opppppppo...',
+  '.........obbbo..',
+  '.........ooooo..',
+];
 
 // ---------------------------------------------------------------------------
 // Arms and props, as {rows, x, y} stamps relative to the upper-body shift
@@ -395,15 +405,32 @@ export interface CharLook {
   outfit: string;
 }
 
-/** char_0..5. Same chibi, different hair, skin and outfit. */
-export const CHAR_LOOKS: readonly CharLook[] = [
-  { name: 'nova', hair: '#3a2416', skin: '#f2c9a0', outfit: '#3d6fd1' },
-  { name: 'pixel', hair: '#e0a040', skin: '#f6d9b8', outfit: '#48a46f' },
-  { name: 'byte', hair: '#1d1d24', skin: '#8d5a3b', outfit: '#e0c15a' },
-  { name: 'luna', hair: '#7a5ad1', skin: '#f2c9a0', outfit: '#d65d73' },
-  { name: 'ramon', hair: '#c0563f', skin: '#c98d5e', outfit: '#5ec2d6' },
-  { name: 'sol', hair: '#d9d4e6', skin: '#fbdcc0', outfit: '#e8855a' },
+/**
+ * Skin is never hue-shifted at runtime, so the ramp is fixed: sheet n wears tone n mod 5.
+ * Keep in sync with `SKIN_TONES` in webview-ui/src/constants.ts (the runtime skips these pixels).
+ */
+export const SKIN_RAMP: readonly string[] = ['#f6d9b8', '#f2c9a0', '#c98d5e', '#8d5a3b', '#5a3a28'];
+
+/** char_0..11. Same chibi; hair and outfit differ per sheet, skin comes from the ramp. */
+const CHAR_PALETTES: ReadonlyArray<Omit<CharLook, 'skin'>> = [
+  { name: 'nova', hair: '#3a2416', outfit: '#3d6fd1' },
+  { name: 'pixel', hair: '#e0a040', outfit: '#48a46f' },
+  { name: 'byte', hair: '#1d1d24', outfit: '#e0c15a' },
+  { name: 'luna', hair: '#7a5ad1', outfit: '#d65d73' },
+  { name: 'ramon', hair: '#c0563f', outfit: '#5ec2d6' },
+  { name: 'sol', hair: '#d9d4e6', outfit: '#e8855a' },
+  { name: 'iris', hair: '#2b3a67', outfit: '#9b6fd6' },
+  { name: 'milo', hair: '#8a5a2b', outfit: '#d94f4f' },
+  { name: 'jade', hair: '#0f0f14', outfit: '#3fb8a0' },
+  { name: 'coco', hair: '#5a2e1e', outfit: '#f2b8c6' },
+  { name: 'finn', hair: '#e8d27a', outfit: '#4a5d8f' },
+  { name: 'ruby', hair: '#a8322e', outfit: '#8fc25e' },
 ];
+
+export const CHAR_LOOKS: readonly CharLook[] = CHAR_PALETTES.map((p, n) => ({
+  ...p,
+  skin: SKIN_RAMP[n % SKIN_RAMP.length],
+}));
 
 export function paletteFor(look: CharLook): Palette {
   return {

@@ -9,11 +9,10 @@ import {
   AREA_LABEL_MIN_FONT_SIZE_PX,
   AREA_OVERLAY_ALPHA,
   AREA_SIGN_BORDER_COLOR,
-  AREA_SIGN_DOT_GAP_PX,
-  AREA_SIGN_DOT_PX,
-  AREA_SIGN_HIGHLIGHT_COLOR,
+  AREA_SIGN_BORDER_PX,
   AREA_SIGN_PADDING_PX,
   AREA_SIGN_PLATE_COLOR,
+  AREA_SIGN_SHADOW_PX,
   AREA_SIGN_TEXT_COLOR,
   AREA_SIGN_USAGE_BAR_HEIGHT_PX,
   AREA_SIGN_USAGE_TRACK_COLOR,
@@ -30,6 +29,7 @@ import {
   CARPET_DEFAULT_COLOR,
   CHARACTER_SITTING_OFFSET_PX,
   CHARACTER_Z_SORT_OFFSET,
+  COMPANION_DESK_Z_OFFSET,
   COMPANION_FEET_INSET_PX,
   DELETE_BUTTON_BG,
   FALLBACK_FLOOR_COLOR,
@@ -329,8 +329,8 @@ function measureLabel(ctx: CanvasRenderingContext2D, label: string, zoom: number
 }
 
 /**
- * Render a room sign for each Area, ABOVE characters/bubbles: a wooden plaque on the wall row
- * above the area with the label in cream next to an area-color dot (placement in `areaSignRect`,
+ * Render a room sign for each Area, ABOVE characters/bubbles: a wall plaque on the wall row
+ * above the area, in the wall palette (placement in `areaSignRect`,
  * shared with the label layout so labels avoid the signs).
  *
  * @internal
@@ -350,9 +350,8 @@ export function renderAreaLabels(
 
   const fontSize = Math.max(AREA_LABEL_FONT_SIZE_PX * zoom, AREA_LABEL_MIN_FONT_SIZE_PX);
   const pad = AREA_SIGN_PADDING_PX * zoom;
-  const border = Math.max(1, zoom);
-  const dot = AREA_SIGN_DOT_PX * zoom;
-  const dotGap = AREA_SIGN_DOT_GAP_PX * zoom;
+  const border = AREA_SIGN_BORDER_PX * zoom;
+  const shadow = AREA_SIGN_SHADOW_PX * zoom;
 
   ctx.save();
   ctx.font = `bold ${fontSize}px 'FS Pixel Sans'`;
@@ -364,23 +363,20 @@ export function renderAreaLabels(
     if (!rect) continue;
     const x = Math.round(offsetX + rect.x * zoom);
     const y = Math.round(offsetY + rect.y * zoom);
-    const plateW = Math.round(measureLabel(ctx, area.label, zoom) + 2 * pad + dot + dotGap);
-    const plateH = Math.round(rect.h * zoom);
+    const plateW = Math.round(measureLabel(ctx, area.label, zoom) + 2 * pad + 2 * border);
+    // The rect includes the hard shadow below the plate.
+    const plateH = Math.round(rect.h * zoom - shadow);
 
     ctx.globalAlpha = 1;
     ctx.fillStyle = AREA_SIGN_BORDER_COLOR;
+    ctx.fillRect(x, y + shadow, plateW, plateH);
     ctx.fillRect(x, y, plateW, plateH);
     ctx.fillStyle = AREA_SIGN_PLATE_COLOR;
     ctx.fillRect(x + border, y + border, plateW - 2 * border, plateH - 2 * border);
-    ctx.fillStyle = AREA_SIGN_HIGHLIGHT_COLOR;
-    ctx.fillRect(x + border, y + border, plateW - 2 * border, border);
-
-    ctx.fillStyle = area.color || AREA_LABEL_FALLBACK_COLOR;
-    ctx.fillRect(x + pad + border, y + Math.round((plateH - dot) / 2), dot, dot);
 
     ctx.globalAlpha = AREA_LABEL_ALPHA;
     ctx.fillStyle = AREA_SIGN_TEXT_COLOR;
-    ctx.fillText(area.label, x + pad + border + dot + dotGap, y + Math.round(plateH / 2));
+    ctx.fillText(area.label, x + border + pad, y + Math.round(plateH / 2));
 
     // Thin usage bar: this Area's share of the current 5-hour block, along the plaque's bottom edge.
     const share = areaUsage?.get(area.label);
@@ -637,7 +633,9 @@ export function renderScene(
       // Feet a touch above the tile's bottom edge; flying kinds hover above that
       const feetY = comp.y + TILE_SIZE / 2 - COMPANION_FEET_INSET_PX + hover;
       const drawY = Math.round(offsetY + feetY * zoom - cached.height);
-      const compZY = comp.y + TILE_SIZE / 2;
+      // On a desk it sorts just in front of the desk, or the desk top would hide it.
+      const compZY =
+        comp.deskZY !== null ? comp.deskZY + COMPANION_DESK_Z_OFFSET : comp.y + TILE_SIZE / 2;
       // Shadow stays on the ground under a flying companion, not under its hover height.
       const shadowCached = getCachedSprite(shadowSprite(true), zoom);
       const shX = Math.round(offsetX + comp.x * zoom - shadowCached.width / 2);

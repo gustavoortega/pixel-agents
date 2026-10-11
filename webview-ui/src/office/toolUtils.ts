@@ -110,12 +110,12 @@ export function levelBadge(level: number): string {
 }
 
 /** What a permanent nameplate shows. Line 1 is the badge + member name, line 2 the session
- *  label; the rarity colors the plate's border and the tripwire is a pill under it. */
+ *  label; the rarity colors the Lv badge and the tripwire is a pill under it. */
 export interface NameplateContent {
   badge: string | null;
   name: string;
   sub: string | null;
-  /** Tiers 2-4 only: tier 1 and an unknown model keep the plain ink border. */
+  /** Tiers 2-4 only: tier 1 and an unknown model keep the gold badge. */
   rarity: Rarity | null;
   pill: string | null;
 }

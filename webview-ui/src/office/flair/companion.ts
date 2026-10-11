@@ -66,6 +66,31 @@ export function companionTile(input: {
   return null;
 }
 
+/**
+ * The desk tile a seated hero's companion sits on: one tile right of the monitor the seat faces.
+ * Null when the seat faces no monitor within `depth` tiles, or that tile is not desk surface
+ * (or is taken); the caller then falls back to the floor rule.
+ */
+export function deskCompanionTile(input: {
+  seat: Tile;
+  /** Unit step of the seat's facing. */
+  facing: Tile;
+  depth: number;
+  electronicsTiles: ReadonlySet<string>;
+  deskTiles: ReadonlyMap<string, number>;
+  isTaken: (tile: Tile) => boolean;
+}): Tile | null {
+  const { seat, facing, depth, electronicsTiles, deskTiles, isTaken } = input;
+  for (let d = 1; d <= depth; d++) {
+    const monitor = { col: seat.col + facing.col * d, row: seat.row + facing.row * d };
+    if (!electronicsTiles.has(`${monitor.col},${monitor.row}`)) continue;
+    const tile = { col: monitor.col + 1, row: monitor.row };
+    const key = `${tile.col},${tile.row}`;
+    return deskTiles.has(key) && !electronicsTiles.has(key) && !isTaken(tile) ? tile : null;
+  }
+  return null;
+}
+
 /** New trail after the agent moved from `from` to `to`; unchanged while it stays put. */
 export function advanceTrail(trail: readonly Tile[], from: Tile, to: Tile): readonly Tile[] {
   if (from.col === to.col && from.row === to.row) return trail;
@@ -141,6 +166,8 @@ export interface Companion {
   trail: readonly Tile[];
   /** Where the agent was on the previous update, to detect a step. */
   lastAgentTile: Tile;
+  /** Sort depth of the desk the companion stands on; null on the floor. It sorts just in front of it. */
+  deskZY: number | null;
 }
 
 export function createCompanion(agentId: number, kind: CompanionKind, agentTile: Tile): Companion {
@@ -156,6 +183,7 @@ export function createCompanion(agentId: number, kind: CompanionKind, agentTile:
     frameTimer: 0,
     trail: [],
     lastAgentTile: agentTile,
+    deskZY: null,
   };
 }
 
