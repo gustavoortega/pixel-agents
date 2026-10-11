@@ -9,10 +9,11 @@
 
 import {
   FIT_CENTER_EASE_MS,
-  FIT_MARGIN_TILES,
   FIT_MIN_ROOMS,
+  FIT_PADDING_CSS_PX,
   LOUNGE_FURNITURE_TYPE,
   TILE_SIZE,
+  WALL_FACE_TILES,
   ZOOM_LEVELS,
   ZOOM_MIN,
 } from '../constants.js';
@@ -39,7 +40,7 @@ export interface FitResult {
   zoom: number;
   /** Centre of the framed area, in world px. */
   center: Point;
-  /** The framed tiles, margin included (whole map without a target). Absent on a result that only tracks the view. */
+  /** The framed tiles (whole map without a target). Absent on a result that only tracks the view. */
   box?: TileBox;
 }
 
@@ -167,16 +168,6 @@ export function fitTarget(rooms: Rooms, agents: Iterable<FitAgent>): TileBox | n
   return unionBox([...chosen].map((k) => rooms.boxes.get(k)!));
 }
 
-/** The box grown by the margin. Not clamped to the map: the pan clamp keeps the view inside it. */
-export function withMargin(box: TileBox): TileBox {
-  return {
-    col0: box.col0 - FIT_MARGIN_TILES,
-    row0: box.row0 - FIT_MARGIN_TILES,
-    col1: box.col1 + FIT_MARGIN_TILES,
-    row1: box.row1 + FIT_MARGIN_TILES,
-  };
-}
-
 function boxCenter(box: TileBox): Point {
   return {
     x: ((box.col0 + box.col1 + 1) / 2) * TILE_SIZE,
@@ -202,6 +193,11 @@ function zoomToFit(tilesW: number, tilesH: number, devW: number, devH: number): 
   return snapZoom(Math.min(devW / (tilesW * TILE_SIZE), devH / (tilesH * TILE_SIZE)));
 }
 
+/** The framing padding in device px: a fixed CSS length, so it does not grow with the zoom level. */
+function paddingDevPx(dpr: number): number {
+  return FIT_PADDING_CSS_PX * dpr;
+}
+
 /** Zoom at which the whole map fits the canvas: the reference the plates scale against. */
 export function fitZoomWholeMap(
   map: MapSize,
@@ -212,9 +208,10 @@ export function fitZoomWholeMap(
 }
 
 /**
- * Zoom and centre that frame the target box plus a margin, or the whole map when there is no
- * target. The zoom is the largest zoom level at which the frame fits, so the frame fills the shorter
- * viewport axis; the longer one is left to the pan clamp's centring. `canvas` is in CSS px.
+ * Zoom and centre that frame the target box, or the whole map when there is no target, with
+ * FIT_PADDING_CSS_PX of canvas left free on every side. The zoom is the largest zoom level at
+ * which the frame fits, so the frame fills the shorter viewport axis; the longer one is left to
+ * the pan clamp's centring. `canvas` is in CSS px.
  */
 export function fitView(
   target: TileBox | null,
@@ -224,15 +221,23 @@ export function fitView(
 ): FitResult {
   const devW = canvas.width * dpr;
   const devH = canvas.height * dpr;
+  const pad = paddingDevPx(dpr);
+  // A room's box is its floor; its top wall (windows, signs, shelves) sits WALL_FACE_TILES above it
+  // and belongs in the frame, or the fit cuts the windows in half.
   const box = target
-    ? withMargin(target)
+    ? { ...target, row0: Math.max(0, target.row0 - WALL_FACE_TILES) }
     : { col0: 0, row0: 0, col1: map.cols - 1, row1: map.rows - 1 };
-  const zoom = zoomToFit(box.col1 - box.col0 + 1, box.row1 - box.row0 + 1, devW, devH);
+  const zoom = zoomToFit(
+    box.col1 - box.col0 + 1,
+    box.row1 - box.row0 + 1,
+    devW - 2 * pad,
+    devH - 2 * pad,
+  );
   return { zoom, center: boxCenter(box), box };
 }
 
 /**
- * What to do when the fit target changed. Null when the new box (with margin) is already inside
+ * What to do when the fit target changed. Null when the new box (with padding) is already inside
  * the current view. Otherwise the view moves to the box, and the zoom only ever goes OUT: it never
  * zooms back in by itself, so an agent starting work cannot make the room jump closer. The Fit
  * button is how the user asks for the tightest frame.
@@ -245,9 +250,10 @@ export function refitView(
   dpr: number,
 ): FitResult | null {
   if (!target) return null;
-  const box = withMargin(target);
-  const halfW = (canvas.width * dpr) / current.zoom / 2;
-  const halfH = (canvas.height * dpr) / current.zoom / 2;
+  const box = target;
+  const pad = paddingDevPx(dpr) / current.zoom;
+  const halfW = (canvas.width * dpr) / current.zoom / 2 - pad;
+  const halfH = (canvas.height * dpr) / current.zoom / 2 - pad;
   const inside =
     box.col0 * TILE_SIZE >= current.center.x - halfW &&
     (box.col1 + 1) * TILE_SIZE <= current.center.x + halfW &&

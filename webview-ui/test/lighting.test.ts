@@ -248,6 +248,7 @@ const NIGHT = {
   nowMs: 0,
   strength: 1,
   monitors: [],
+  isWall: () => true,
   fixtures: { lamps: [], fairyLights: [] },
 };
 const center = (d: GlowDraw) => ({ x: d.x + d.w / 2, y: d.y + d.h / 2, r: d.w / 2 });
@@ -272,6 +273,31 @@ test('nightLightDraws: lamp pool r4, a pool r2.5 one tile below each lit monitor
   assert.deepEqual({ x: band.x, w: band.w, h: band.h }, { x: 10 + 1 * 32, w: 4 * 32, h: 1.5 * 32 });
   assert.equal(band.y, 20 + 1.5 * 32, 'starts half a tile under the strand top');
   assert.deepEqual(nightLightDraws({ ...input, enabled: false }), { pools: [], fairy: [] });
+});
+
+test('nightLightDraws: the fairy band is cut at the last wall row under its strand; lamp and monitor pools only at the map', () => {
+  // Wall rows 0-1 above the strand's middle column (col 3), floor below.
+  const isWall = (col: number, row: number) => col === 3 && row < 2;
+  const input = {
+    ...NIGHT,
+    cols: 16,
+    rows: 16,
+    isWall,
+    // the strand hangs at row 1: its band would span 1.5-3.0 tiles, the wall ends at 2.0
+    fixtures: { lamps: [{ col: 8, row: 6 }], fairyLights: [{ col: 1, row: 1 }] },
+    monitors: [{ col: 2, row: 2 }],
+  };
+  const { pools } = nightLightDraws(input);
+  const band = pools.find((d) => d.kind === 'fairyBand')!;
+  assert.equal(band.y, 20 + 1.5 * 32);
+  assert.equal(band.y + band.h, 20 + 2 * 32, 'ends on the wall bottom');
+  assert.equal(band.sy, 0, 'the top of the fade is what is kept');
+  // The floor pools are whole: wall rows do not cut them.
+  assert.equal(pools.find((d) => d.kind === 'lampPool')?.h, 8 * 32);
+  assert.equal(pools.find((d) => d.kind === 'monitorPool')?.h, 5 * 32);
+  // A strand with no wall under it lights nothing.
+  const none = nightLightDraws({ ...input, isWall: () => false }).pools;
+  assert.equal(none.filter((d) => d.kind === 'fairyBand').length, 0);
 });
 
 test('nightLightDraws: a monitor that is not lit gets no pool, and the pools fade with the darkening strength', () => {

@@ -262,8 +262,10 @@ function twinkle(i: number, nowMs: number): number {
 /**
  * The night lights, only while `strength` (nightDarkness / NIGHT_DARKEN_ALPHA, 0..1) is above 0
  * and the setting is on: pools under every floor lamp, every active monitor and every fairy
- * strand (`pools`), and a twinkling glow on each fairy-light bulb (`fairy`). Both are painted
- * with `screen` AFTER the darkening multiply, at `strength`, so they fade in with the dusk ramp.
+ * strand (`pools`), and a twinkling glow on each fairy-light bulb (`fairy`). Pools are painted
+ * with POOL_BLEND_MODE and bulbs with `screen`, AFTER the darkening multiply, at `strength`, so they
+ * fade in with the dusk ramp. Pools are clipped to the map only, except the fairy band, which
+ * stays on the wall rows.
  * `monitors` is the tile of each lit PC, the same set that shows the ON frames.
  */
 export function nightLightDraws(input: {
@@ -271,6 +273,8 @@ export function nightLightDraws(input: {
   strength: number;
   fixtures: GlowFixtures;
   monitors: readonly FixturePoint[];
+  /** True for a wall tile: the fairy band is cut to the wall rows under its strand. */
+  isWall: (col: number, row: number) => boolean;
   nowMs: number;
   zoom: number;
   offsetX: number;
@@ -278,16 +282,34 @@ export function nightLightDraws(input: {
   cols: number;
   rows: number;
 }): { pools: GlowDraw[]; fairy: GlowDraw[] } {
-  const { enabled, strength, fixtures, monitors, nowMs, zoom, offsetX, offsetY, cols, rows } =
-    input;
+  const {
+    enabled,
+    strength,
+    fixtures,
+    monitors,
+    isWall,
+    nowMs,
+    zoom,
+    offsetX,
+    offsetY,
+    cols,
+    rows,
+  } = input;
   const pools: GlowDraw[] = [];
   const fairy: GlowDraw[] = [];
   if (!enabled || strength <= 0) return { pools, fairy };
   const s = TILE_SIZE * zoom;
   const map: PxRect = { x: offsetX, y: offsetY, w: cols * s, h: rows * s };
-  const at = (out: GlowDraw[], kind: GlowKind, cx: number, cy: number, alpha: number): void => {
+  const at = (
+    out: GlowDraw[],
+    kind: GlowKind,
+    cx: number,
+    cy: number,
+    alpha: number,
+    bounds: PxRect = map,
+  ): void => {
     const { w, h } = glowSize(kind, zoom);
-    const clipped = clipRect({ x: cx - w / 2, y: cy - h / 2, w, h }, map);
+    const clipped = clipRect({ x: cx - w / 2, y: cy - h / 2, w, h }, bounds);
     if (clipped) out.push({ kind, ...clipped, alpha });
   };
 
@@ -311,12 +333,18 @@ export function nightLightDraws(input: {
   }
   for (const strand of fixtures.fairyLights) {
     const { h } = glowSize('fairyBand', zoom);
+    // The band lights the wall only: it stops where the wall rows under the strand end.
+    const midCol = strand.col + Math.floor(POOL_FAIRY_BAND_WIDTH_TILES / 2);
+    let wallEnd = strand.row;
+    while (wallEnd < rows && isWall(midCol, wallEnd)) wallEnd++;
+    const wallBottom = Math.min(map.y + map.h, offsetY + wallEnd * s);
     at(
       pools,
       'fairyBand',
       offsetX + (strand.col + POOL_FAIRY_BAND_WIDTH_TILES / 2) * s,
       offsetY + (strand.row + POOL_FAIRY_BAND_TOP_TILES) * s + h / 2,
       strength,
+      { x: map.x, y: map.y, w: map.w, h: Math.max(0, wallBottom - map.y) },
     );
   }
   for (const strand of fixtures.fairyLights) {

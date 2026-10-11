@@ -16,8 +16,7 @@ function buildGlow(kind: GlowKind, zoom: number): HTMLCanvasElement {
     kind === 'fairyBand'
       ? ctx.createLinearGradient(0, 0, 0, h)
       : ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
-  gradient.addColorStop(0, colors.core);
-  gradient.addColorStop(1, colors.edge);
+  for (const [offset, color] of colors.stops) gradient.addColorStop(offset, color);
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, w, h);
   return canvas;

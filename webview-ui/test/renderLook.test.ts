@@ -40,7 +40,17 @@ interface Recorder {
   /** Width of each canvas passed to drawImage, in call order. */
   drawnWidths: number[];
   /** Every fillRect and drawImage in call order, with the blend and alpha it was painted under. */
-  ops: Array<{ op: 'fill' | 'image'; comp: unknown; alpha: unknown; style: string; w: number }>;
+  ops: Array<{
+    op: 'fill' | 'image';
+    comp: unknown;
+    alpha: unknown;
+    style: string;
+    w: number;
+    /** The last rect() path before this op, the clip it was drawn under: [x, y, w, h]. */
+    clip: number[] | null;
+    /** drawImage's destination rect: [x, y, w, h]. */
+    dest: number[] | null;
+  }>;
 }
 
 /** A 2D context that records fillRect and drawImage and swallows everything else. */
@@ -49,8 +59,14 @@ function recorder(): Recorder {
   const drawnWidths: number[] = [];
   const ops: Recorder['ops'] = [];
   const state: Record<string, unknown> = {};
+  let clip: number[] | null = null;
   const ctx = new Proxy(state, {
     get(target, prop: string) {
+      if (prop === 'rect') {
+        return (x: number, y: number, w: number, h: number) => {
+          clip = [x, y, w, h];
+        };
+      }
       if (prop === 'fillRect') {
         return (x: number, y: number, w: number, h: number) => {
           fills.push({ x, y, w, h, fillStyle: String(target.fillStyle) });
@@ -60,11 +76,13 @@ function recorder(): Recorder {
             alpha: target.globalAlpha,
             style: String(target.fillStyle),
             w,
+            clip,
+            dest: null,
           });
         };
       }
       if (prop === 'drawImage') {
-        return (img: { width: number }) => {
+        return (img: { width: number }, ...args: number[]) => {
           drawnWidths.push(img.width);
           ops.push({
             op: 'image',
@@ -72,6 +90,8 @@ function recorder(): Recorder {
             alpha: target.globalAlpha,
             style: '',
             w: img.width,
+            clip,
+            dest: args.length === 8 ? args.slice(4) : null,
           });
         };
       }
@@ -273,8 +293,76 @@ test('renderFrame: at night the map is multiplied once, and the pools are screen
   for (const w of [LAMP_POOL_W, MONITOR_POOL_W]) {
     const pool = rec.ops.findIndex((o) => o.op === 'image' && o.w === w);
     assert.ok(pool > multiply, `pool ${w}px is drawn after the multiply, not under it`);
-    assert.equal(rec.ops[pool].comp, 'screen');
+    assert.equal(
+      rec.ops[pool].comp,
+      'soft-light',
+      'pools lift the dark scene, they do not wash it',
+    );
   }
+});
+
+test('renderFrame: pools are clipped to the map and to nothing narrower (no rug or room rect)', () => {
+  const rec = recorder();
+  nightFrame(rec, NIGHT_DARKEN_ALPHA);
+  // zoom 2: the 16-tile map is 512 px, centred in the 1024 px canvas
+  for (const w of [LAMP_POOL_W, MONITOR_POOL_W]) {
+    const pool = rec.ops.find((o) => o.op === 'image' && o.w === w);
+    assert.deepEqual(pool?.clip, [256, 256, 16 * 32, 16 * 32], `pool ${w}px clip`);
+  }
+});
+
+test('renderFrame: the fairy band stops at the wall rows, and the bulbs still screen on', () => {
+  // Wall rows 0-1, floor below. The strand hangs at row 1, so its band (1.5-3.0 tiles) would
+  // run onto the floor; only the half tile that is still wall (1.5-2.0) may be painted.
+  const rec = recorder();
+  const map = Array.from({ length: 16 }, (_, r) =>
+    Array.from({ length: 16 }, () => (r < 2 ? TileType.WALL : TileType.FLOOR_1)),
+  );
+  renderFrame(
+    rec.ctx,
+    1024,
+    1024,
+    map,
+    [],
+    [],
+    2,
+    0,
+    0,
+    undefined,
+    undefined,
+    undefined,
+    16,
+    16,
+    undefined,
+    [],
+    [],
+    false,
+    null,
+    [],
+    undefined,
+    undefined,
+    undefined,
+    false,
+    {
+      lighting: lightingFor(22, 0),
+      sources: [],
+      fixtures: { lamps: [], fairyLights: [{ col: 4, row: 1 }] },
+      shafts: [],
+      darkness: NIGHT_DARKEN_ALPHA,
+      monitors: [],
+      nowMs: 0,
+    },
+  );
+  const band = rec.ops.find((o) => o.op === 'image' && o.comp === 'soft-light');
+  assert.ok(band?.dest, 'the band is drawn');
+  assert.equal(band.comp, 'soft-light');
+  const [, y, , h] = band.dest;
+  assert.equal(y, 256 + 1.5 * 32);
+  assert.equal(y + h, 256 + 2 * 32, 'ends where the wall ends');
+  assert.ok(
+    rec.ops.some((o) => o.op === 'image' && o.comp === 'screen'),
+    'the bulbs are screened on',
+  );
 });
 
 test('renderFrame: by day there is no darkening and no pool', () => {
