@@ -63,15 +63,16 @@ describe('paletteAssigner', () => {
     });
 
     it('picks a least-used palette (one of the palettes at the minimum count)', () => {
-      // Seed counts: 0->3, 1->2, 2->1, 3->1, 4->1, 5->1. minCount=1,
-      // available = [2, 3, 4, 5].
-      const palettes = [0, 0, 0, 1, 1, 2, 3, 4, 5];
+      // Seed counts: 0->3, 1->2, every other palette ->1. minCount=1,
+      // available = [2, PALETTE_COUNT).
+      const rest = Array.from({ length: PALETTE_COUNT - 2 }, (_, i) => i + 2);
+      const palettes = [0, 0, 0, 1, 1, ...rest];
       for (let i = 0; i < palettes.length; i++) {
         store.set(100 + i, createTestAgent({ id: 100 + i, palette: palettes[i], hueShift: 0 }));
       }
       const agent = createTestAgent({ id: 1 });
       assignPaletteIfNeeded(agent, store);
-      expect([2, 3, 4, 5]).toContain(agent.palette);
+      expect(rest).toContain(agent.palette);
       // minCount > 0 → hue shift in [45, 315].
       expect(agent.hueShift).toBeGreaterThanOrEqual(45);
       expect(agent.hueShift).toBeLessThanOrEqual(HUE_SHIFT_MAX_DEG);
@@ -80,7 +81,7 @@ describe('paletteAssigner', () => {
     it('counts only agents with a defined in-range palette', () => {
       // Two agents with undefined palette and one out-of-range must not move
       // the minCount, so the first real assignment stays in the first round
-      // (hueShift === 0) and can pick any of [0..5].
+      // (hueShift === 0) and can pick any palette.
       store.set(10, createTestAgent({ id: 10 })); // palette undefined
       store.set(11, createTestAgent({ id: 11, palette: 99 })); // out of range
       const agent = createTestAgent({ id: 1 });

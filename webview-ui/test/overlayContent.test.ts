@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
 import { Rarity } from '../src/office/flair/modelFlair.js';
-import { nameplateHeight, plateSide } from '../src/office/nameplate.js';
+import { nameplateHeight, nameplateStyle, plateSide } from '../src/office/nameplate.js';
 import {
   compactLabelMaxWidth,
   overlayContent,
@@ -151,4 +151,19 @@ test('shouldShowXpPop: only a ship, a level-up or a big bonus, once per cooldown
   assert.equal(shouldShowXpPop({ kind: 'levelUp' }, undefined, t), true);
   assert.equal(shouldShowXpPop({ kind: 'levelUp' }, t - 9_999, t), false);
   assert.equal(shouldShowXpPop({ kind: 'levelUp' }, t - 10_000, t), true);
+});
+
+test('nameplateStyle: the tier colors the Lv badge only; the border is the same for every agent', () => {
+  // Spec colors, spelled as channels (the lint rule keeps hex literals in constants.ts).
+  const hex = (r: number, g: number, b: number) =>
+    '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+  // Haiku (no rarity) and an unknown model keep the gold badge.
+  assert.equal(nameplateStyle(null).badgeBg, hex(0xf6, 0xc6, 0x4a));
+  assert.equal(nameplateStyle(Rarity.RARE).badgeBg, hex(0x3d, 0x8b, 0xff)); // Sonnet
+  assert.equal(nameplateStyle(Rarity.EPIC).badgeBg, hex(0xa3, 0x35, 0xee)); // Opus
+  assert.equal(nameplateStyle(Rarity.LEGENDARY).badgeBg, hex(0xff, 0x80, 0x00)); // Fable
+  const borders = [null, Rarity.RARE, Rarity.EPIC, Rarity.LEGENDARY].map(
+    (r) => nameplateStyle(r).border,
+  );
+  assert.deepEqual(new Set(borders), new Set([hex(0x1e, 0x12, 0x0a)]));
 });

@@ -16,7 +16,6 @@ export const CHARACTER_DIRECTIONS = ['down', 'up', 'right'] as const;
 export const CHAR_FRAME_W = 16;
 export const CHAR_FRAME_H = 32;
 export const CHAR_FRAMES_PER_ROW = 7;
-export const CHAR_COUNT = 6;
 
 // ── Pet Sprite Dimensions (96×96 spritesheet) ──────────────
 export const PET_FRAME_W_SMALL = 16;

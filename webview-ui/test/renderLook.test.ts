@@ -10,7 +10,12 @@ import assert from 'node:assert/strict';
 
 import { afterAll, beforeAll, test, vi } from 'vitest';
 
-import { SHADOW_SIZE_PX, SHADOW_SMALL_SIZE_PX, TILE_SIZE } from '../src/constants.js';
+import {
+  AREA_SIGN_PLATE_COLOR,
+  SHADOW_SIZE_PX,
+  SHADOW_SMALL_SIZE_PX,
+  TILE_SIZE,
+} from '../src/constants.js';
 import { createCharacter } from '../src/office/engine/characters.js';
 import { renderFrame, renderScene, shouldDrawAreaOverlay } from '../src/office/engine/renderer.js';
 
@@ -125,10 +130,10 @@ test('renderFrame: Show Areas draws the room signs but no color wash outside the
   const rec = recorder();
   frame(rec, true, false);
   assert.equal(washTiles(rec), 0);
-  // the sign is still there: its dot carries the area color
+  // the sign is still there: a plaque in the wall palette, with no area-colored dot
   assert.ok(
-    rec.fills.some((f) => f.fillStyle === AREA.color),
-    'sign dot',
+    rec.fills.some((f) => f.fillStyle === AREA_SIGN_PLATE_COLOR),
+    'sign plaque',
   );
 });
 

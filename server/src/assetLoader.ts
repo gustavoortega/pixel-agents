@@ -10,7 +10,6 @@ import * as path from 'path';
 import type * as vscode from 'vscode';
 
 import {
-  CHAR_COUNT,
   CHAR_FRAMES_PER_ROW,
   MAX_PET_PNG_SIZE,
   WALL_BITMASK_COUNT,
@@ -481,7 +480,8 @@ export function mergeCharacterSprites(
 }
 
 /**
- * Load pre-colored character sprites from assets/characters/ (6 PNGs, each 112×96).
+ * Load pre-colored character sprites from assets/characters/: char_0.png upward until the first
+ * missing index (12 bundled, each 112×96). Null when char_0 is missing.
  * Each PNG has 3 direction rows (down, up, right) × 7 frames (16×32 each).
  */
 export async function loadCharacterSprites(
@@ -491,11 +491,14 @@ export async function loadCharacterSprites(
     const charDir = path.join(assetsRoot, 'assets', 'characters');
     const characters: CharacterDirectionSprites[] = [];
 
-    for (let ci = 0; ci < CHAR_COUNT; ci++) {
+    for (let ci = 0; ; ci++) {
       const filePath = path.join(charDir, `char_${ci}.png`);
       if (!fs.existsSync(filePath)) {
-        console.log(`[AssetLoader] No character sprite found at: ${filePath}`);
-        return null;
+        if (ci === 0) {
+          console.log(`[AssetLoader] No character sprite found at: ${filePath}`);
+          return null;
+        }
+        break;
       }
 
       const pngBuffer = fs.readFileSync(filePath);

@@ -4,7 +4,7 @@ All sprites listed below are generated from code in `scripts/cozy-art/`. They ar
 
 Generated files:
 
-- `webview-ui/public/assets/characters/char_0..5.png`: one chibi base, palette-swapped for hair, skin and outfit
+- `webview-ui/public/assets/characters/char_0..11.png`: one chibi base, palette-swapped for hair and outfit. Skin comes from a fixed 5-tone ramp (sheet n wears tone n mod 5) and is never hue-shifted at runtime (`SKIN_TONES` in `webview-ui/src/constants.ts` must match `SKIN_RAMP`); the server loads `char_N.png` from 0 upward until the first gap
 - `webview-ui/public/assets/floors/floor_0..8.png`, `walls/wall_0.png`, `carpets/carpet_0..2.png`
 - the desk, PC, chair, plant, bin, coffee, sofa, bookshelf, clock, whiteboard and painting PNGs under `webview-ui/public/assets/furniture/`
 - `WINDOW` (wall, 2x2), `FLOOR_LAMP` (decor, 1x2) and `FAIRY_LIGHTS` (wall, 4x1). Unlike the sprites above they are new ids: their `manifest.json` files are written by hand and committed next to the generated PNG, and `server/__tests__/cozyAssets.test.ts` checks each manifest against the PNG size. `FAIRY_LIGHTS` is a single static frame: the furniture animation cycle only runs for items on auto-on tiles, so a wall item cannot use it

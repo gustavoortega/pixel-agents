@@ -38,17 +38,19 @@ test('occupiedTileBox: bounding box of the seats, null when nobody sits', () => 
   );
 });
 
+// The frame also reaches 1 tile above the top row, so a nameplate over the top seats is not clipped.
 test('fitView: whole map when nobody is seated, the biggest integer zoom that fits', () => {
-  assert.deepEqual(fitView(null, MAP, CANVAS, 1), { zoom: 4, center: { x: 160, y: 88 } });
-  // dpr doubles the device pixels, so twice the zoom fits the same CSS canvas.
-  assert.equal(fitView(null, MAP, CANVAS, 2).zoom, 8);
+  assert.deepEqual(fitView(null, MAP, CANVAS, 1), { zoom: 4, center: { x: 160, y: 80 } });
+  // dpr doubles the device pixels: 2560 x 1440 fits 20 x 12 tiles at floor(min(8, 7.5)) = 7.
+  assert.equal(fitView(null, MAP, CANVAS, 2).zoom, 7);
 });
 
 test('fitView: occupied seats plus a 3-tile margin, centred on them', () => {
-  // seats (5,3)-(7,5) + margin = 9x9 tiles; the 720 px height is the limit: floor(720 / 144) = 5
+  // seats (5,3)-(7,5) + margin + 1 tile of top pad = 9x10 tiles; the 720 px height is the limit:
+  // floor(720 / 160) = 4
   assert.deepEqual(fitView(box(5, 3, 7, 5), MAP, CANVAS, 1), {
-    zoom: 5,
-    center: { x: 104, y: 72 },
+    zoom: 4,
+    center: { x: 104, y: 64 },
   });
 });
 
@@ -62,7 +64,7 @@ test('fitView: never below zoom 4 unless the whole map needs less', () => {
 
 test('refitView: a seat inside the current view changes nothing', () => {
   const current = { zoom: 4, center: { x: 160, y: 88 } };
-  assert.equal(refitView(current, box(5, 3, 6, 4), MAP, CANVAS, 1), null);
+  assert.equal(refitView(current, box(5, 5, 6, 6), MAP, CANVAS, 1), null);
   assert.equal(refitView(current, null, MAP, CANVAS, 1), null);
 });
 
@@ -71,7 +73,7 @@ test('refitView: a seat outside the view re-centres but never zooms in', () => {
   // the box alone would fit at zoom 6; the view stays at 5 and only moves
   assert.deepEqual(refitView(current, box(15, 8, 15, 8), MAP, CANVAS, 1), {
     zoom: 5,
-    center: { x: 248, y: 136 },
+    center: { x: 248, y: 128 },
   });
 });
 
@@ -96,8 +98,8 @@ const input = (patch: Partial<AutoFitInput> = {}): AutoFitInput => ({
 
 test('AutoFit: fits once on start, then leaves a seat inside the view alone', () => {
   const fit = new AutoFit();
-  assert.deepEqual(fit.step(input()), { zoom: 4, pan: { x: 0, y: 0 }, panZoom: 4 });
-  assert.deepEqual(fit.step(input({ occupied: box(5, 3, 6, 4), nowMs: 50 })), {});
+  assert.deepEqual(fit.step(input()), { zoom: 4, pan: { x: 0, y: 32 }, panZoom: 4 });
+  assert.deepEqual(fit.step(input({ occupied: box(5, 5, 6, 6), nowMs: 50 })), {});
 });
 
 test('AutoFit: a seat outside the view eases the centre over 300 ms and keeps the zoom', () => {
@@ -108,7 +110,7 @@ test('AutoFit: a seat outside the view eases the centre over 300 ms and keeps th
   assert.equal(first.zoom, undefined, 'integer zoom is not animated or changed');
   assert.deepEqual(first.pan, { x: 0, y: 0 }, 'starts where the view is');
   const done = fit.step({ ...outside, nowMs: 1300 });
-  assert.deepEqual(done.pan, { x: -352, y: -192 }, 'ends centred on the new seat');
+  assert.deepEqual(done.pan, { x: -352, y: -160 }, 'ends centred on the new seat');
 });
 
 test('AutoFit: a manual zoom or pan, an open editor or a followed agent stops refits; Fit resumes', () => {

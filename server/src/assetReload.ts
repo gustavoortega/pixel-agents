@@ -54,7 +54,7 @@ export async function loadAllCharacters(
   }
   // Sync the server-side palette count so assignPaletteIfNeeded and the
   // saveAgentSeats guard use the dynamic ceiling (external dirs can add
-  // char_N.png past the bundled 6). Centralizing here means every entry
+  // char_N.png past the bundled 12). Centralizing here means every entry
   // point -- standalone startup, standalone reload, VS Code startup,
   // VS Code reload -- sees the same count without four scattered calls.
   if (chars) setPaletteCount(chars.characters.length);

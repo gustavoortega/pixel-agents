@@ -22,13 +22,16 @@ import {
   advanceTrail,
   companionTile,
   createCompanion,
+  deskCompanionTile,
   updateCompanion,
 } from '../flair/companion.js';
+import { type HeroCandidate, heroPerRoom } from '../flair/hero.js';
 import { modelFlair } from '../flair/modelFlair.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
   createDefaultLayout,
   getBlockedTiles,
+  getDeskTiles,
   getFurnitureTiles,
   layoutToFurnitureInstances,
   layoutToSeats,
@@ -90,6 +93,9 @@ export class OfficeState {
   companions: Map<number, Companion> = new Map();
   /** Every furniture footprint tile, background rows included (blockedTiles skips those). */
   furnitureTiles: Set<string>;
+  /** Desk tiles with their desk's sort depth, and the electronics tiles: where a hero's companion sits. */
+  private deskTiles: Map<string, number>;
+  private electronicsTiles: Set<string>;
   pets: Pet[] = [];
   /** Accumulated time for furniture animation frame cycling */
   furnitureAnimTimer = 0;
@@ -146,6 +152,8 @@ export class OfficeState {
     this.seats = layoutToSeats(this.layout.furniture);
     this.blockedTiles = getBlockedTiles(this.layout.furniture);
     this.furnitureTiles = getFurnitureTiles(this.layout.furniture);
+    this.deskTiles = getDeskTiles(this.layout.furniture);
+    this.electronicsTiles = this.buildElectronicsTileSet();
     this.furniture = layoutToFurnitureInstances(this.layout.furniture);
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
     // Pets are built last because they need walkableTiles populated for spawn.
@@ -160,6 +168,8 @@ export class OfficeState {
     this.seats = layoutToSeats(layout.furniture);
     this.blockedTiles = getBlockedTiles(layout.furniture);
     this.furnitureTiles = getFurnitureTiles(layout.furniture);
+    this.deskTiles = getDeskTiles(layout.furniture);
+    this.electronicsTiles = this.buildElectronicsTileSet();
     this.rebuildFurnitureInstances();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
 
@@ -1223,12 +1233,23 @@ export class OfficeState {
     }
   }
 
+  /** Area label of the room an agent sits in (its seat, else the tile it stands on); null outside every area. */
+  roomOf(ch: Character): string | null {
+    const tiles = this.layout.areaTiles;
+    if (!tiles || tiles.length === 0) return null;
+    const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
+    const col = seat ? seat.seatCol : ch.tileCol;
+    const row = seat ? seat.seatRow : ch.tileRow;
+    return tiles[row * this.layout.cols + col] ?? null;
+  }
+
   /**
-   * Place and animate every agent's companion. One pass in id order, claiming
+   * Place and animate the companion of each room's hero. One pass in id order, claiming
    * each tile as it is assigned, so two companions can never share one.
    * A tile is free when it is walkable, holds no furniture, no character and
    * no other companion. A standing agent counts as seated: its companion takes
-   * left, right or below of wherever it stands.
+   * left, right or below of wherever it stands. A hero seated at its desk puts its
+   * companion on the desk instead, one tile right of the monitor it faces.
    */
   private updateCompanions(dt: number): void {
     const occupied = new Set<string>();
@@ -1245,12 +1266,22 @@ export class OfficeState {
     };
 
     const ids = Array.from(this.characters.keys()).sort((a, b) => a - b);
+    const candidates: HeroCandidate[] = [];
     for (const id of ids) {
       const ch = this.characters.get(id)!;
-      const kind =
-        ch.isSubagent || ch.matrixEffect
-          ? undefined
-          : modelFlair(this.models.get(id)?.tier).companion;
+      if (ch.isSubagent || ch.matrixEffect) continue;
+      candidates.push({
+        id,
+        room: this.roomOf(ch),
+        level: this.rosters.get(id)?.level ?? 0,
+        activeAt: this.rosterEvents.get(id)?.at ?? 0,
+      });
+    }
+    const heroes = heroPerRoom(candidates);
+
+    for (const id of ids) {
+      const ch = this.characters.get(id)!;
+      const kind = heroes.has(id) ? modelFlair(this.models.get(id)?.tier).companion : undefined;
       if (!kind) {
         this.companions.delete(id);
         continue;
@@ -1264,7 +1295,23 @@ export class OfficeState {
       const moving = ch.state === CharacterState.WALK;
       c.trail = moving ? advanceTrail(c.trail, c.lastAgentTile, agentTile) : [];
       c.lastAgentTile = agentTile;
-      const target = companionTile({ moving, agentTile, trail: c.trail, isFree });
+      const seat = !moving && ch.seatId ? this.seats.get(ch.seatId) : undefined;
+      const atSeat = !!seat && seat.seatCol === agentTile.col && seat.seatRow === agentTile.row;
+      let target: Tile | null = null;
+      c.deskZY = null;
+      if (seat && atSeat) {
+        const { dCol, dRow } = seatFacingOffset(seat.facingDir);
+        target = deskCompanionTile({
+          seat: agentTile,
+          facing: { col: dCol, row: dRow },
+          depth: AUTO_ON_FACING_DEPTH,
+          electronicsTiles: this.electronicsTiles,
+          deskTiles: this.deskTiles,
+          isTaken: (t) => taken.has(`${t.col},${t.row}`),
+        });
+        if (target) c.deskZY = this.deskTiles.get(`${target.col},${target.row}`) ?? null;
+      }
+      target ??= companionTile({ moving, agentTile, trail: c.trail, isFree });
       if (target) taken.add(`${target.col},${target.row}`);
       updateCompanion(c, target, ch.tileCol, dt);
     }

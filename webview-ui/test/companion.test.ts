@@ -115,6 +115,8 @@ describe('OfficeState companions', () => {
 
   it('never puts two companions on one tile: the second takes its next free neighbour', () => {
     const os = room();
+    // Two rooms, so both agents are heroes: companions are one per room.
+    os.getLayout().areaTiles = Array.from({ length: 18 }, (_, i) => (i % 6 < 3 ? 'West' : 'East'));
     seat(os, 1, 1, 1, 3); // left is wall -> takes right (2,1)
     seat(os, 2, 3, 1, 3); // left (2,1) is claimed -> takes right (4,1)
     os.update(0.016);

@@ -142,8 +142,8 @@ export const AREA_DEFAULT_COLORS: readonly string[] = [
 export const AREA_OVERLAY_ALPHA = 0.25;
 /** Alpha multiplier applied to the actively-selected area's overlay. */
 export const AREA_ACTIVE_ALPHA_MULTIPLIER = 1.6;
-/** Base font size (pixel-pre-zoom) for area centroid labels. */
-export const AREA_LABEL_FONT_SIZE_PX = 14;
+/** Base font size (pixel-pre-zoom) of a room plaque: with its border and shadow it fills one wall tile band. */
+export const AREA_LABEL_FONT_SIZE_PX = 8;
 /** Minimum on-screen label size to keep labels legible at low zoom. */
 export const AREA_LABEL_MIN_FONT_SIZE_PX = 12;
 /** Alpha of the area label text. */
@@ -216,7 +216,22 @@ export const DISMISS_BUBBLE_FAST_FADE_SEC = 0.3;
 export const INACTIVE_SEAT_TIMER_MIN_SEC = 3.0;
 export const INACTIVE_SEAT_TIMER_RANGE_SEC = 2.0;
 /** Default/fallback palette count (bundled characters). Actual count comes from getLoadedCharacterCount(). */
-export const PALETTE_COUNT = 6;
+export const PALETTE_COUNT = 12;
+/** Skin ramp of the bundled characters plus each tone's mouth shade, as the PNG decoder reports
+ *  them (uppercase). The hue shift skips these pixels so a repeated palette keeps a human skin tone.
+ *  Mirrors SKIN_RAMP in scripts/cozy-art/characters.ts. */
+export const SKIN_TONES: ReadonlySet<string> = new Set([
+  '#F6D9B8',
+  '#F2C9A0',
+  '#C98D5E',
+  '#8D5A3B',
+  '#5A3A28',
+  '#998772',
+  '#967D63',
+  '#7D573A',
+  '#573825',
+  '#382419',
+]);
 export const AUTO_ON_FACING_DEPTH = 3;
 export const AUTO_ON_SIDE_DEPTH = 2;
 export const CHARACTER_HIT_HALF_WIDTH = 8;
@@ -240,8 +255,19 @@ export const NAMEPLATE_LINE1_PX = 20;
 export const NAMEPLATE_LINE2_PX = 16;
 export const NAMEPLATE_PAD_Y_PX = 2;
 export const NAMEPLATE_BORDER_PX = 3;
-/** Hard shadow under the plate (matches --brand-shadow) and the gap before the tripwire pill. */
-export const NAMEPLATE_SHADOW_PX = 4;
+/** Hard shadow under the plate (`.nameplate` in index.css) and the gap before the tripwire pill. */
+export const NAMEPLATE_SHADOW_PX = 3;
+/** Plate type sizes, CSS px: the member name and the session title. */
+export const NAMEPLATE_NAME_FONT_PX = 17;
+export const NAMEPLATE_SUB_FONT_PX = 12;
+/** Plate colors. The border and shadow are the same for every tier; the tier only colors the Lv badge. */
+export const NAMEPLATE_BG = '#3b2412';
+export const NAMEPLATE_BORDER_COLOR = '#1e120a';
+export const NAMEPLATE_TEXT_COLOR = '#fff4dc';
+export const NAMEPLATE_SUB_BG = 'rgba(59, 36, 18, 0.7)';
+export const NAMEPLATE_BADGE_INK = '#3b2412';
+/** Lv badge background for Haiku and an unknown model. */
+export const NAMEPLATE_BADGE_GOLD = '#f6c64a';
 export const NAMEPLATE_PILL_HEIGHT_PX = 18;
 export const NAMEPLATE_PILL_GAP_PX = 2;
 /** Extra clearance a displaced label keeps from what it was pushed off, CSS px. */
@@ -252,14 +278,13 @@ export const LABEL_LAYOUT_DIM_OPACITY = 0.35;
 /** Room sign plate: padding and per-glyph width estimate (no measureText, so it stays pure). */
 export const AREA_SIGN_PADDING_PX = 2;
 export const AREA_SIGN_GLYPH_WIDTH_EM = 0.4;
-/** Wooden plaque: plate, 1-zoom-px border, top highlight and cream text. */
-export const AREA_SIGN_PLATE_COLOR = '#7a4b2b';
-export const AREA_SIGN_BORDER_COLOR = '#3b2412';
-export const AREA_SIGN_HIGHLIGHT_COLOR = '#9b6338';
-export const AREA_SIGN_TEXT_COLOR = '#fff4dc';
-/** Area-color dot before the label, and the gap after it, in world px. */
-export const AREA_SIGN_DOT_PX = 3;
-export const AREA_SIGN_DOT_GAP_PX = 2;
+/** Room plaque in the wall palette: plate, border (also the hard bottom shadow) and ink text. */
+export const AREA_SIGN_PLATE_COLOR = '#d9b989';
+export const AREA_SIGN_BORDER_COLOR = '#6b4128';
+export const AREA_SIGN_TEXT_COLOR = '#3b2412';
+/** Plaque border and bottom shadow thickness, in zoom px (world px, scaled by the zoom). */
+export const AREA_SIGN_BORDER_PX = 3;
+export const AREA_SIGN_SHADOW_PX = 2;
 /** Thin usage bar along the bottom of a room sign: track colour and height in world px. */
 export const AREA_SIGN_USAGE_TRACK_COLOR = 'rgba(255, 255, 255, 0.18)';
 export const AREA_SIGN_USAGE_BAR_HEIGHT_PX = 1;
@@ -403,6 +428,8 @@ export const COMPANION_MOVE_FRAME_DURATION_SEC = 0.15;
 export const COMPANION_FEET_INSET_PX = 2;
 /** Tiles an agent has left behind that a companion remembers; it only ever uses the last one. */
 export const COMPANION_TRAIL_LENGTH = 2;
+/** A companion standing on a desk sorts this far in front of the desk's bottom edge, world px. */
+export const COMPANION_DESK_Z_OFFSET = 0.01;
 /** Outline of the legendary label plate shimmers once per this many seconds. */
 export const RARITY_SHIMMER_SEC = 2.4;
 
@@ -458,6 +485,9 @@ export const GLOW_COLORS = {
   lamp: { core: 'rgba(255, 200, 110, 0.55)', edge: 'rgba(255, 200, 110, 0)' },
   shaft: { core: 'rgba(255, 190, 110, 0.5)', edge: 'rgba(255, 190, 110, 0)' },
 } as const;
+/** Map vignette: the edges darken toward this color, starting at this share of the radius. */
+export const VIGNETTE_COLOR = 'rgba(50, 20, 5, 0.35)';
+export const VIGNETTE_CLEAR_RADIUS_PCT = 55;
 /** Furniture ids that emit light. */
 export const LIGHT_FIXTURE_WINDOW = 'WINDOW';
 export const LIGHT_FIXTURE_LAMP = 'FLOOR_LAMP';
@@ -473,5 +503,7 @@ export const HUD_CLOCK_REFRESH_MS = 15_000;
 export const FIT_MARGIN_TILES = 3;
 /** Auto-fit never zooms below this unless the whole map needs less. */
 export const FIT_MIN_ZOOM = 4;
+/** Extra tiles above the framed area: a nameplate is about one tile tall and sits over the top row. */
+export const FIT_TOP_PAD_TILES = 1;
 /** Centre moves ease over this long; the integer zoom never animates. */
 export const FIT_CENTER_EASE_MS = 300;

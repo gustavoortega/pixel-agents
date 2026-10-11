@@ -26,19 +26,7 @@ export function layoutToTileMap(layout: OfficeLayout): TileTypeVal[][] {
 /** Convert placed furniture into renderable FurnitureInstance[] */
 export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): FurnitureInstance[] {
   // Pre-compute desk zY per tile so surface items can sort in front of desks
-  const deskZByTile = new Map<string, number>();
-  for (const item of furniture) {
-    const entry = getCatalogEntry(item.type);
-    if (!entry || !entry.isDesk) continue;
-    const deskZY = item.row * TILE_SIZE + entry.sprite.length;
-    for (let dr = 0; dr < entry.footprintH; dr++) {
-      for (let dc = 0; dc < entry.footprintW; dc++) {
-        const key = `${item.col + dc},${item.row + dr}`;
-        const prev = deskZByTile.get(key);
-        if (prev === undefined || deskZY > prev) deskZByTile.set(key, deskZY);
-      }
-    }
-  }
+  const deskZByTile = getDeskTiles(furniture);
 
   const instances: FurnitureInstance[] = [];
   for (const item of furniture) {
@@ -135,6 +123,23 @@ export function getFurnitureTiles(furniture: PlacedFurniture[]): Set<string> {
     for (let dr = 0; dr < entry.footprintH; dr++) {
       for (let dc = 0; dc < entry.footprintW; dc++) {
         tiles.add(`${item.col + dc},${item.row + dr}`);
+      }
+    }
+  }
+  return tiles;
+}
+
+/** Every desk tile, mapped to the sort depth (bottom edge) of the desk covering it. */
+export function getDeskTiles(furniture: PlacedFurniture[]): Map<string, number> {
+  const tiles = new Map<string, number>();
+  for (const item of furniture) {
+    const entry = getCatalogEntry(item.type);
+    if (!entry || !entry.isDesk) continue;
+    const zY = item.row * TILE_SIZE + entry.sprite.length;
+    for (let dr = 0; dr < entry.footprintH; dr++) {
+      for (let dc = 0; dc < entry.footprintW; dc++) {
+        const key = `${item.col + dc},${item.row + dr}`;
+        tiles.set(key, Math.max(tiles.get(key) ?? 0, zY));
       }
     }
   }

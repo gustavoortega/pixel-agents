@@ -265,6 +265,15 @@
   }
 }
 
+/* Agent nameplate: dark wood plate with a hard drop shadow. --plate-* are set inline from
+   nameplateStyle(), so the border and shadow share one color for every tier. */
+.nameplate {
+  background: var(--plate-bg);
+  color: var(--plate-text);
+  border: 3px solid var(--plate-border);
+  box-shadow: 0 3px 0 var(--plate-border);
+}
+
 /* Legendary label plate: a bright band sweeping across the plate. The label is
    already absolutely positioned and clips its overflow, so the band needs only
    the pseudo-element. No blur, so it keeps the hard-edged pixel look. */

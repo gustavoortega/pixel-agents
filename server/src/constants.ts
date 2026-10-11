@@ -108,11 +108,11 @@ export const ROSTER_LOCK_RETRY_MS = 50;
 export const ROSTER_LOCK_STALE_MS = 5000;
 
 // ── Avatar Customization ────────────────────────────────────
-/** Number of pre-colored bundled character palettes (char_0.png–char_5.png).
+/** Number of pre-colored bundled character palettes (char_0.png–char_11.png).
  *  Mirrors `PALETTE_COUNT` in webview-ui/src/constants.ts; kept separate
  *  because the server has no DOM/sprite access and cannot import the webview
  *  constant. The two values must stay in sync. */
-export const PALETTE_COUNT = 6;
+export const PALETTE_COUNT = 12;
 /** Inclusive upper bound for a valid agent hue shift, in degrees. Used by
  *  clientMessageHandler to guard saveAgentSeats payloads from a remote or
  *  hand-edited source corrupting the stored values with out-of-range values. */

@@ -16,13 +16,14 @@ import {
   CONTEXT_GAUGE_WIDTH_PX,
   CONTEXT_WARN_THRESHOLD,
   LABEL_LAYOUT_DIM_OPACITY,
-  NAMEPLATE_BORDER_PX,
   NAMEPLATE_HEAD_CLEARANCE_PX,
   NAMEPLATE_LINE1_PX,
   NAMEPLATE_LINE2_PX,
+  NAMEPLATE_NAME_FONT_PX,
   NAMEPLATE_PAD_Y_PX,
   NAMEPLATE_PILL_GAP_PX,
   NAMEPLATE_PILL_HEIGHT_PX,
+  NAMEPLATE_SUB_FONT_PX,
   RARITY_SHIMMER_SEC,
   TEAM_LEAD_COLOR,
   TEAM_ROLE_COLOR,
@@ -32,9 +33,16 @@ import {
 import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../engine/officeState.js';
 import { isShowModelFlairEnabled } from '../engine/renderer.js';
-import { characterFlair, Rarity, rarityColor } from '../flair/modelFlair.js';
-import { areaSignRect, type LabelItem, layoutLabels, type Rect } from '../labelLayout.js';
-import { nameplateHeight, type PlateSide, plateSide } from '../nameplate.js';
+import { characterFlair, Rarity } from '../flair/modelFlair.js';
+import {
+  areaSignRect,
+  clampPlate,
+  type LabelItem,
+  layoutLabels,
+  type Rect,
+  roomFloorRect,
+} from '../labelLayout.js';
+import { nameplateHeight, nameplateStyle, type PlateSide, plateSide } from '../nameplate.js';
 import { overlayProjection } from '../projection.js';
 import {
   agentLabel,
@@ -121,6 +129,7 @@ function CompactLabel({
   left,
   top,
   side,
+  dx,
   dy,
   dim,
   tripwire,
@@ -135,13 +144,15 @@ function CompactLabel({
   /** Anchor edge: the plate's top for `below`, its bottom for `above`. */
   top: number;
   side: PlateSide;
+  /** Sideways shift that keeps the plate inside its room. */
+  dx: number;
   dy: number;
   dim: boolean;
   tripwire: { count: number; severity: TripwireSeverity } | undefined;
   onAckTripwire: (id: number, count: number) => void;
 }) {
   const hasPlate = !!plate && (plate.badge || plate.name || plate.sub);
-  const rarityColorValue = plate?.rarity ? rarityColor(plate.rarity) : undefined;
+  const style = nameplateStyle(plate?.rarity ?? null);
   return (
     <div
       className="absolute flex flex-col items-center"
@@ -149,7 +160,7 @@ function CompactLabel({
         left,
         top,
         maxWidth,
-        transform: `translate(-50%, ${side === 'above' ? `calc(-100% + ${dy}px)` : `${dy}px`})`,
+        transform: `translate(calc(-50% + ${dx}px), ${side === 'above' ? `calc(-100% + ${dy}px)` : `${dy}px`})`,
         transition: 'transform 120ms',
         opacity: dim ? LABEL_LAYOUT_DIM_OPACITY : 1,
         pointerEvents: 'none',
@@ -161,29 +172,31 @@ function CompactLabel({
     >
       {plate && hasPlate && (
         <div
-          className={`relative flex flex-col max-w-full overflow-hidden${plate.rarity === Rarity.LEGENDARY ? ' rarity-shimmer' : ''}`}
-          style={{
-            background: 'var(--brand-paper)',
-            color: 'var(--brand-ink)',
-            border: `${NAMEPLATE_BORDER_PX}px solid ${rarityColorValue ?? 'var(--brand-ink)'}`,
-            boxShadow: 'var(--brand-shadow)',
-            padding: `${NAMEPLATE_PAD_Y_PX}px 6px`,
-            ...(plate.rarity === Rarity.LEGENDARY
-              ? ({ '--rarity-shimmer-sec': `${RARITY_SHIMMER_SEC}s` } as React.CSSProperties)
-              : {}),
-          }}
+          className={`nameplate relative flex flex-col max-w-full overflow-hidden${plate.rarity === Rarity.LEGENDARY ? ' rarity-shimmer' : ''}`}
+          style={
+            {
+              '--plate-bg': style.bg,
+              '--plate-text': style.text,
+              '--plate-border': style.border,
+              padding: `${NAMEPLATE_PAD_Y_PX}px 6px`,
+              ...(plate.rarity === Rarity.LEGENDARY
+                ? { '--rarity-shimmer-sec': `${RARITY_SHIMMER_SEC}s` }
+                : {}),
+            } as React.CSSProperties
+          }
         >
           {(plate.badge || plate.name) && (
             <span
-              className="flex items-center gap-4 whitespace-nowrap leading-none text-xs"
-              style={{ height: NAMEPLATE_LINE1_PX }}
+              className="flex items-center gap-4 whitespace-nowrap leading-none"
+              style={{ height: NAMEPLATE_LINE1_PX, fontSize: NAMEPLATE_NAME_FONT_PX }}
             >
               {plate.badge && (
                 <span
                   className="shrink-0 text-2xs leading-none px-4"
                   style={{
-                    background: 'var(--brand-gold)',
-                    border: '2px solid var(--brand-ink)',
+                    background: style.badgeBg,
+                    color: style.badgeInk,
+                    border: `2px solid ${style.badgeInk}`,
                     height: NAMEPLATE_LINE1_PX - 2,
                     display: 'flex',
                     alignItems: 'center',
@@ -197,8 +210,13 @@ function CompactLabel({
           )}
           {plate.sub && (
             <span
-              className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none text-2xs"
-              style={{ height: NAMEPLATE_LINE2_PX, opacity: 0.7 }}
+              className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none px-4"
+              style={{
+                height: NAMEPLATE_LINE2_PX,
+                lineHeight: `${NAMEPLATE_LINE2_PX}px`,
+                fontSize: NAMEPLATE_SUB_FONT_PX,
+                background: style.subBg,
+              }}
             >
               {plate.sub}
             </span>
@@ -351,6 +369,26 @@ export function ToolOverlay({
     });
   }
   const placements = layoutLabels(labelItems, obstacles);
+  // Last step: a plate never leaves the floor of its room, so it cannot cross a wall or the top
+  // edge. Applied after the collision pass because the wall wins over the nicest spot.
+  const clamps = new Map<number, { dx: number; dy: number }>();
+  for (const it of labelItems) {
+    const ch = officeState.characters.get(it.id);
+    if (!ch) continue;
+    const world = roomFloorRect(layout.areaTiles, layout.cols, layout.rows, officeState.roomOf(ch));
+    const x0 = project.toScreenX(world.x);
+    const y0 = project.toScreenY(world.y);
+    const floor: Rect = {
+      x: x0,
+      y: y0,
+      w: project.toScreenX(world.x + world.w) - x0,
+      h: project.toScreenY(world.y + world.h) - y0,
+    };
+    const dy = placements.get(it.id)?.dy ?? 0;
+    const plate: Rect = { x: it.x - it.w / 2, y: it.y + dy, w: it.w, h: it.h };
+    const fitted = clampPlate(plate, floor);
+    clamps.set(it.id, { dx: fitted.x - plate.x, dy: fitted.y - plate.y });
+  }
 
   return (
     <>
@@ -383,7 +421,8 @@ export function ToolOverlay({
                     )
               }
               side={side}
-              dy={placement?.dy ?? 0}
+              dx={clamps.get(id)?.dx ?? 0}
+              dy={(placement?.dy ?? 0) + (clamps.get(id)?.dy ?? 0)}
               dim={placement?.dim ?? false}
               tripwire={officeState.tripwires.get(id)}
               onAckTripwire={onAckTripwire}
