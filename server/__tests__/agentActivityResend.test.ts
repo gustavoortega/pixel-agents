@@ -32,8 +32,19 @@ function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
   } as AgentState;
 }
 
+/** Resend minus the title message, which every agent gets, so the tests below can
+ *  assert the other messages without restating it each time. */
+function resendActivityWithoutTitles(
+  sent: Array<Record<string, unknown>>,
+  store: AgentStateStore,
+): void {
+  resendAgentActivity((msg) => {
+    if (msg.type !== 'agentSessionTitle') sent.push(msg);
+  }, store);
+}
+
 describe('resendAgentActivity', () => {
-  it('sends messages in order: team info, tools, waiting, context', () => {
+  it('sends messages in order: team info, tools, waiting, context, title', () => {
     const store = new AgentStateStore();
     store.set(
       1,
@@ -54,6 +65,7 @@ describe('resendAgentActivity', () => {
       'agentToolStart',
       'agentStatus',
       'agentContextUsage',
+      'agentSessionTitle',
     ]);
   });
 
@@ -68,7 +80,7 @@ describe('resendAgentActivity', () => {
       }),
     );
     const sent: Array<Record<string, unknown>> = [];
-    resendAgentActivity((msg) => sent.push(msg), store);
+    resendActivityWithoutTitles(sent, store);
 
     expect(sent).toHaveLength(1);
     expect(sent[0]).toEqual({
@@ -116,7 +128,7 @@ describe('resendAgentActivity', () => {
       }),
     );
     const sent: Array<Record<string, unknown>> = [];
-    resendAgentActivity((msg) => sent.push(msg), store);
+    resendActivityWithoutTitles(sent, store);
 
     const toolStarts = sent.filter((m) => m.type === 'agentToolStart');
     expect(toolStarts).toHaveLength(2); // unnamed + named, NOT promoted
@@ -149,7 +161,7 @@ describe('resendAgentActivity', () => {
     let store = new AgentStateStore();
     store.set(1, createTestAgent({ id: 1, teamName: 'my-team' }));
     let sent: Array<Record<string, unknown>> = [];
-    resendAgentActivity((msg) => sent.push(msg), store);
+    resendActivityWithoutTitles(sent, store);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'agentTeamInfo', id: 1, teamName: 'my-team' });
 
@@ -157,7 +169,7 @@ describe('resendAgentActivity', () => {
     store = new AgentStateStore();
     store.set(2, createTestAgent({ id: 2, agentName: 'worker-1', leadAgentId: 1 }));
     sent = [];
-    resendAgentActivity((msg) => sent.push(msg), store);
+    resendActivityWithoutTitles(sent, store);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'agentTeamInfo', id: 2, agentName: 'worker-1' });
 
@@ -165,7 +177,7 @@ describe('resendAgentActivity', () => {
     store = new AgentStateStore();
     store.set(3, createTestAgent({ id: 3, isTeamLead: true }));
     sent = [];
-    resendAgentActivity((msg) => sent.push(msg), store);
+    resendActivityWithoutTitles(sent, store);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'agentTeamInfo', id: 3, isTeamLead: true });
 
@@ -173,7 +185,7 @@ describe('resendAgentActivity', () => {
     store = new AgentStateStore();
     store.set(4, createTestAgent({ id: 4 }));
     sent = [];
-    resendAgentActivity((msg) => sent.push(msg), store);
+    resendActivityWithoutTitles(sent, store);
     expect(sent.filter((m) => m.type === 'agentTeamInfo')).toHaveLength(0);
   });
 
@@ -181,13 +193,13 @@ describe('resendAgentActivity', () => {
     let store = new AgentStateStore();
     store.set(1, createTestAgent({ id: 1, isWaiting: true }));
     let sent: Array<Record<string, unknown>> = [];
-    resendAgentActivity((msg) => sent.push(msg), store);
+    resendActivityWithoutTitles(sent, store);
     expect(sent).toEqual([{ type: 'agentStatus', id: 1, status: 'waiting' }]);
 
     store = new AgentStateStore();
     store.set(2, createTestAgent({ id: 2, isWaiting: false }));
     sent = [];
-    resendAgentActivity((msg) => sent.push(msg), store);
+    resendActivityWithoutTitles(sent, store);
     expect(sent).toHaveLength(0);
   });
 
@@ -195,7 +207,7 @@ describe('resendAgentActivity', () => {
     let store = new AgentStateStore();
     store.set(1, createTestAgent({ id: 1, contextTokens: 50_000, maxContextTokens: 200_000 }));
     let sent: Array<Record<string, unknown>> = [];
-    resendAgentActivity((msg) => sent.push(msg), store);
+    resendActivityWithoutTitles(sent, store);
     expect(sent).toEqual([
       { type: 'agentContextUsage', id: 1, contextTokens: 50_000, maxContextTokens: 200_000 },
     ]);
@@ -203,7 +215,7 @@ describe('resendAgentActivity', () => {
     store = new AgentStateStore();
     store.set(2, createTestAgent({ id: 2, contextTokens: 0, maxContextTokens: 200_000 }));
     sent = [];
-    resendAgentActivity((msg) => sent.push(msg), store);
+    resendActivityWithoutTitles(sent, store);
     expect(sent).toHaveLength(0);
   });
 
@@ -211,7 +223,7 @@ describe('resendAgentActivity', () => {
     // Empty store
     let store = new AgentStateStore();
     let sent: Array<Record<string, unknown>> = [];
-    resendAgentActivity((msg) => sent.push(msg), store);
+    resendActivityWithoutTitles(sent, store);
     expect(sent).toHaveLength(0);
 
     // Multiple agents with different activity
@@ -226,9 +238,22 @@ describe('resendAgentActivity', () => {
     );
     store.set(2, createTestAgent({ id: 2, isWaiting: true }));
     sent = [];
-    resendAgentActivity((msg) => sent.push(msg), store);
+    resendActivityWithoutTitles(sent, store);
     expect(sent).toHaveLength(2);
     expect(sent[0]).toMatchObject({ type: 'agentToolStart', id: 1 });
     expect(sent[1]).toMatchObject({ type: 'agentStatus', id: 2, status: 'waiting' });
+  });
+
+  it('sends the title of a titled agent and an omitted title for an untitled one', () => {
+    const store = new AgentStateStore();
+    store.set(1, createTestAgent({ id: 1, customTitle: 'Fix login bug', aiTitle: 'Generated' }));
+    store.set(2, createTestAgent({ id: 2 }));
+    const sent: Array<Record<string, unknown>> = [];
+    resendAgentActivity((msg) => sent.push(msg), store);
+
+    const titles = sent.filter((m) => m.type === 'agentSessionTitle');
+    expect(titles).toHaveLength(2);
+    expect(titles[0]).toEqual({ type: 'agentSessionTitle', id: 1, title: 'Fix login bug' });
+    expect(titles[1]).toEqual({ type: 'agentSessionTitle', id: 2, title: undefined });
   });
 });

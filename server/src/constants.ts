@@ -54,6 +54,7 @@ export {
   HOOK_SCRIPTS_DIR,
   SERVER_JSON_DIR,
   SERVER_JSON_NAME,
+  SESSION_TITLE_MAX_LENGTH,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
 } from '../../core/src/constants.js';
 

@@ -4,7 +4,10 @@ import * as path from 'path';
 
 import { normalizeProjectPath } from '../../../../../core/src/normalizeProjectPath.js';
 import type { AgentEvent, HookProvider } from '../../../../../core/src/provider.js';
-import { TASK_DESCRIPTION_DISPLAY_MAX_LENGTH } from '../../../constants.js';
+import {
+  SESSION_TITLE_MAX_LENGTH,
+  TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
+} from '../../../constants.js';
 import {
   areHooksInstalled as installerAreHooksInstalled,
   installHooks as installerInstallHooks,
@@ -298,6 +301,32 @@ export function contextWindowForModel(model: string | undefined): number | undef
     : CLAUDE_LARGE_CONTEXT_WINDOW;
 }
 
+/** A non-empty trimmed string capped at the title limit, or undefined. */
+function titleField(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, SESSION_TITLE_MAX_LENGTH) : undefined;
+}
+
+/**
+ * Claude Code repeats `{type:'custom-title', customTitle}` (from /rename) and
+ * `{type:'ai-title', aiTitle}` (auto-generated) throughout a transcript.
+ */
+export function extractSessionTitle(
+  record: unknown,
+): { customTitle?: string; aiTitle?: string } | null {
+  const r = record as { type?: unknown; customTitle?: unknown; aiTitle?: unknown } | null;
+  if (r?.type === 'custom-title') {
+    const customTitle = titleField(r.customTitle);
+    return customTitle ? { customTitle } : null;
+  }
+  if (r?.type === 'ai-title') {
+    const aiTitle = titleField(r.aiTitle);
+    return aiTitle ? { aiTitle } : null;
+  }
+  return null;
+}
+
 // ── The provider ──
 
 export const claudeProvider: HookProvider = {
@@ -319,6 +348,7 @@ export const claudeProvider: HookProvider = {
   readingTools: new Set(['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch']),
   terminalNamePrefix: CLAUDE_TERMINAL_NAME_PREFIX,
   contextWindowForModel,
+  extractSessionTitle,
 
   getSessionDirs,
   getAllSessionRoots,

@@ -4,6 +4,7 @@ import type { HookProvider } from '../../core/src/provider.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { TEXT_IDLE_DELAY_MS, TOOL_DONE_DELAY_MS } from './constants.js';
 import { updateContextUsage } from './contextUsage.js';
+import { applySessionTitle } from './sessionTitle.js';
 import { hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
 import {
   cancelPermissionTimer,
@@ -131,6 +132,10 @@ export function processTranscriptLine(
         leadAgentId: agent.leadAgentId,
       });
     }
+
+    // -- Session title (custom-title / ai-title records drive the character label) --
+    const titles = hookProvider?.extractSessionTitle?.(record);
+    if (titles) applySessionTitle(agentId, agent, agents, titles);
 
     // -- Context window usage (drives every agent's context gauge) --
     updateContextUsage(agentId, agent, agents, record, hookProvider);
@@ -519,7 +524,13 @@ export function processTranscriptLine(
       // Log first occurrence of unrecognized record types to help diagnose issues
       // where Claude Code changes JSONL format. Known types we intentionally skip:
       // file-history-snapshot, queue-operation (non-enqueue), etc.
-      const knownSkippableTypes = new Set(['file-history-snapshot', 'system', 'queue-operation']);
+      const knownSkippableTypes = new Set([
+        'file-history-snapshot',
+        'system',
+        'queue-operation',
+        'custom-title',
+        'ai-title',
+      ]);
       if (!knownSkippableTypes.has(record.type)) {
         agent.seenUnknownRecordTypes.add(record.type);
         if (debug) {

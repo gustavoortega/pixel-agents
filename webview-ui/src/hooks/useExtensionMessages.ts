@@ -735,6 +735,8 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentContextUsage') {
         const id = msg.id as number;
         os.setAgentContext(id, msg.contextTokens as number, msg.maxContextTokens as number);
+      } else if (msg.type === 'agentSessionTitle') {
+        os.setSessionTitle(msg.id as number, msg.title as string | undefined);
       }
     };
     const unsubscribe = transport.onMessage(handler);

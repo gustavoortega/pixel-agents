@@ -1,4 +1,5 @@
 import type { AgentStateStore } from './agentStateStore.js';
+import { derivedTitle } from './sessionTitle.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 
 /**
@@ -10,6 +11,7 @@ import { hasPromotedBackgroundAgent } from './teamUtils.js';
  * 3. Background tools with runInBackground + isTeammateSpawn flags, skipping promoted spawns
  * 4. Waiting status
  * 5. Context usage
+ * 6. Session title
  */
 export function resendAgentActivity(
   send: (message: Record<string, unknown>) => void,
@@ -84,5 +86,9 @@ export function resendAgentActivity(
         maxContextTokens: agent.maxContextTokens,
       });
     }
+
+    // 6. Session title. Sent for untitled agents too (title omitted): a client that
+    // was offline when a title was cleared would otherwise keep showing the stale one.
+    send({ type: 'agentSessionTitle', id, title: derivedTitle(agent) });
   }
 }

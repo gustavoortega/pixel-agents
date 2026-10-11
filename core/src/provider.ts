@@ -116,6 +116,13 @@ export interface HookProvider {
    *  previous estimate and widens it if a context ever exceeds it. */
   contextWindowForModel?(model: string | undefined): number | undefined;
 
+  /** Session title(s) carried by one transcript record, or null when the record
+   *  has none. `customTitle` is a name the user chose, `aiTitle` one the CLI
+   *  generated; the runtime prefers the former. Return only non-empty trimmed
+   *  strings, capped at SESSION_TITLE_MAX_LENGTH: a field that is missing, blank
+   *  or not a string is absent, never an empty title. */
+  extractSessionTitle?(record: unknown): { customTitle?: string; aiTitle?: string } | null;
+
   // ── Optional file fallback (heuristic mode) ──
 
   /** Session directories to scan. Undefined = no file fallback. */
