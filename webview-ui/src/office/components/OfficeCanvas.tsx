@@ -389,6 +389,7 @@ export function OfficeCanvas({
             effects: officeState.fx.active,
             weather: officeState.weather,
             nowMs: Date.now(),
+            anchors: officeState.weatherAnchor,
           },
           officeState.deskProps,
           officeState.bubbleLift,

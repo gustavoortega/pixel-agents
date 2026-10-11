@@ -35,6 +35,9 @@ export interface FxRenderState {
   weather: MoodWeather;
   /** Date.now(): the clock the engine and the weather run on. */
   nowMs: number;
+  /** World y each agent's weather hangs from (the overlay stack's top); absent falls back to the
+   *  bubble anchor over the head. */
+  anchors?: ReadonlyMap<number, number>;
 }
 
 const pillarCache = new Map<number, HTMLCanvasElement>();
@@ -102,6 +105,33 @@ function headAnchor(ch: Character, ox: number, oy: number, zoom: number): { x: n
   );
 }
 
+/** Device-px box of the storm cloud: 5 x 4 cells standing FX_WEATHER_RISE_PX above `anchorY`. */
+export function stormCloudRect(
+  anchorX: number,
+  anchorY: number,
+  zoom: number,
+): { x: number; y: number; w: number; h: number } {
+  return {
+    x: anchorX - Math.floor((5 * zoom) / 2),
+    y: anchorY - (4 + FX_WEATHER_RISE_PX) * zoom,
+    w: 5 * zoom,
+    h: 4 * zoom,
+  };
+}
+
+/** The weather's anchor in device px: the overlay stack's top when it is known, else the head. */
+function weatherAnchor(
+  ch: Character,
+  fx: FxRenderState,
+  ox: number,
+  oy: number,
+  zoom: number,
+): { x: number; y: number } {
+  const head = headAnchor(ch, ox, oy, zoom);
+  const worldY = fx.anchors?.get(ch.id);
+  return worldY === undefined ? head : { x: head.x, y: Math.round(oy + worldY * zoom) };
+}
+
 /** Sparkles, pillar, confetti, storm clouds and hearts. Drawn over the scene; the DOM text is in ToolOverlay. */
 export function renderFx(
   ctx: CanvasRenderingContext2D,
@@ -163,9 +193,8 @@ export function renderFx(
   for (const ch of characters) {
     const alpha = fx.weather.stormAlpha(ch.id, fx.nowMs);
     if (alpha === null) continue;
-    const head = headAnchor(ch, ox, oy, zoom);
-    const left = head.x - Math.floor((5 * zoom) / 2);
-    const top = head.y - (4 + FX_WEATHER_RISE_PX) * zoom;
+    const anchor = weatherAnchor(ch, fx, ox, oy, zoom);
+    const { x: left, y: top } = stormCloudRect(anchor.x, anchor.y, zoom);
     ctx.globalAlpha = alpha;
     for (const [c, r, shade] of CLOUD_CELLS) {
       ctx.fillStyle = shade ? FX_STORM_CLOUD_SHADE : FX_STORM_CLOUD_COLOR;
@@ -184,7 +213,7 @@ export function renderFx(
     const ch = byId.get(h.agentId);
     if (!ch) continue;
     const age = fx.nowMs - h.startedAt;
-    const head = headAnchor(ch, ox, oy, zoom);
+    const head = weatherAnchor(ch, fx, ox, oy, zoom);
     const rise = (age / FX_HEART_MS) * FX_HEART_RISE_PX;
     ctx.globalAlpha = envelope(age / FX_HEART_MS);
     const left = head.x - Math.floor((5 * zoom) / 2);

@@ -1,5 +1,5 @@
 /**
- * The stack of overlay items above one agent, bottom to top: sprite, plate, tripwire chip, bubble.
+ * The stack of overlay items above one agent, bottom to top: sprite, plate, tripwire chip, FX text, bubble.
  * Each item hangs from the top of the one below it, so no item shares an anchor with another and
  * none can land on the sprite or on a neighbour. The group is clamped inside the room floor as a
  * whole, so the order survives a wall. When a close wall would push that group onto the head, the
@@ -21,6 +21,8 @@ export interface OverlayStackInput {
   headTop: number;
   plate: BoxSize | null;
   chip: BoxSize | null;
+  /** The "+N XP" / "Level N!" text: above the plate and chip, never over the face. */
+  fx?: BoxSize | null;
   bubble: BoxSize | null;
   /** Gap between neighbouring items; defaults to OVERLAY_STACK_GAP_PX. */
   gap?: number;
@@ -39,6 +41,7 @@ export interface OverlayStackInput {
 export interface OverlayStack {
   plate: Rect | null;
   chip: Rect | null;
+  fx: Rect | null;
   bubble: Rect | null;
   /** Total shift of the plate and chip from their natural spot above the head (collision push
    *  plus clamp, or the flip below the feet). */
@@ -56,8 +59,9 @@ export function stackAbove(input: OverlayStackInput): OverlayStack {
   };
   const plate = place(input.plate);
   const chip = place(input.chip);
+  const fx = place(input.fx ?? null);
   const bubble = place(input.bubble);
-  const items = [plate, chip, bubble].filter((r): r is Rect => r !== null);
+  const items = [plate, chip, fx, bubble].filter((r): r is Rect => r !== null);
 
   let dx = 0;
   let dy = input.dy ?? 0;
@@ -84,10 +88,10 @@ export function stackAbove(input: OverlayStackInput): OverlayStack {
   ) {
     const stillAbove = items.some((r) => overlapsHead({ ...r, x: r.x + dx, y: r.y + dy }));
     if (stillAbove) {
-      const below = stackBelow(input, [plate, chip, bubble], gap, input.feetY);
+      const below = stackBelow(input, [plate, chip, fx, bubble], gap, input.feetY);
       if (below && !below.rects.some((r) => r !== null && overlapsHead(r))) {
         const label = [plate, chip].filter((r): r is Rect => r !== null);
-        const [bp, bc, bb] = below.rects;
+        const [bp, bc, bf, bb] = below.rects;
         const belowLabel = [bp, bc].filter((r): r is Rect => r !== null);
         const natural = Math.min(...(label.length > 0 ? label : items).map((r) => r.y));
         const placed = Math.min(
@@ -96,6 +100,7 @@ export function stackAbove(input: OverlayStackInput): OverlayStack {
         return {
           plate: bp,
           chip: bc,
+          fx: bf,
           bubble: bb,
           shift: { dx: below.dx, dy: placed - natural },
         };
@@ -103,7 +108,13 @@ export function stackAbove(input: OverlayStackInput): OverlayStack {
     }
   }
   const moved = (r: Rect | null): Rect | null => (r ? { ...r, x: r.x + dx, y: r.y + dy } : null);
-  return { plate: moved(plate), chip: moved(chip), bubble: moved(bubble), shift: { dx, dy } };
+  return {
+    plate: moved(plate),
+    chip: moved(chip),
+    fx: moved(fx),
+    bubble: moved(bubble),
+    shift: { dx, dy },
+  };
 }
 
 /** The same boxes in the same order, growing downward from the feet and clamped as a group. */
@@ -134,4 +145,14 @@ function stackBelow(
     rects: laid.map((r) => (r ? { ...r, x: r.x + dx, y: r.y + dy } : null)),
     dx,
   };
+}
+
+/**
+ * Where the canvas mood weather (storm cloud, heart) hangs from, as a world y: the top of the
+ * agent's overlay stack so it floats over the plate, but never lower than the sprite's head top.
+ * A stack that sits below the feet (back-view agents, or a wall flip) has its top below the head,
+ * so the weather falls back to just above the head instead of landing inside the hair.
+ */
+export function weatherAnchorY(stackTopWorld: number | null, headTopWorld: number): number {
+  return stackTopWorld === null ? headTopWorld : Math.min(stackTopWorld, headTopWorld);
 }

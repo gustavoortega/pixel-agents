@@ -1,5 +1,4 @@
 import {
-  BUBBLE_VERTICAL_OFFSET_PX,
   FX_BANNER_FONT_PX,
   FX_LEVEL_UP_MS,
   FX_POP_MS,
@@ -9,7 +8,9 @@ import {
   FX_TEXT_OUTLINE,
 } from '../../constants.js';
 import type { OfficeState } from '../engine/officeState.js';
-import { seatedBubbleOffsetPx } from '../seatDraw.js';
+import type { Rect } from '../labelLayout.js';
+import { spriteHeadTopY } from '../nameplate.js';
+import { seatedDrawOffsetPx } from '../seatDraw.js';
 
 
 const FX_TEXT_Z_INDEX = 41;
@@ -29,12 +30,16 @@ export function FxText({
   scale,
   toScreenX,
   toScreenY,
+  slots,
 }: {
   officeState: OfficeState;
   /** The plate layer's scale: FX text grows and shrinks with the nameplates. */
   scale: number;
   toScreenX: (worldX: number) => number;
   toScreenY: (worldY: number) => number;
+  /** Screen box each agent's FX text takes in its overlay stack (above the plate). Without one the
+   *  text stands on the head top. */
+  slots?: ReadonlyMap<number, Rect>;
 }) {
   const now = officeState.fx.now;
   return (
@@ -43,9 +48,12 @@ export function FxText({
         const ch = officeState.characters.get(e.agentId);
         if (!ch) return null;
         const age = now - e.startedAt;
-        const sit = seatedBubbleOffsetPx(ch);
-        const x = toScreenX(ch.x);
-        const headY = toScreenY(ch.y + sit - BUBBLE_VERTICAL_OFFSET_PX);
+        const slot = slots?.get(e.agentId);
+        const x = slot ? slot.x + slot.w / 2 : toScreenX(ch.x);
+        // The text's bottom edge: the slot's, or the head top when the agent has no stack.
+        const headY = slot
+          ? slot.y + slot.h
+          : toScreenY(spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch)));
         if (e.kind === 'pop') {
           const t = Math.min(1, age / FX_POP_MS);
           return (
@@ -79,7 +87,7 @@ export function FxText({
             style={{
               left: x,
               top: headY,
-              transform: `translate(-50%, calc(-100% - 28px)) scale(${scale * grow})`,
+              transform: `translate(-50%, -100%) scale(${scale * grow})`,
               fontSize: FX_BANNER_FONT_PX,
               color: FX_TEXT_COLOR,
               textShadow: OUTLINE,

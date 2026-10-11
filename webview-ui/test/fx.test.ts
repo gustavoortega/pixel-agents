@@ -3,9 +3,21 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { FX_LEVEL_UP_MS, FX_STORM_MS } from '../src/constants.js';
+import {
+  CHARACTER_SPRITE_HEIGHT_PX,
+  FX_LEVEL_UP_MS,
+  FX_STORM_CLOUD_COLOR,
+  FX_STORM_CLOUD_SHADE,
+  FX_STORM_MS,
+} from '../src/constants.js';
 import { FxEngine } from '../src/office/fx/fxEngine.js';
+import { type FxRenderState, renderFx } from '../src/office/fx/fxRender.js';
 import { MoodWeather } from '../src/office/fx/moodWeather.js';
+import { spriteHeadTopY } from '../src/office/nameplate.js';
+import { weatherAnchorY } from '../src/office/overlayStack.js';
+import { seatedDrawOffsetPx } from '../src/office/seatDraw.js';
+import type { Character } from '../src/office/types.js';
+import { CharacterState } from '../src/office/types.js';
 
 describe('FxEngine level-up', () => {
   it('a level-up with a big amount plays the level-up only, never also a pop', () => {
@@ -128,5 +140,53 @@ describe('MoodWeather heart', () => {
     expect(w.hearts).toEqual([]);
     w.update(moods({ 1: 'happy', 2: 'happy' }), 10_000);
     expect(w.hearts.map((h) => h.agentId)).toEqual([2]);
+  });
+});
+
+describe('storm cloud placement', () => {
+  const ZOOM = 4;
+  const OX = 10;
+  const OY = 20;
+  /** Seated agent: the sprite is drawn 6 px low while the old bubble anchor sat 10 px low. */
+  const seated = { id: 7, x: 100, y: 200, state: CharacterState.TYPE } as Character;
+
+  /** Bottom edge, in device px, of the cloud renderFx draws with the given anchors. */
+  function cloudBottom(anchors?: ReadonlyMap<number, number>): number {
+    const weather = new MoodWeather();
+    weather.update(new Map([[seated.id, 'frustrated' as const]]), 0);
+    const state: FxRenderState = { effects: [], weather, nowMs: 1000, anchors };
+    let fill = '';
+    let bottom = -Infinity;
+    const ctx = {
+      save() {},
+      restore() {},
+      set fillStyle(v: string) {
+        fill = v;
+      },
+      set globalAlpha(_v: number) {},
+      fillRect(_x: number, y: number, _w: number, h: number) {
+        if (fill === FX_STORM_CLOUD_COLOR || fill === FX_STORM_CLOUD_SHADE)
+          bottom = Math.max(bottom, y + h);
+      },
+    } as unknown as CanvasRenderingContext2D;
+    renderFx(ctx, state, [seated], OX, OY, ZOOM);
+    return bottom;
+  }
+
+  const headTopDevice = OY + Math.round(spriteHeadTopY(seated.y, seatedDrawOffsetPx(seated)) * ZOOM);
+
+  it('face-on: the cloud floats above the stack top, not inside the head', () => {
+    const headTop = spriteHeadTopY(seated.y, seatedDrawOffsetPx(seated));
+    const stackTop = headTop - 40;
+    const anchors = new Map([[seated.id, weatherAnchorY(stackTop, headTop)]]);
+    expect(cloudBottom(anchors)).toBeLessThanOrEqual(OY + stackTop * ZOOM);
+    expect(cloudBottom(anchors)).toBeLessThan(headTopDevice);
+  });
+
+  it('back view: the stack is below the feet, so the cloud stands just above the head', () => {
+    const headTop = spriteHeadTopY(seated.y, seatedDrawOffsetPx(seated));
+    const belowFeet = headTop + CHARACTER_SPRITE_HEIGHT_PX + 10;
+    const anchors = new Map([[seated.id, weatherAnchorY(belowFeet, headTop)]]);
+    expect(cloudBottom(anchors)).toBeLessThanOrEqual(headTopDevice);
   });
 });
