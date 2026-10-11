@@ -13,6 +13,9 @@ export interface AdapterSettings {
   hooksInfoShown: boolean;
   showAreas: boolean;
   areaMappings: Record<string, string[]>;
+  /** Token budgets in cost-weighted tokens; absent = no budget (no percent anywhere). */
+  tokenBudget5h?: number;
+  tokenBudgetWeek?: number;
 }
 
 /** All keys in AdapterSettings. Used by adapters to map `pixel-agents.foo` → `foo`.
@@ -28,6 +31,8 @@ export const ADAPTER_SETTING_KEYS = [
   'hooksInfoShown',
   'showAreas',
   'areaMappings',
+  'tokenBudget5h',
+  'tokenBudgetWeek',
 ] as const;
 
 export type AdapterSettingKey = (typeof ADAPTER_SETTING_KEYS)[number];
@@ -114,9 +119,16 @@ export function parseAreaMappings(raw: unknown): Record<string, string[]> {
   return out;
 }
 
+/** A usable budget: a positive finite number, else undefined (unset). */
+export function parseTokenBudget(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : undefined;
+}
+
 /** Coerce a loose object into a valid AdapterSettings with defaults for missing/wrong-typed fields. */
 function parseAdapterSettings(raw: unknown): AdapterSettings {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Partial<AdapterSettings>;
+  const budget5h = parseTokenBudget(obj.tokenBudget5h);
+  const budgetWeek = parseTokenBudget(obj.tokenBudgetWeek);
   return {
     soundEnabled:
       typeof obj.soundEnabled === 'boolean'
@@ -145,6 +157,9 @@ function parseAdapterSettings(raw: unknown): AdapterSettings {
     showAreas:
       typeof obj.showAreas === 'boolean' ? obj.showAreas : DEFAULT_ADAPTER_SETTINGS.showAreas,
     areaMappings: parseAreaMappings(obj.areaMappings),
+    // Spread so an unset budget is an absent key, not `undefined`.
+    ...(budget5h !== undefined && { tokenBudget5h: budget5h }),
+    ...(budgetWeek !== undefined && { tokenBudgetWeek: budgetWeek }),
   };
 }
 

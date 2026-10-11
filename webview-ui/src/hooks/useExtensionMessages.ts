@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { HooksConsentRequest } from '../../../core/src/messages.js';
+import type { HooksConsentRequest, TokenUsage } from '../../../core/src/messages.js';
+import { areaShares } from '../components/usageView.js';
 import {
   playAlarmSound,
   playDoneSound,
@@ -116,6 +117,8 @@ interface ExtensionMessageState {
   setAreaMappings: (m: Record<string, string[]>) => void;
   showAreas: boolean;
   setShowAreas: (v: boolean) => void;
+  /** Latest token ledger aggregate (tokenUsage), null until the first one arrives. */
+  tokenUsage: TokenUsage | null;
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -159,6 +162,7 @@ export function useExtensionMessages(
   const consentRequest = consentQueue[0] ?? null;
   const [areaMappings, setAreaMappings] = useState<Record<string, string[]>>({});
   const [showAreas, setShowAreas] = useState(false);
+  const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
 
   // The renderer keeps its own module-level copy (read every rAF frame), so both
   // sources of truth move together — the persisted value on settingsLoaded and
@@ -647,6 +651,11 @@ export function useExtensionMessages(
         const mappings = (msg.mappings ?? {}) as Record<string, string[]>;
         setAreaMappings(mappings);
         os.setAreaMappings(mappings);
+      } else if (msg.type === 'tokenUsage') {
+        const usage = msg as TokenUsage;
+        setTokenUsage(usage);
+        // Room signs show each Area's share of the current block; none while there is no block.
+        os.setAreaUsage(areaShares(usage.block));
       } else if (msg.type === 'workspaceFolders') {
         const folders = msg.folders as WorkspaceFolder[];
         setWorkspaceFolders(folders);
@@ -834,5 +843,6 @@ export function useExtensionMessages(
     setAreaMappings,
     showAreas,
     setShowAreas,
+    tokenUsage,
   };
 }

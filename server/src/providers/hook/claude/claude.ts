@@ -15,6 +15,7 @@ import {
   uninstallHooks as installerUninstallHooks,
 } from './claudeHookInstaller.js';
 import { claudeTeamProvider } from './claudeTeamProvider.js';
+import { createClaudeTranscriptUsage } from './claudeUsage.js';
 import { CONSENT_DISCLOSURE, CONSENT_INSTALL_HEADLINE } from './consentCopy.js';
 import {
   CLAUDE_LARGE_CONTEXT_WINDOW,
@@ -358,6 +359,7 @@ export const claudeProvider: HookProvider = {
   terminalNamePrefix: CLAUDE_TERMINAL_NAME_PREFIX,
   contextWindowForModel,
   extractSessionTitle,
+  transcriptUsage: createClaudeTranscriptUsage(extractSessionTitle),
 
   getSessionDirs,
   getAllSessionRoots,

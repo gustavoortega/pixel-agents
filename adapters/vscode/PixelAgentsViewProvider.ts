@@ -34,6 +34,7 @@ import {
   setHooksEnabled as persistHooksEnabled,
   writeConfig,
 } from '../../server/src/configPersistence.js';
+import { parseTokenBudget } from '../../server/src/configPersistence.js';
 import { LAYOUT_FILE_DIR, ROSTER_FILE_NAME } from '../../server/src/constants.js';
 import { setFolderNameResolver, setTerminalAdapter } from '../../server/src/fileWatcher.js';
 import type { LayoutWatcher } from '../../server/src/layoutPersistence.js';
@@ -55,6 +56,7 @@ import {
 import { RosterStore } from '../../server/src/roster.js';
 import { broadcastRoster, stripRosterLook } from '../../server/src/rosterAgent.js';
 import { PixelAgentsServer } from '../../server/src/server.js';
+import { TokenLedger } from '../../server/src/tokenLedger.js';
 import { loadTripwireRules } from '../../server/src/tripwireConfig.js';
 import { ackTripwire } from '../../server/src/tripwires.js';
 import {
@@ -68,6 +70,8 @@ import {
 import {
   CONFIG_KEY_AUTO_SHOW_PANEL,
   CONFIG_KEY_AUTO_SPAWN_AGENT,
+  CONFIG_KEY_TOKEN_BUDGET_5H,
+  CONFIG_KEY_TOKEN_BUDGET_WEEK,
   GLOBAL_KEY_ALWAYS_SHOW_LABELS,
   GLOBAL_KEY_GHOST_HEADLESS_AGENTS,
   GLOBAL_KEY_HOOKS_INFO_SHOWN,
@@ -99,6 +103,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   // Shared agent lifecycle core (timer Maps, scanners, hook handler, dismissal tracker)
   private runtime: AgentRuntime;
   private roster: RosterStore;
+  private tokenLedger: TokenLedger | undefined;
 
   // Global session scanning dismissal tracking
   private globalDismissedFiles = new Set<string>();
@@ -191,6 +196,34 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       filePath: path.join(os.homedir(), LAYOUT_FILE_DIR, ROSTER_FILE_NAME),
     });
     this.roster.attach(this.store);
+
+    // Token ledger: created here, started on the first webviewReady (nothing is read until the panel opens).
+    // Budgets live in VS Code settings (contributes.configuration), the Usage panel writes them there.
+    const usageSource = claudeProvider.transcriptUsage;
+    if (usageSource) {
+      this.tokenLedger = new TokenLedger({
+        source: usageSource,
+        getAreaMappings: () => readConfig().vscode.areaMappings,
+        getBudgets: () => {
+          const cfg = vscode.workspace.getConfiguration();
+          return {
+            budget5h: parseTokenBudget(cfg.get(CONFIG_KEY_TOKEN_BUDGET_5H)),
+            budgetWeek: parseTokenBudget(cfg.get(CONFIG_KEY_TOKEN_BUDGET_WEEK)),
+          };
+        },
+        onChange: (message) => this.sendOrBuffer({ ...message }),
+      });
+      this.context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration((e) => {
+          if (
+            e.affectsConfiguration(CONFIG_KEY_TOKEN_BUDGET_5H) ||
+            e.affectsConfiguration(CONFIG_KEY_TOKEN_BUDGET_WEEK)
+          ) {
+            this.tokenLedger?.refresh();
+          }
+        }),
+      );
+    }
 
     this.initServer();
   }
@@ -522,6 +555,17 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         const cfg = readConfig();
         cfg.vscode.areaMappings = mappings;
         writeConfig(cfg);
+        this.tokenLedger?.refresh();
+      } else if (message.type === 'setTokenBudgets') {
+        // The configuration-change listener refreshes the ledger once the write lands.
+        const config = vscode.workspace.getConfiguration();
+        const global = vscode.ConfigurationTarget.Global;
+        void config.update(CONFIG_KEY_TOKEN_BUDGET_5H, parseTokenBudget(message.budget5h), global);
+        void config.update(
+          CONFIG_KEY_TOKEN_BUDGET_WEEK,
+          parseTokenBudget(message.budgetWeek),
+          global,
+        );
       } else if (message.type === 'setWatchAllSessions') {
         const enabled = message.enabled as boolean;
         this.adapter.setSetting(GLOBAL_KEY_WATCH_ALL_SESSIONS, enabled);
@@ -659,6 +703,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           type: 'areaMappingsLoaded',
           mappings: config.vscode.areaMappings ?? {},
         });
+
+        // Token usage: a `scanning` stub until the ledger's first pass completes, then pushed via broadcast.
+        if (this.tokenLedger) {
+          this.webview?.postMessage({ ...this.tokenLedger.snapshot() });
+          this.tokenLedger.start();
+        }
 
         restoreAgents(
           this.adapter,
@@ -1060,6 +1110,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   dispose() {
     this.pixelAgentsServer?.stop();
     this.pixelAgentsServer = null;
+    this.tokenLedger?.dispose();
     this.runtime.dispose();
     this.roster.dispose();
     this.layoutWatcher?.dispose();

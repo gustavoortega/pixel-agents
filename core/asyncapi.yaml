@@ -124,6 +124,8 @@ components:
         - $ref: '#/components/schemas/ExternalAssetDirectoriesUpdated'
         - $ref: '#/components/schemas/AreaMappingsLoaded'
         - $ref: '#/components/schemas/WorkspaceFolders'
+        # Token ledger
+        - $ref: '#/components/schemas/TokenUsage'
         # Diagnostics
         - $ref: '#/components/schemas/AgentDiagnostics'
       discriminator: type
@@ -153,6 +155,7 @@ components:
         - $ref: '#/components/schemas/SetShowAreas'
         - $ref: '#/components/schemas/RequestDiagnostics'
         - $ref: '#/components/schemas/AckTripwire'
+        - $ref: '#/components/schemas/SetTokenBudgets'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -1215,6 +1218,141 @@ components:
           const: setShowAreas
         enabled:
           type: boolean
+
+    SetTokenBudgets:
+      description: |
+        Replace both token budgets (weighted tokens). A field left out means that budget is unset; the server
+        ignores values that are not positive finite numbers. Answered with a fresh `tokenUsage`.
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          const: setTokenBudgets
+        budget5h:
+          type: number
+        budgetWeek:
+          type: number
+
+    TokenUsage:
+      description: |
+        Token spend read from the CLI's transcripts, in cost-weighted tokens (input + 1.25 x cache-creation +
+        0.1 x cache-read + 5 x output). `scanning: true` means the first pass is still running: no window or
+        ranking is sent until it completes, since a partial total would read as the real one. `block` is absent
+        when no 5-hour block contains the current time. Sent on connect and when the aggregate changes (at most
+        every 30 s). `source: estimated` windows are derived from transcript timestamps; `quota` windows are
+        anchored to a reset time the CLI itself reported. Percent fields exist only when that budget is set.
+      type: object
+      additionalProperties: false
+      required: [type, generatedAt]
+      properties:
+        type:
+          const: tokenUsage
+        generatedAt:
+          type: integer
+          description: Epoch ms.
+        scanning:
+          type: boolean
+        block:
+          $ref: '#/components/schemas/TokenWindow'
+        week:
+          $ref: '#/components/schemas/TokenWindow'
+        biggestBlock:
+          type: number
+          description: Largest 5-hour block total (weighted) among the last 7 days of records.
+        budget5h:
+          type: number
+        budgetWeek:
+          type: number
+
+    TokenWindow:
+      type: object
+      additionalProperties: false
+      required: [source, start, end, total, raw, byArea, bySession]
+      properties:
+        source:
+          $ref: '#/components/schemas/TokenWindowSource'
+        start:
+          type: integer
+          description: Epoch ms.
+        end:
+          type: integer
+          description: Epoch ms.
+        total:
+          type: number
+          description: Cost-weighted tokens.
+        raw:
+          type: number
+          description: Plain sum of the four token counters.
+        budgetPct:
+          type: number
+          description: total / budget, as a fraction. Only when this window's budget is set.
+        byArea:
+          type: array
+          items:
+            $ref: '#/components/schemas/TokenAreaTotal'
+        bySession:
+          type: array
+          description: Top sessions by weighted total.
+          items:
+            $ref: '#/components/schemas/TokenSessionTotal'
+
+    TokenWindowSource:
+      description: '`quota` = anchored to a reset time the CLI reported; `estimated` = derived from transcript timestamps.'
+      type: string
+      enum: [quota, estimated]
+
+    TokenAreaTotal:
+      type: object
+      additionalProperties: false
+      required: [area, folder, total, raw]
+      properties:
+        area:
+          type: [string, 'null']
+          description: Area label, or null when the folder maps to none (shown under "Lobby").
+        folder:
+          type: string
+        total:
+          type: number
+        raw:
+          type: number
+        share:
+          type: number
+          description: Fraction of the window total; omitted when that total is 0.
+        budgetPct:
+          type: number
+
+    TokenSessionTotal:
+      type: object
+      additionalProperties: false
+      required: [sessionId, area, folder, total, raw, models, rawModels]
+      properties:
+        sessionId:
+          type: string
+        title:
+          type: string
+        area:
+          type: [string, 'null']
+        folder:
+          type: string
+        total:
+          type: number
+        raw:
+          type: number
+        models:
+          type: object
+          description: Weighted total per model.
+          additionalProperties:
+            type: number
+        rawModels:
+          type: object
+          description: Raw counters per model, [input, cache-creation, cache-read, output].
+          additionalProperties:
+            type: array
+            minItems: 4
+            maxItems: 4
+            items:
+              type: number
 
     RequestDiagnostics:
       description: Request agent connection diagnostics (server responds with agentDiagnostics).

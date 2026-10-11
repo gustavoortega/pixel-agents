@@ -44,6 +44,7 @@ import {
 } from './constants.js';
 import { seedContextUsage } from './contextUsage.js';
 import type { DismissalTracker } from './dismissalTracker.js';
+import { folderNameFromProjectDir } from './folderName.js';
 import { assignPaletteIfNeeded } from './paletteAssigner.js';
 import { pathsMatch } from './pathKey.js';
 import { claimRosterMember } from './rosterAgent.js';
@@ -1473,12 +1474,6 @@ export function scanExternalDir(
       persistAgents,
     );
   }
-}
-
-/** Derive a readable folder name from the Claude project dir hash. */
-function folderNameFromProjectDir(dirName: string): string {
-  const parts = dirName.replace(/^-+/, '').split('-');
-  return parts[parts.length - 1] || dirName;
 }
 
 /** Scan every session root the active provider exposes for active sessions

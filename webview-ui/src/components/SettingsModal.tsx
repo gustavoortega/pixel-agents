@@ -36,6 +36,9 @@ interface SettingsModalProps {
   onExportLayout: () => void;
   /** Browser-native layout import from a chosen file (standalone only). */
   onImportLayout: (file: File) => void;
+  /** Current token budgets (weighted tokens); undefined = unset. */
+  tokenBudget5h?: number;
+  tokenBudgetWeek?: number;
 }
 
 export function SettingsModal({
@@ -57,10 +60,27 @@ export function SettingsModal({
   showAreasAvailable,
   onExportLayout,
   onImportLayout,
+  tokenBudget5h,
+  tokenBudgetWeek,
 }: SettingsModalProps) {
   const [soundLocal, setSoundLocal] = useState(isSoundEnabled);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [assetDirDraft, setAssetDirDraft] = useState('');
+  const budget5hRef = useRef<HTMLInputElement>(null);
+  const budgetWeekRef = useRef<HTMLInputElement>(null);
+
+  // Both budgets travel together (a missing one means unset); the server ignores anything not positive.
+  const sendBudgets = () => {
+    const parse = (el: HTMLInputElement | null): number | undefined => {
+      const n = Number(el?.value);
+      return Number.isFinite(n) && n > 0 ? n : undefined;
+    };
+    transport.send({
+      type: 'setTokenBudgets',
+      budget5h: parse(budget5hRef.current),
+      budgetWeek: parse(budgetWeekRef.current),
+    });
+  };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Settings">
@@ -206,6 +226,30 @@ export function SettingsModal({
       {showAreasAvailable && (
         <Checkbox label="Show Areas" checked={showAreas} onChange={onToggleShowAreas} />
       )}
+      <div className="py-4 px-10 text-xs text-text-muted">
+        Optional usage budgets (cost-weighted tokens)
+      </div>
+      {(
+        [
+          ['5 h budget', budget5hRef, tokenBudget5h],
+          ['Week budget', budgetWeekRef, tokenBudgetWeek],
+        ] as const
+      ).map(([label, ref, value]) => (
+        <label key={label} className="flex items-center justify-between gap-8 py-4 px-10 text-xs">
+          {label}
+          <input
+            ref={ref}
+            // Remount when the server confirms a new value, so the field shows what was saved.
+            key={value ?? 'unset'}
+            type="number"
+            min={1}
+            defaultValue={value ?? ''}
+            placeholder="unset"
+            onBlur={sendBudgets}
+            className="w-120 min-w-0 text-xs py-2 px-4 bg-bg border-2 border-border rounded-none text-text"
+          />
+        </label>
+      ))}
       <Checkbox label="Debug View" checked={isDebugMode} onChange={onToggleDebugMode} />
     </Modal>
   );

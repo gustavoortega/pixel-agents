@@ -11,7 +11,9 @@ import {
 } from '../src/clientMessageHandler.js';
 import { getHooksEnabled, readConfig, setHooksEnabled } from '../src/configPersistence.js';
 import { FileStateAdapter } from '../src/fileStateAdapter.js';
+import { claudeProvider } from '../src/providers/hook/claude/claude.js';
 import { CLAUDE_HOOK_EVENTS } from '../src/providers/hook/claude/constants.js';
+import { TokenLedger } from '../src/tokenLedger.js';
 import { DEFAULT_TRIPWIRE_RULES } from '../src/tripwireDefaults.js';
 import { applyTripwireHit } from '../src/tripwires.js';
 import type { AgentState } from '../src/types.js';
@@ -669,5 +671,67 @@ describe('clientMessageHandler: ackTripwire', () => {
       cache: null,
     });
     expect(socketA).toEqual([]);
+  });
+});
+
+describe('clientMessageHandler: token ledger', () => {
+  let tempHome: string;
+  let originalHome: string | undefined;
+  let store: AgentStateStore;
+  let sent: Array<Record<string, unknown>>;
+  let refreshed: Array<Record<string, unknown>>;
+  let ctx: ClientMessageContext;
+
+  beforeEach(() => {
+    tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cmh-ledger-'));
+    originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+    store = new AgentStateStore();
+    store.setAdapter(new FileStateAdapter({ namespace: 'standalone' }));
+    sent = [];
+    refreshed = [];
+    // Real ledger over an empty temp root: nothing is read from the real home directory.
+    const tokenLedger = new TokenLedger({
+      source: claudeProvider.transcriptUsage as NonNullable<typeof claudeProvider.transcriptUsage>,
+      root: path.join(tempHome, 'projects'),
+      cachePath: path.join(tempHome, 'ledger-cache.json'),
+      getAreaMappings: () => ({}),
+      getBudgets: () => {
+        const { tokenBudget5h, tokenBudgetWeek } = readConfig().standalone;
+        return { budget5h: tokenBudget5h, budgetWeek: tokenBudgetWeek };
+      },
+      onChange: (m) => refreshed.push({ ...m }),
+    });
+    ctx = { store, cache: null, tokenLedger };
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    store.dispose();
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it('sends a scanning tokenUsage on connect, after the area mappings', () => {
+    handleClientMessage({ type: 'webviewReady' }, (m) => sent.push(m), ctx);
+    const types = sent.map((m) => m.type);
+    expect(types.indexOf('tokenUsage')).toBeGreaterThan(types.indexOf('areaMappingsLoaded'));
+    expect(sent.find((m) => m.type === 'tokenUsage')).toMatchObject({ scanning: true });
+    expect(sent.find((m) => m.type === 'tokenUsage')).not.toHaveProperty('week');
+  });
+
+  it('persists positive budgets, drops invalid ones, and pushes a fresh tokenUsage', () => {
+    handleClientMessage(
+      { type: 'setTokenBudgets', budget5h: 5_000_000, budgetWeek: 'lots' },
+      (m) => sent.push(m),
+      ctx,
+    );
+    expect(readConfig().standalone.tokenBudget5h).toBe(5_000_000);
+    expect(readConfig().standalone).not.toHaveProperty('tokenBudgetWeek');
+    expect(refreshed.at(-1)).toMatchObject({ budget5h: 5_000_000 });
+
+    handleClientMessage({ type: 'setTokenBudgets', budget5h: 0 }, (m) => sent.push(m), ctx);
+    expect(readConfig().standalone).not.toHaveProperty('tokenBudget5h');
+    expect(refreshed.at(-1)).not.toHaveProperty('budget5h');
   });
 });

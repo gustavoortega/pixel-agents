@@ -37,6 +37,14 @@
   --color-status-success: #89d185;
   --color-status-error: var(--color-danger);
 
+  /* Usage panel: cozy parchment */
+  --color-paper: #efe3c8;
+  --color-paper-dark: #dccaa0;
+  --color-ink: #3b2f22;
+  --color-ink-muted: #7a6a54;
+  --color-ink-bar: #b9783c;
+  --color-ink-bar-over: #b5462f;
+
   /* Shadow */
   --shadow-pixel: 2px 2px 0px #0a0a14;
 
@@ -83,6 +91,13 @@
   --color-status-active: var(--color-status-active);
   --color-status-success: var(--color-status-success);
   --color-status-error: var(--color-status-error);
+
+  --color-paper: var(--color-paper);
+  --color-paper-dark: var(--color-paper-dark);
+  --color-ink: var(--color-ink);
+  --color-ink-muted: var(--color-ink-muted);
+  --color-ink-bar: var(--color-ink-bar);
+  --color-ink-bar-over: var(--color-ink-bar-over);
 
   /* Shadow */
   --shadow-pixel: var(--shadow-pixel);

@@ -83,6 +83,16 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically spawn a Claude Code agent when VS Code starts, if no agents are currently running."
+        },
+        "pixel-agents.tokenBudget5h": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Optional budget for one 5-hour block, in cost-weighted tokens (input + 1.25 x cache creation + 0.1 x cache read + 5 x output). Leave unset for no percentages in the Usage panel."
+        },
+        "pixel-agents.tokenBudgetWeek": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Optional budget for one week, in cost-weighted tokens. Leave unset for no percentages in the Usage panel."
         }
       }
     }
