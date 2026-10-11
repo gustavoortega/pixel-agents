@@ -19,6 +19,11 @@ export function extractToolName(status: string): string | null {
   return first || null;
 }
 
+/** Text under the activity line: the session title, else the folder, else nothing. */
+export function agentLabel(sessionTitle?: string, folderName?: string): string | null {
+  return sessionTitle || folderName || null;
+}
+
 // ── Provider capabilities (tool taxonomy for rendering decisions) ────────────
 // Populated once by the `providerCapabilities` postMessage after `webviewReady`.
 // Modules classifying tools (character animation, subagent creation gate) read

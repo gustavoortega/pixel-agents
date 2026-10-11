@@ -58,6 +58,15 @@ export interface AgentState {
    *  sidechain records belong to sub-agents and stop moving the gauge. */
   sawMainChainUsage?: boolean;
 
+  // -- Session title (server/src/sessionTitle.ts) --
+  /** Title the user chose for the session; the newest record wins. */
+  customTitle?: string;
+  /** Title the CLI generated; used only while there is no customTitle. */
+  aiTitle?: string;
+  /** The jsonlFile the titles above were read from. A different file (switch,
+   *  /clear) means they belong to another session and must be dropped. */
+  titleSourceFile?: string;
+
   // -- Agent Teams --
   teamName?: string;
   agentName?: string;

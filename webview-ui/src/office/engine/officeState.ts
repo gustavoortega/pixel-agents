@@ -59,6 +59,9 @@ export class OfficeState {
   furniture: FurnitureInstance[];
   walkableTiles: Array<{ col: number; row: number }>;
   characters: Map<number, Character> = new Map();
+  /** Session titles by agent id. Keyed by id rather than stored on the character
+   *  because a title can arrive before the (buffered) agentCreated does. */
+  sessionTitles: Map<number, string> = new Map();
   pets: Pet[] = [];
   /** Accumulated time for furniture animation frame cycling */
   furnitureAnimTimer = 0;
@@ -551,6 +554,7 @@ export class OfficeState {
   }
 
   removeAgent(id: number): void {
+    this.sessionTitles.delete(id);
     const ch = this.characters.get(id);
     if (!ch) return;
     if (ch.matrixEffect === 'despawn') return; // already despawning
@@ -1084,6 +1088,12 @@ export class OfficeState {
     if (!ch) return;
     ch.contextTokens = contextTokens;
     ch.maxContextTokens = maxContextTokens;
+  }
+
+  /** Undefined clears the title: the label falls back to the folder. */
+  setSessionTitle(id: number, title: string | undefined): void {
+    if (title) this.sessionTitles.set(id, title);
+    else this.sessionTitles.delete(id);
   }
 
   update(dt: number): void {

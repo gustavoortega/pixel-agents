@@ -100,6 +100,8 @@ components:
         - $ref: '#/components/schemas/AgentTeamInfo'
         # Context window
         - $ref: '#/components/schemas/AgentContextUsage'
+        # Session title
+        - $ref: '#/components/schemas/AgentSessionTitle'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -441,6 +443,27 @@ components:
           type: integer
         maxContextTokens:
           type: integer
+
+    AgentSessionTitle:
+      description: |
+        The session's display title: the name the user gave it, else the one the
+        CLI generated. `title` omitted means this agent has no known title and
+        the label shows its folder; it is sent when a known title is cleared
+        (the agent moved to another transcript) and on reconnect for untitled
+        agents. Never an empty string. Sub-agents have no session of their own
+        and never receive one.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: agentSessionTitle
+        id:
+          type: integer
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
 
     LayoutLoaded:
       description: |

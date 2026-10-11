@@ -16,6 +16,9 @@ export const HOOK_SCRIPTS_DIR = '.pixel-agents/hooks';
 // ── Display ──────────────────────────────────────────────────
 
 export const TASK_DESCRIPTION_DISPLAY_MAX_LENGTH = 40;
+/** Longest session title kept and sent to the webview. Titles come from user
+ *  prompts, so the cap bounds both the message and the label. */
+export const SESSION_TITLE_MAX_LENGTH = 200;
 
 // ── Transport ────────────────────────────────────────────────
 // Connection-state names for the MessageTransport state machine.

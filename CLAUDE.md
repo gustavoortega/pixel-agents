@@ -196,7 +196,7 @@ Adding a new CLI integration is one subdirectory under `server/src/providers/hoo
 
 `core/asyncapi.yaml` is the contract. Pinned to **3.0.0** because `@asyncapi/modelina@5.10.1` declares `supportedVersions: ['3.0.0']` only; bumping to 3.1.0 produces `export type Root = any`. Revisit when Modelina ships 3.1.0 support.
 
-- **27 ServerMessage variants** (server → client): agent lifecycle, agent activity, sub-agent activity, team + context usage, assets, settings + workspace, diagnostics.
+- **28 ServerMessage variants** (server → client): agent lifecycle, agent activity, sub-agent activity, team + context usage + session title, assets, settings + workspace, diagnostics.
 - **18 ClientMessage variants** (client → server): lifecycle (`webviewReady`, `launchAgent`, `focusAgent`, `closeAgent`), layout (`saveAgentSeats`, `saveLayout`, `exportLayout`, `importLayout`), settings (`setSoundEnabled`, `setHooksEnabled`, `setWatchAllSessions`, `setAlwaysShowLabels`, `setHooksInfoShown`, `setLastSeenVersion`), discovery + assets, diagnostics.
 
 Both unions use `oneOf` with `discriminator: type`. Every concrete message sets `additionalProperties: false`.
@@ -372,6 +372,15 @@ Every agent's context gauge. Fed from `message.usage` on assistant records by `p
 - **The window comes from the provider**, not from the runtime: `HookProvider.contextWindowForModel(model)` (Claude: 1M for the current line, 200k for Haiku and the older models, `undefined` for ids it can't place). Transcripts state usage but never the limit, and guessing 200k for a 1M model reads five times too full. `widenContextWindow` is the backstop for unrecognized models and unknown-larger windows — it only ever widens, since a context that doesn't fit disproves the assumption while a shrinking one proves nothing.
 - **`seedContextUsage` runs once per agent in `startFileWatching`** — the single seam every watched agent passes through. Agents adopted or restored mid-session start at end-of-file, so without a tail read they'd have no gauge until their next turn.
 - Sub-agents get no gauge: no session of their own, and the shadow store never forwards `agentContextUsage`.
+
+### Session title (server/src/sessionTitle.ts)
+
+The character label shows the session title instead of the folder when one is known. Claude Code writes `custom-title` (from `/rename`) and `ai-title` (generated) records throughout the transcript; `HookProvider.extractSessionTitle` reads them, `applySessionTitle` keeps both on the agent and broadcasts `agentSessionTitle` only when the derived title (`customTitle ?? aiTitle`) changes.
+
+- **Absent means fall back, never blank.** Only non-empty trimmed strings count (capped at `SESSION_TITLE_MAX_LENGTH`); `title` is omitted from the message when an agent has none, and the webview (`agentLabel`) then shows the folder.
+- **`seedSessionTitle` runs in `startFileWatching`**, next to `seedContextUsage`, for agents that start at end-of-file. It also drops titles read from a different `jsonlFile` (switch, `/clear`) and broadcasts the clear. At `fileOffset === 0` it leaves the titles to the live replay. A restore with a mid-file offset may briefly show an older title while replay catches up.
+- `resendAgentActivity` sends the message for every agent on reconnect, with `title` omitted for untitled ones, so a client that missed a clear does not keep a stale title.
+- Titles come from user prompts: never log their text.
 
 ## Office UI
 

@@ -121,6 +121,31 @@ function windowFor(record: unknown, provider?: HookProvider | null): number | un
 }
 
 /**
+ * The last `bytes` of a file as lines, or null when it can't be read.
+ * A mid-file start lands inside a record, so that leading fragment is dropped.
+ */
+export function readTailLines(file: string, bytes: number): string[] | null {
+  try {
+    const stat = fs.statSync(file);
+    const start = Math.max(0, stat.size - bytes);
+    const length = stat.size - start;
+    if (length <= 0) return [];
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(length);
+      fs.readSync(fd, buf, 0, length, start);
+      let text = buf.toString('utf8');
+      if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+      return text.split('\n');
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Seed the gauge from a transcript's tail when watching starts.
  *
  * Most agents are adopted or restored mid-session with `fileOffset` at
@@ -136,29 +161,11 @@ export function seedContextUsage(
   const agent = agents.get(agentId);
   if (!agent || agent.contextTokens > 0 || !agent.jsonlFile) return;
 
-  let text: string;
-  try {
-    const stat = fs.statSync(agent.jsonlFile);
-    const start = Math.max(0, stat.size - CONTEXT_SEED_TAIL_BYTES);
-    const length = stat.size - start;
-    if (length <= 0) return;
-    const fd = fs.openSync(agent.jsonlFile, 'r');
-    try {
-      const buf = Buffer.alloc(length);
-      fs.readSync(fd, buf, 0, length, start);
-      text = buf.toString('utf8');
-    } finally {
-      fs.closeSync(fd);
-    }
-    // A mid-file start lands inside a record; drop that fragment.
-    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
-  } catch {
-    return; // unreadable transcript -- the stream will seed it on the next turn
-  }
+  const lines = readTailLines(agent.jsonlFile, CONTEXT_SEED_TAIL_BYTES);
+  if (!lines) return; // unreadable transcript -- the stream will seed it on the next turn
 
   // Newest first. Main-chain wins; sidechain is the fallback that makes
   // teammate transcripts (sidechain-only files) work.
-  const lines = text.split('\n');
   let sidechain: { tokens: number; window: number | undefined } | null = null;
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
