@@ -1,5 +1,13 @@
 /** Cozy plants, small props, sofas, shelves and wall decor at density 2. Same rules as furniture.ts. */
 
+import {
+  FAIRY_ART_H,
+  FAIRY_ART_W,
+  FAIRY_BULB_COUNT,
+  FAIRY_BULB_GLASS,
+  fairyBulbX,
+  fairySag,
+} from '../../core/src/assets/fairyLights';
 import type { Canvas } from './canvas';
 import { shade } from './canvas';
 import type { SpriteSet } from './furniture';
@@ -605,38 +613,56 @@ function largePainting(): Canvas {
 // Light fixtures: window, floor lamp, fairy lights
 // ---------------------------------------------------------------------------
 
-/** Wall window, 2x2 tiles: wood frame, daylight sky, far hills, a cross mullion and a sill. */
-function windowPane(): Canvas {
+/** Wall window, 2x2 tiles: wood frame, daylight sky, far hills, a cross mullion and a sill.
+ *  The night frame keeps the wood and swaps the view for a dark sky, three stars and hill
+ *  silhouettes; the runtime shows it while the window casts no light. */
+function windowPane(night = false): Canvas {
   const a = new Art(64, 64);
   a.rect(2, 6, 60, 52, '#3b2412');
   a.rect(3, 7, 58, 50, '#8a5a32');
   a.rect(3, 7, 58, 1, '#c18a52');
   a.rect(3, 7, 1, 50, '#c18a52');
-  // glass: sky bands lighter toward the horizon
   const [gx, gy, gw, gh] = [6, 10, 52, 44];
-  a.rect(gx, gy, gw, gh, '#8fc4ea');
-  a.rect(gx, gy, gw, 12, '#7fb6e2');
-  a.rect(gx, gy + 24, gw, 12, '#b8dcf2');
-  a.oval(46, 19, 3.5, 3.5, '#fff1b8');
-  a.oval(46, 19, 2, 2, '#ffffff');
-  // clouds
-  a.oval(16, 22, 6, 2.2, '#ffffff');
-  a.oval(20, 20, 4, 2, '#ffffff');
-  a.oval(36, 30, 4, 1.4, '#eef7fc');
-  hills(a, gx, gx + gw, gy + 38, 7, 7, '#6b9a52', '#8fbf6a', gy + gh);
-  hills(a, gx, gx + gw, gy + gh, 4, 4.6, '#4f8a45', '#6b9a52');
-  // a tree on the far hill
-  a.rect(18, 37, 1, 5, '#5a3a22');
-  a.oval(18.5, 35, 2.5, 3, '#3f7a3a');
+  if (night) {
+    const HILLS = '#2b3a2b';
+    a.rect(gx, gy, gw, gh, '#1f2a4a');
+    for (const [sx, sy] of [
+      [14, 16],
+      [44, 14],
+      [51, 25],
+    ]) {
+      a.rect(sx - 1, sy, 3, 1, '#fff1b8');
+      a.rect(sx, sy - 1, 1, 3, '#fff1b8');
+    }
+    hills(a, gx, gx + gw, gy + 38, 7, 7, HILLS, HILLS, gy + gh);
+    hills(a, gx, gx + gw, gy + gh, 4, 4.6, shade(HILLS, -0.25), shade(HILLS, -0.25));
+  } else {
+    // glass: sky bands lighter toward the horizon
+    a.rect(gx, gy, gw, gh, '#8fc4ea');
+    a.rect(gx, gy, gw, 12, '#7fb6e2');
+    a.rect(gx, gy + 24, gw, 12, '#b8dcf2');
+    a.oval(46, 19, 3.5, 3.5, '#fff1b8');
+    a.oval(46, 19, 2, 2, '#ffffff');
+    // clouds
+    a.oval(16, 22, 6, 2.2, '#ffffff');
+    a.oval(20, 20, 4, 2, '#ffffff');
+    a.oval(36, 30, 4, 1.4, '#eef7fc');
+    hills(a, gx, gx + gw, gy + 38, 7, 7, '#6b9a52', '#8fbf6a', gy + gh);
+    hills(a, gx, gx + gw, gy + gh, 4, 4.6, '#4f8a45', '#6b9a52');
+    // a tree on the far hill
+    a.rect(18, 37, 1, 5, '#5a3a22');
+    a.oval(18.5, 35, 2.5, 3, '#3f7a3a');
+  }
   // cross mullion
   a.rect(30, gy, 4, gh, '#7a4b2b');
   a.rect(gx, 30, gw, 4, '#7a4b2b');
   a.rect(30, gy, 1, gh, '#9b6338');
   a.rect(gx, 30, gw, 1, '#9b6338');
-  // glass sheen
-  a.line(9, 26, 15, 13, '#ffffff55');
-  a.line(37, 26, 43, 13, '#ffffff55');
-  a.line(9, 28, 17, 13, '#ffffff33');
+  // glass sheen, fainter against the night sky
+  const [sheen, sheenSoft] = night ? ['#ffffff22', '#ffffff14'] : ['#ffffff55', '#ffffff33'];
+  a.line(9, 26, 15, 13, sheen);
+  a.line(37, 26, 43, 13, sheen);
+  a.line(9, 28, 17, 13, sheenSoft);
   // sill
   a.rect(0, 56, 64, 6, '#3b2412');
   a.rect(1, 57, 62, 4, '#9b6338');
@@ -678,25 +704,27 @@ function floorLamp(): Canvas {
   return a.c;
 }
 
-/** Fairy lights, 4x1 tiles: a sagging wire with warm bulbs every 16 px. */
+/** Fairy lights, 4x1 tiles: a sagging wire with warm bulbs every 16 px. The geometry is shared
+ *  with the runtime, which centers each bulb's night glow on it. */
 function fairyLights(): Canvas {
-  const a = new Art(128, 32);
+  const a = new Art(FAIRY_ART_W, FAIRY_ART_H);
   const BULBS = ['#ffd166', '#ff8fab', '#8fd67a', '#8fc4ea'];
-  const sag = (x: number): number => 2 + Math.round(8 * Math.sin((Math.PI * x) / 127));
-  for (let x = 0; x < 128; x++) {
-    a.px(x, sag(x), '#4a3020');
+  const last = FAIRY_ART_W - 1;
+  for (let x = 0; x < FAIRY_ART_W; x++) {
+    a.px(x, fairySag(x), '#4a3020');
   }
   a.rect(0, 1, 2, 3, '#4a3020');
-  a.rect(126, 1, 2, 3, '#4a3020');
-  for (let i = 0; i < 8; i++) {
-    const x = 6 + i * 16;
-    const y = sag(x) + 1;
+  a.rect(last - 1, 1, 2, 3, '#4a3020');
+  const { w, h } = FAIRY_BULB_GLASS;
+  for (let i = 0; i < FAIRY_BULB_COUNT; i++) {
+    const x = fairyBulbX(i);
+    const y = fairySag(x) + 1;
     const col = BULBS[i % BULBS.length];
-    a.rect(x, y, 3, 2, '#5a4a3a');
-    a.rect(x, y + 2, 3, 4, col);
-    a.rect(x + 1, y + 6, 1, 1, col);
+    a.rect(x, y, w, 2, '#5a4a3a');
+    a.rect(x, y + 2, w, h, col);
+    a.rect(x + 1, y + 2 + h, 1, 1, col);
     a.px(x, y + 2, '#ffffffcc');
-    a.px(x + 2, y + 5, shade(col, -0.25));
+    a.px(x + w - 1, y + 1 + h, shade(col, -0.25));
   }
   return a.c;
 }
@@ -723,6 +751,7 @@ export function buildDecor(out: SpriteSet): void {
   out['SMALL_PAINTING_2/SMALL_PAINTING_2.png'] = smallPainting(2);
   out['LARGE_PAINTING/LARGE_PAINTING.png'] = largePainting();
   out['WINDOW/WINDOW.png'] = windowPane();
+  out['WINDOW/WINDOW_NIGHT.png'] = windowPane(true);
   out['FLOOR_LAMP/FLOOR_LAMP.png'] = floorLamp();
   out['FAIRY_LIGHTS/FAIRY_LIGHTS.png'] = fairyLights();
 }

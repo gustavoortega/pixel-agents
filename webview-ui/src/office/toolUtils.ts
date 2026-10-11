@@ -8,6 +8,7 @@ import {
   TRIPWIRE_COLOR_MEDIUM,
 } from '../constants.js';
 import { Rarity } from './flair/modelFlair.js';
+import { CharacterState, IdlePose } from './types.js';
 
 /** Map status prefixes back to tool names for animation selection */
 const STATUS_TO_TOOL: Record<string, string> = {
@@ -88,10 +89,19 @@ export function statusGlyph(
     isActive: boolean;
     bubbleType: 'permission' | 'waiting' | null;
     waitingAwaitingInput?: boolean;
+    state?: string;
+    pose?: string;
   },
   hasTripwire = false,
 ): 'z' | null {
   if (ch.isActive || hasTripwire) return null;
+  // A seated reader or coffee drinker already shows "idle" with the book or mug; a z over it reads
+  // as napping.
+  if (
+    ch.state === CharacterState.TYPE &&
+    (ch.pose === IdlePose.READING || ch.pose === IdlePose.COFFEE)
+  )
+    return null;
   const drawsBubble = ch.bubbleType && !(ch.bubbleType === 'waiting' && ch.waitingAwaitingInput);
   return drawsBubble ? null : 'z';
 }

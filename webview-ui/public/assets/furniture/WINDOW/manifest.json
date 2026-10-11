@@ -3,12 +3,31 @@
   "density": 2,
   "name": "Window",
   "category": "wall",
-  "type": "asset",
+  "type": "group",
+  "groupType": "state",
   "canPlaceOnWalls": true,
   "canPlaceOnSurfaces": false,
   "backgroundTiles": 0,
-  "width": 32,
-  "height": 32,
-  "footprintW": 2,
-  "footprintH": 2
+  "members": [
+    {
+      "type": "asset",
+      "id": "WINDOW",
+      "file": "WINDOW.png",
+      "width": 32,
+      "height": 32,
+      "footprintW": 2,
+      "footprintH": 2,
+      "state": "off"
+    },
+    {
+      "type": "asset",
+      "id": "WINDOW_NIGHT",
+      "file": "WINDOW_NIGHT.png",
+      "width": 32,
+      "height": 32,
+      "footprintW": 2,
+      "footprintH": 2,
+      "state": "on"
+    }
+  ]
 }

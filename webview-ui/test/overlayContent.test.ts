@@ -18,7 +18,7 @@ import {
   showOverlay,
   statusGlyph,
 } from '../src/office/toolUtils.js';
-import { Direction } from '../src/office/types.js';
+import { CharacterState, Direction, IdlePose } from '../src/office/types.js';
 
 test('statusGlyph: only an idle agent with nothing else above its head gets a z', () => {
   const idle = { isActive: false, bubbleType: null };
@@ -35,6 +35,10 @@ test('statusGlyph: only an idle agent with nothing else above its head gets a z'
       'z',
     ],
     ['tripwire beacon owns the slot', idle, true, null],
+    // A book or mug in hand already says idle; a napper still gets its glyph slot.
+    ['seated reader', { ...idle, state: CharacterState.TYPE, pose: IdlePose.READING }, false, null],
+    ['seated coffee', { ...idle, state: CharacterState.TYPE, pose: IdlePose.COFFEE }, false, null],
+    ['seated napper', { ...idle, state: CharacterState.TYPE, pose: IdlePose.NAPPING }, false, 'z'],
   ];
   for (const [name, ch, tripwire, expected] of cases) {
     assert.equal(statusGlyph(ch, tripwire), expected, name);

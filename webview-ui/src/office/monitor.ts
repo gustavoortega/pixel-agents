@@ -4,12 +4,15 @@
  */
 
 import {
+  MONITOR_DARK_SCREEN_COLOR,
   MONITOR_DIM_ONE_IN,
   MONITOR_FLICKER_TICK_MS,
   MONITOR_ON_FRAME_COUNT,
   MONITOR_SCANLINE_MIN_ZOOM,
+  MONITOR_SCREEN_ART_RECT,
   MONITOR_SCREEN_RECT,
 } from '../constants.js';
+import type { SpriteData } from './types.js';
 
 export interface MonitorLook {
   /** Index into the PC's ON frames; always 0 for an idle screen. */
@@ -60,4 +63,22 @@ export function monitorOverlayPlan(zoom: number): MonitorOverlayPlan {
     for (let y = 1; y < h; y += 2) scanlineRows.push(y);
   }
   return { w, h, scanlineRows };
+}
+
+const darkMemo = new WeakMap<SpriteData, SpriteData>();
+
+/** A PC nobody sits at: its screen glass painted one flat dark color, no glare. Memoized per
+ *  source sprite, since the sprite cache keys on identity. */
+export function darkScreenSprite(sprite: SpriteData): SpriteData {
+  let dark = darkMemo.get(sprite);
+  if (!dark) {
+    const { x, y, w, h } = MONITOR_SCREEN_ART_RECT;
+    dark = sprite.map((row, r) =>
+      r < y || r >= y + h
+        ? row
+        : row.map((px, c) => (c >= x && c < x + w ? MONITOR_DARK_SCREEN_COLOR : px)),
+    );
+    darkMemo.set(sprite, dark);
+  }
+  return dark;
 }

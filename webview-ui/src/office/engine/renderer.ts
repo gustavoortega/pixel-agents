@@ -1,4 +1,4 @@
-import { CHAR_FRAME_H, CHAR_FRAME_W } from '../../../../core/src/assets/constants.js';
+import { ART_DENSITY, CHAR_FRAME_H, CHAR_FRAME_W } from '../../../../core/src/assets/constants.js';
 import type { ModelTier } from '../../../../core/src/provider.js';
 import type { ColorValue } from '../../components/ui/types.js';
 import {
@@ -54,6 +54,7 @@ import {
   SELECTION_DASH_PATTERN,
   SELECTION_HIGHLIGHT_COLOR,
   SHAFT_BLEND_MODE,
+  SHAFT_EDGE_COLOR,
   shaftCss,
   TRIPWIRE_BEACON_RADIUS_PX,
   TRIPWIRE_FLASH_PERIOD_MS,
@@ -82,8 +83,8 @@ import { characterFlair, characterOutline } from '../flair/modelFlair.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
 import { type FxRenderState, renderFx } from '../fx/fxRender.js';
 import { areaSignRect } from '../labelLayout.js';
-import type { GlowFixtures, GlowSource, Lighting } from '../lighting.js';
-import { glowDraws } from '../lighting.js';
+import type { FixturePoint, GlowDraw, GlowFixtures, GlowSource, Lighting } from '../lighting.js';
+import { glowDraws, nightLightDraws } from '../lighting.js';
 import { monitorLook, monitorTick } from '../monitor.js';
 import { mapOffset, worldToDevice } from '../projection.js';
 import { seatedBubbleOffsetPx, seatedDrawOffsetPx } from '../seatDraw.js';
@@ -183,6 +184,12 @@ export interface LightingRenderState {
   fixtures: GlowFixtures;
   /** Window light shafts for the current hour (empty at night). */
   shafts: readonly Shaft[];
+  /** The windows are dark: night pools and fairy lights are on. */
+  night: boolean;
+  /** Tile of each lit PC, the ones showing ON frames. */
+  monitors: readonly FixturePoint[];
+  /** Wall-clock ms, for the fairy-light twinkle. */
+  nowMs: number;
 }
 
 /** The Area color wash is an editing aid: it shows only while the Areas tool is active.
@@ -1139,7 +1146,7 @@ function renderNapZz(
     zoom,
   );
   ctx.save();
-  for (const glyph of napZzPlacements(nowMs)) {
+  for (const glyph of napZzPlacements(nowMs, ch.dir === Direction.DOWN)) {
     ctx.globalAlpha = glyph.alpha;
     ctx.drawImage(
       getCachedSprite(glyph.sprite, zoom),
@@ -1320,16 +1327,54 @@ function renderShafts(
     ctx.fillStyle = shaftCss(r, g, b);
     ctx.globalAlpha = alpha;
     ctx.fill();
+    // The left rim: one art px wide along the shaft's left side, painted plainly over the fill.
+    const rim = Math.max(1, zoom / ART_DENSITY);
+    const [[x0, y0], , , [x3, y3]] = shaft.polygon;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.beginPath();
+    ctx.moveTo(offsetX + x0 * s, offsetY + y0 * s);
+    ctx.lineTo(offsetX + x0 * s + rim, offsetY + y0 * s);
+    ctx.lineTo(offsetX + x3 * s + rim, offsetY + y3 * s);
+    ctx.lineTo(offsetX + x3 * s, offsetY + y3 * s);
+    ctx.closePath();
+    ctx.fillStyle = SHAFT_EDGE_COLOR;
+    ctx.globalAlpha = shaft.edgeAlpha;
+    ctx.fill();
     ctx.restore();
   }
   ctx.restore();
 }
 
+/** Paint glow sprites with `screen` inside the map rect. */
+function paintGlows(
+  ctx: CanvasRenderingContext2D,
+  draws: readonly GlowDraw[],
+  zoom: number,
+  offsetX: number,
+  offsetY: number,
+  cols: number,
+  rows: number,
+): void {
+  if (draws.length === 0) return;
+  const s = TILE_SIZE * zoom;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(offsetX, offsetY, cols * s, rows * s);
+  ctx.clip();
+  ctx.globalCompositeOperation = 'screen';
+  for (const d of draws) {
+    ctx.globalAlpha = d.alpha;
+    ctx.drawImage(getGlowSprite(d.kind, zoom), d.sx, d.sy, d.w, d.h, d.x, d.y, d.w, d.h);
+  }
+  ctx.restore();
+}
+
 /** Paint the glows with `screen` inside the map rect: one composite switch per frame, and
- *  nothing can spill onto the transparent canvas around the map. */
+ *  nothing can spill onto the transparent canvas around the map. The fairy bulbs ride along. */
 function renderGlows(
   ctx: CanvasRenderingContext2D,
   state: LightingRenderState,
+  fairy: readonly GlowDraw[],
   zoom: number,
   offsetX: number,
   offsetY: number,
@@ -1347,18 +1392,7 @@ function renderGlows(
     cols,
     rows,
   });
-  if (draws.length === 0) return;
-  const s = TILE_SIZE * zoom;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(offsetX, offsetY, cols * s, rows * s);
-  ctx.clip();
-  ctx.globalCompositeOperation = 'screen';
-  for (const d of draws) {
-    ctx.globalAlpha = d.alpha;
-    ctx.drawImage(getGlowSprite(d.kind, zoom), d.sx, d.sy, d.w, d.h, d.x, d.y, d.w, d.h);
-  }
-  ctx.restore();
+  paintGlows(ctx, [...draws, ...fairy], zoom, offsetX, offsetY, cols, rows);
 }
 
 export function renderFrame(
@@ -1410,9 +1444,24 @@ export function renderFrame(
     renderCarpetLayer(ctx, carpetTiles, cols, rows, offsetX, offsetY, zoom);
   }
 
-  // Window light shafts on the floor, under everything that stands in them
+  // Window light shafts and night pools on the floor, under everything that stands in them
+  const night = lightingState
+    ? nightLightDraws({
+        enabled: cozyLighting,
+        night: lightingState.night,
+        fixtures: lightingState.fixtures,
+        monitors: lightingState.monitors,
+        nowMs: lightingState.nowMs,
+        zoom,
+        offsetX,
+        offsetY,
+        cols,
+        rows,
+      })
+    : { pools: [], fairy: [] };
   if (lightingState && cozyLighting) {
     renderShafts(ctx, lightingState.shafts, zoom, offsetX, offsetY);
+    paintGlows(ctx, night.pools, zoom, offsetX, offsetY, cols, rows);
   }
 
   // Area overlay (translucent color wash) — above carpets, below seat indicators. Editing only.
@@ -1457,7 +1506,7 @@ export function renderFrame(
 
   // Monitor, lamp and window glows: light on top of the scene, under the bubbles
   if (lightingState) {
-    renderGlows(ctx, lightingState, zoom, offsetX, offsetY, cols, rows);
+    renderGlows(ctx, lightingState, night.fairy, zoom, offsetX, offsetY, cols, rows);
   }
 
   // Speech bubbles (always on top of characters)

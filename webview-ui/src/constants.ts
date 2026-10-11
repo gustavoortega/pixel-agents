@@ -409,6 +409,9 @@ export const PET_IDLE_FRAME_DURATION_SEC = 0.3;
 export const PET_WALK_SEQUENCE = [0, 1, 0, 2] as const;
 /** Idle cycle: 4-step lookup into the 3-frame idleDown/idleUp arrays. */
 export const PET_IDLE_SEQUENCE = [0, 1, 2, 1] as const;
+/** A sleeping pet holds this frame of its sitting row: the sheets have no curled pose, and frame
+ *  1 is the blink (eyes shut). */
+export const PET_SLEEP_FRAME = 1;
 /** Minimum seconds the pet stays in IDLE before making a new decision. */
 export const PET_WANDER_PAUSE_MIN_SEC = 3.0;
 /** Maximum seconds the pet stays in IDLE before making a new decision. */
@@ -516,7 +519,22 @@ export const GLOW_DOWN_OFFSET_TILES = 0.5;
 export const GLOW_COLORS = {
   monitor: { core: 'rgba(207, 232, 255, 0.4)', edge: 'rgba(207, 232, 255, 0)' },
   lamp: { core: 'rgba(255, 200, 110, 0.55)', edge: 'rgba(255, 200, 110, 0)' },
+  lampPool: { core: 'rgba(255, 200, 120, 0.35)', edge: 'rgba(255, 200, 120, 0)' },
+  monitorPool: { core: 'rgba(120, 255, 200, 0.25)', edge: 'rgba(120, 255, 200, 0)' },
+  fairy: { core: 'rgba(255, 224, 150, 0.8)', edge: 'rgba(255, 224, 150, 0)' },
 } as const;
+/** Night pools on the floor: radius in tiles around a floor lamp's base and an active monitor. */
+export const POOL_LAMP_RADIUS_TILES = 3;
+/** A lamp pool is centered on the middle of the lamp's base tile, this many tiles below its top. */
+export const POOL_LAMP_CENTER_ROWS = 1.5;
+export const POOL_MONITOR_RADIUS_TILES = 2;
+/** Fairy-light bulb glow: radius in tiles, twinkle period, and the dimmest a bulb gets (share of
+ *  full strength). Each bulb runs the same wave at its own phase. */
+export const FAIRY_GLOW_RADIUS_TILES = 0.5;
+export const FAIRY_TWINKLE_MS = 1800;
+export const FAIRY_GLOW_MIN = 0.35;
+/** Phase offset between neighbouring bulbs, in periods (the golden ratio, so no visible chase). */
+export const FAIRY_PHASE_STEP = 0.618034;
 /** Map vignette: lighter than the first pass so the corners stay readable. One string, so the
  *  DOM layer and anything that inspects it share a single source. */
 export const VIGNETTE_COLOR = 'rgba(50, 20, 5, 0.22)';
@@ -525,16 +543,24 @@ export const VIGNETTE_CENTER = '50% 55%';
 export const VIGNETTE_BACKGROUND = `radial-gradient(ellipse at ${VIGNETTE_CENTER}, transparent ${VIGNETTE_CLEAR_RADIUS_PCT}%, ${VIGNETTE_COLOR})`;
 
 // ── Cozy look: window light shafts ──────────────────────────────
-/** A shaft is a parallelogram on the floor below a window: width and length in tiles, and how
- *  far its far end slides sideways (tiles). */
-export const SHAFT_WIDTH_TILES = 2;
-export const SHAFT_LENGTH_TILES = 3;
-export const SHAFT_SKEW_TILES = 0.5;
+/** A shaft is a parallelogram on the floor below a window, centered on it: width at the sill and
+ *  length in tiles, and the angle its sides lean from vertical. */
+export const SHAFT_WIDTH_TILES = 3;
+export const SHAFT_LENGTH_TILES = 4;
+export const SHAFT_SKEW_DEG = 20;
 /** Shaft color at the two keyframe times (minutes after midnight). Before the first keyframe
  *  the morning color holds, after the last the evening color holds; the shaft is off from
- *  LIGHT_NIGHT_START_MIN to LIGHT_DAY_START_MIN. */
-export const SHAFT_MORNING = { minute: 9 * 60, r: 255, g: 236, b: 190, alpha: 0.16 } as const;
-export const SHAFT_EVENING = { minute: 18 * 60, r: 255, g: 170, b: 110, alpha: 0.1 } as const;
+ *  SHAFT_OFF_START_MIN to LIGHT_DAY_START_MIN. */
+export const SHAFT_MORNING = { minute: 9 * 60, r: 255, g: 236, b: 190, alpha: 0.3 } as const;
+export const SHAFT_EVENING = { minute: 18 * 60, r: 255, g: 170, b: 110, alpha: 0.19 } as const;
+/** The 1 art px rim on the shaft's left side, at full strength (scaled with the shaft's alpha). */
+export const SHAFT_EDGE_COLOR = '#ffffff';
+export const SHAFT_EDGE_ALPHA = 0.18;
+/** Window light ends here (the cat's nap may start); it is back at LIGHT_DAY_START_MIN. An hour
+ *  before the night phase, so 19:00-19:59 is dusk: no shafts, but day windows and no night lights. */
+export const SHAFT_OFF_START_MIN = 19 * 60;
+/** Cells sampled per side when measuring how much of a floor cell a shaft covers. */
+export const SHAFT_COVERAGE_SAMPLES = 4;
 /** CSS color for a shaft's rgb channels (alpha is applied through globalAlpha). */
 export const shaftCss = (r: number, g: number, b: number): string => `rgb(${r}, ${g}, ${b})`;
 /** Shafts are painted in their own composite pass with this blend, never `screen`. */
@@ -559,9 +585,16 @@ export const MONITOR_SCANLINE_ALPHA = 0.1;
 /** Scanlines are 1 device px every 2; below this many device px per sprite px they would
  *  swallow the screen, so they are not drawn. The renderer's zoom is already in device px. */
 export const MONITOR_SCANLINE_MIN_ZOOM = 8;
+/** A PC at a seat nobody holds: its screen glass, in art px of the PC_FRONT sprites, painted
+ *  this flat dark color (no glare). */
+export const MONITOR_SCREEN_ART_RECT = { x: 5, y: 4, w: 21, h: 13 } as const;
+export const MONITOR_DARK_SCREEN_COLOR = '#4A4F5A';
+/** A face-on chair at a seat nobody holds is pushed this many world px under the desk edge. */
+export const CHAIR_TUCK_PX = 4;
 /** Furniture ids that emit light. */
 export const LIGHT_FIXTURE_WINDOW = 'WINDOW';
 export const LIGHT_FIXTURE_LAMP = 'FLOOR_LAMP';
+export const LIGHT_FIXTURE_FAIRY = 'FAIRY_LIGHTS';
 /** Footprint of the window (tiles) and the lamp head's height above the lamp's top tile, world px. */
 export const WINDOW_FOOTPRINT_W_TILES = 2;
 export const WINDOW_FOOTPRINT_H_TILES = 2;
@@ -643,3 +676,6 @@ export const FULL_BOX_MOOD_COLORS = {
   frustrated: '#8fc6ff',
   alarmed: '#ff4d4d',
 } as const;
+
+/** World px the nap Zz rise above the head when the napper is seen from behind or the side. */
+export const NAP_ZZ_BACK_LIFT_PX = 10;

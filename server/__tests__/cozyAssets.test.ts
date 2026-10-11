@@ -274,7 +274,6 @@ describe('cozy art pack', () => {
   });
 
   it.each([
-    ['WINDOW', 'wall', true, 0, 32, 32],
     ['FLOOR_LAMP', 'decor', false, 1, 16, 32],
     ['FAIRY_LIGHTS', 'wall', true, 0, 64, 16],
   ])(
@@ -305,6 +304,35 @@ describe('cozy art pack', () => {
       expect(opaque, `${id} is not blank`).toBeGreaterThan(40);
     },
   );
+
+  it('ships WINDOW as a wall-placed day/night pair whose night frame alone shows the night sky', () => {
+    const dir = 'webview-ui/public/assets/furniture/WINDOW';
+    // A day/night state pair that still places like a wall item.
+    expect(
+      JSON.parse(fs.readFileSync(path.join(REPO_ROOT, dir, 'manifest.json'), 'utf8')),
+    ).toMatchObject({
+      id: 'WINDOW',
+      category: 'wall',
+      type: 'group',
+      groupType: 'state',
+      canPlaceOnWalls: true,
+      canPlaceOnSurfaces: false,
+      backgroundTiles: 0,
+    });
+    // The night sky color, counted per frame: the runtime swap must change what the glass shows.
+    const NIGHT_SKY = [0x1f, 0x2a, 0x4a];
+    const skyPixels = (file: string): number => {
+      const png = PNG.sync.read(fs.readFileSync(path.join(runA, dir, file)));
+      expect([png.width, png.height], file).toEqual([64, 64]);
+      let n = 0;
+      for (let i = 0; i < png.data.length; i += 4) {
+        if (NIGHT_SKY.every((v, k) => png.data[i + k] === v)) n++;
+      }
+      return n;
+    };
+    expect(skyPixels('WINDOW.png')).toBe(0);
+    expect(skyPixels('WINDOW_NIGHT.png')).toBeGreaterThan(400);
+  });
 
   it('ships every environment PNG at density 2 and generates all of them', () => {
     // Furniture manifests stay in world px; the art is twice that. Tiles and pets have

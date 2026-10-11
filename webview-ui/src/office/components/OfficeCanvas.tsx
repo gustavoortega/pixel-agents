@@ -26,11 +26,10 @@ import type {
   RotateButtonBounds,
   SelectionRenderState,
 } from '../engine/renderer.js';
-import { renderFrame } from '../engine/renderer.js';
+import { isCozyLightingEnabled, renderFrame } from '../engine/renderer.js';
 import { getCatalogEntry, isRotatable } from '../layout/furnitureCatalog.js';
-import { lightFixtures, lightingFor, monitorSources } from '../lighting.js';
-import { type Shaft, shaftRects } from '../shafts.js';
-import type { OfficeLayout } from '../types.js';
+import { isNightPhase, lightFixtures, lightingFor, monitorSources } from '../lighting.js';
+import { furnitureForHour, shaftsAt } from '../shafts.js';
 import { EditTool, TILE_SIZE } from '../types.js';
 import { computeNormalModeCursor } from './officeCanvasCursor.js';
 
@@ -59,16 +58,6 @@ interface OfficeCanvasProps {
   onAutoZoom: (zoom: number) => void;
   /** Currently-selected area label in the editor (alpha-bumped overlay). null otherwise. */
   activeAreaLabel: string | null;
-}
-
-/** Shafts only change with the layout or the minute, so rebuild them then, not every frame. */
-let shaftMemo: { layout: OfficeLayout; minute: number; shafts: Shaft[] } | null = null;
-function shaftsFor(layout: OfficeLayout, now: Date): Shaft[] {
-  const minute = now.getHours() * 60 + now.getMinutes();
-  if (!shaftMemo || shaftMemo.layout !== layout || shaftMemo.minute !== minute) {
-    shaftMemo = { layout, minute, shafts: shaftRects(layout, now.getHours(), now.getMinutes()) };
-  }
-  return shaftMemo.shafts;
 }
 
 export function OfficeCanvas({
@@ -353,12 +342,16 @@ export function OfficeCanvas({
         };
 
         const layout = officeState.getLayout();
+        const now = new Date();
+        const night = isNightPhase(now.getHours(), now.getMinutes());
         const { offsetX, offsetY } = renderFrame(
           ctx,
           w,
           h,
           officeState.tileMap,
-          officeState.furniture,
+          isCozyLightingEnabled()
+            ? furnitureForHour(officeState.furniture, now.getHours(), now.getMinutes())
+            : officeState.furniture,
           officeState.getCharacters(),
           zoom,
           panRef.current.x,
@@ -383,10 +376,13 @@ export function OfficeCanvas({
           },
           isEditingAreas,
           {
-            lighting: lightingFor(new Date().getHours(), new Date().getMinutes()),
+            lighting: lightingFor(now.getHours(), now.getMinutes()),
             sources: monitorSources(officeState.characters.values(), officeState.seats),
             fixtures: lightFixtures(layout.furniture),
-            shafts: shaftsFor(layout, new Date()),
+            shafts: shaftsAt(layout, now),
+            night,
+            monitors: night ? officeState.litMonitorTiles() : [],
+            nowMs: now.getTime(),
           },
           {
             effects: officeState.fx.active,
