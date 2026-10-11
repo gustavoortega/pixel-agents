@@ -87,7 +87,7 @@ webview-ui/                          React 19 + Canvas UI (depends only on core/
     notificationSound.ts             Web Audio API chime
     changelogData.ts                 Changelog modal content
     components/                      React UI (toolbars, modals, settings)
-      BottomToolbar.tsx, ZoomControls.tsx, SettingsModal.tsx, InfoModal.tsx,
+      BottomToolbar.tsx, HudCard.tsx, SettingsModal.tsx, InfoModal.tsx,
       Tooltip.tsx, DebugView.tsx, ui/Button.tsx, ...
     hooks/
       useExtensionMessages.ts        Message handler — translates ServerMessage into OfficeState mutations

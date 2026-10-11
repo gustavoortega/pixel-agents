@@ -43,6 +43,9 @@ interface SettingsModalProps {
   /** Current token budgets (weighted tokens); undefined = unset. */
   tokenBudget5h?: number;
   tokenBudgetWeek?: number;
+  /** Installed version, shown here instead of floating over the office. */
+  version: string;
+  onOpenChangelog: () => void;
 }
 
 export function SettingsModal({
@@ -68,6 +71,8 @@ export function SettingsModal({
   onImportLayout,
   tokenBudget5h,
   tokenBudgetWeek,
+  version,
+  onOpenChangelog,
 }: SettingsModalProps) {
   const [soundLocal, setSoundLocal] = useState(isSoundEnabled);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -258,6 +263,16 @@ export function SettingsModal({
         </label>
       ))}
       <Checkbox label="Debug View" checked={isDebugMode} onChange={onToggleDebugMode} />
+      {version && (
+        <MenuItem
+          onClick={() => {
+            onOpenChangelog();
+            onClose();
+          }}
+        >
+          Version v{version} (what's new)
+        </MenuItem>
+      )}
     </Modal>
   );
 }

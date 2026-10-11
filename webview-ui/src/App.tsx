@@ -6,7 +6,7 @@ import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
 import { DebugView } from './components/DebugView.js';
 import { EditActionBar } from './components/EditActionBar.js';
-import { HudClock } from './components/HudClock.js';
+import { HudCard } from './components/HudCard.js';
 import { IntroBubble } from './components/IntroBubble.js';
 import { LightingTint } from './components/LightingTint.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
@@ -15,7 +15,6 @@ import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
 import { UsagePanel } from './components/UsagePanel.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
-import { ZoomControls } from './components/ZoomControls.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
@@ -393,8 +392,8 @@ function App() {
             />
           )}
 
-          <HudClock />
-          <ZoomControls
+          <HudCard
+            characters={officeState.characters}
             zoom={editor.zoom}
             onZoomChange={handleManualZoom}
             fitActive={fitActive}
@@ -624,6 +623,8 @@ function App() {
         showAreasAvailable={areasAvailable}
         onExportLayout={handleExportLayout}
         onImportLayout={handleImportLayout}
+        version={extensionVersion}
+        onOpenChangelog={handleOpenChangelog}
         tokenBudget5h={tokenUsage?.budget5h}
         tokenBudgetWeek={tokenUsage?.budgetWeek}
       />

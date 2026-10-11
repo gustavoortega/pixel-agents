@@ -17,6 +17,7 @@ import {
   LABEL_LAYOUT_MAX_DISPLACEMENT_LINES,
   LABEL_LAYOUT_PAD_PX,
   TILE_SIZE,
+  WALL_FACE_TILES,
 } from '../constants.js';
 
 export interface Rect {
@@ -159,6 +160,16 @@ export function clampPlate(plate: Rect, floor: Rect): Rect {
     x: fit(plate.x, plate.w, floor.x, floor.w),
     y: fit(plate.y, plate.h, floor.y, floor.h),
   };
+}
+
+/**
+ * The rect an overlay group may occupy: the room floor plus the room's own top wall face, so a
+ * plate for an agent at the first floor row sits over that wall instead of flipping onto the desk.
+ * Never extends past the map top, and never sideways or down, so it cannot reach another room.
+ */
+export function withTopWallFace(floor: Rect): Rect {
+  const up = Math.min(WALL_FACE_TILES * TILE_SIZE, Math.max(0, floor.y));
+  return { ...floor, y: floor.y - up, h: floor.h + up };
 }
 
 /**
