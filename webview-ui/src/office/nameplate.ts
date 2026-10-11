@@ -71,14 +71,25 @@ export function plateSide(dir: Direction): PlateSide {
   return dir === Dir.UP ? 'below' : 'above';
 }
 
-/** Height of the plate box in CSS px: the plate with its border and hard shadow, plus the
- *  tripwire pill under it. 0 when there is nothing to draw. */
-export function nameplateHeight(c: NameplateContent): number {
+/** Height of the plate itself in CSS px, with its border and hard shadow. 0 when it has no lines. */
+export function plateBoxHeight(c: NameplateContent): number {
   const lines = (c.badge || c.name ? NAMEPLATE_LINE1_PX : 0) + (c.sub ? NAMEPLATE_LINE2_PX : 0);
-  const plate =
-    lines > 0 ? lines + 2 * NAMEPLATE_PAD_Y_PX + 2 * NAMEPLATE_BORDER_PX + NAMEPLATE_SHADOW_PX : 0;
-  const pill = c.pill ? (plate > 0 ? NAMEPLATE_PILL_GAP_PX : 0) + NAMEPLATE_PILL_HEIGHT_PX : 0;
-  return plate + pill;
+  return lines > 0
+    ? lines + 2 * NAMEPLATE_PAD_Y_PX + 2 * NAMEPLATE_BORDER_PX + NAMEPLATE_SHADOW_PX
+    : 0;
+}
+
+/** Height of the tripwire chip in CSS px, 0 when there is no alarm. */
+export function chipBoxHeight(c: NameplateContent): number {
+  return c.pill ? NAMEPLATE_PILL_HEIGHT_PX : 0;
+}
+
+/** Height of the plate box in CSS px: the plate, plus the tripwire chip beside it and the gap
+ *  between them. 0 when there is nothing to draw. */
+export function nameplateHeight(c: NameplateContent): number {
+  const plate = plateBoxHeight(c);
+  const chip = chipBoxHeight(c);
+  return plate + (plate > 0 && chip > 0 ? NAMEPLATE_PILL_GAP_PX : 0) + chip;
 }
 
 export interface NameplateStyle {

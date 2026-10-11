@@ -69,6 +69,8 @@ export const SELECTED_OUTLINE_ALPHA = 1.0;
 export const HOVERED_OUTLINE_ALPHA = 0.5;
 /** Headless agents (adopted, no terminal to focus) render slightly translucent. */
 export const HEADLESS_CHARACTER_ALPHA = 0.5;
+/** Helper look: an Adjust-mode shift applied to every non-skin pixel of the parent's sheet. */
+export const HELPER_LOOK = { h: 0, s: -70, b: 10, c: 0 } as const;
 export const GHOST_PREVIEW_SPRITE_ALPHA = 0.5;
 export const GHOST_PREVIEW_TINT_ALPHA = 0.25;
 export const SELECTION_DASH_PATTERN: [number, number] = [4, 3];
@@ -252,7 +254,6 @@ export const SKIN_TONES: ReadonlySet<string> = new Set([
   '#382419',
 ]);
 export const AUTO_ON_FACING_DEPTH = 3;
-export const AUTO_ON_SIDE_DEPTH = 2;
 export const CHARACTER_HIT_HALF_WIDTH = 8;
 export const CHARACTER_HIT_HEIGHT = 24;
 export const TOOL_OVERLAY_VERTICAL_OFFSET = 32;
@@ -298,6 +299,8 @@ export const NAMEPLATE_BADGE_INK = '#3b2412';
 export const NAMEPLATE_BADGE_GOLD = '#f6c64a';
 export const NAMEPLATE_PILL_HEIGHT_PX = 18;
 export const NAMEPLATE_PILL_GAP_PX = 2;
+/** Gap between neighbouring items of the overlay stack above a head (plate, chip, bubble), CSS px. */
+export const OVERLAY_STACK_GAP_PX = 2;
 /** Extra clearance a displaced label keeps from what it was pushed off, CSS px. */
 export const LABEL_LAYOUT_PAD_PX = 2;
 /** A label pushed further than this many lines stays put and dims instead. */
@@ -425,6 +428,8 @@ export const PET_THUMB_SCALE_MARGIN = 0.85;
 /** Fallback background fill for sprite-less thumbnail (used while pet sprites are loading). */
 export const EMPTY_SPRITE_THUMBNAIL_BG = '#333';
 /** Maximum string length for a PlacedPet.id (defends against pathologically-long layout entries). */
+/** Id of the cozy layout's cat: it lives in the lobby. */
+export const LOBBY_CAT_ID = 'cozy-lobby-cat';
 export const MAX_PET_ID_LENGTH = 128;
 
 // ── Model look (rarity, equipment, companion) ───────────────────

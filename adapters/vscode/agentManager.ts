@@ -17,7 +17,7 @@ import { loadLayout } from '../../server/src/layoutPersistence.js';
 import { assignPaletteIfNeeded } from '../../server/src/paletteAssigner.js';
 import { CLAUDE_TERMINAL_NAME_PREFIX } from '../../server/src/providers/hook/claude/constants.js';
 import { claudeProvider } from '../../server/src/providers/index.js';
-import { claimRosterMember, withRosterLook } from '../../server/src/rosterAgent.js';
+import { claimRosterMember, seatsForClient, withRosterLook } from '../../server/src/rosterAgent.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from '../../server/src/timerManager.js';
 import {
   applyTurnDerivation,
@@ -560,7 +560,7 @@ export function sendExistingAgents(
   agentIds.sort((a, b) => a - b);
 
   // Include persisted palette/seatId from separate key
-  const agentMeta = withRosterLook(adapter.loadSeats(), agents);
+  const agentMeta = withRosterLook(seatsForClient(adapter.loadSeats(), agents), agents);
 
   // Include folderName and isExternal per agent
   const folderNames: Record<number, string> = {};

@@ -18,7 +18,7 @@ import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
-import { broadcastRoster, stripRosterLook } from './rosterAgent.js';
+import { broadcastRoster, seatsForClient, seatsToPersist } from './rosterAgent.js';
 import type { TokenLedger } from './tokenLedger.js';
 import { ackTripwire } from './tripwires.js';
 
@@ -175,7 +175,7 @@ export function handleClientMessage(
             }
           }
         }
-        adapter?.saveSeats(stripRosterLook(seats, store));
+        adapter?.saveSeats(seatsToPersist(seats, store));
       }
       break;
 
@@ -531,7 +531,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   const agentIds: number[] = [];
   const folderNames: Record<number, string> = {};
   const externalAgents: Record<number, boolean> = {};
-  const persistedSeats = adapter?.loadSeats() ?? {};
+  const persistedSeats = seatsForClient(adapter?.loadSeats() ?? {}, store);
   const agentMeta: Record<number, { palette?: number; hueShift?: number; seatId?: string }> = {};
   for (const [id, agent] of store) {
     agentIds.push(id);

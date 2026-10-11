@@ -109,3 +109,40 @@ export function withRosterLook(
   }
   return out;
 }
+
+/**
+ * Key a persisted seat by something that survives a restart. Agent ids are handed out afresh
+ * each run, so a seat saved under one lands on whoever gets that number next; the session and
+ * the roster member are stable. Prefixed so no key can read as another kind's.
+ */
+export function seatKey(id: number, agent: AgentState | undefined): string {
+  if (agent?.sessionId) return `s:${agent.sessionId}`;
+  if (agent?.rosterId) return `r:${agent.rosterId}`;
+  return `a:${id}`;
+}
+
+/** Seats as the webview sends them (by agent id), ready to persist: roster look stripped, keys stable. */
+export function seatsToPersist(
+  seats: Record<string, SeatMeta>,
+  store: AgentStateStore,
+): Record<string, SeatMeta> {
+  const out: Record<string, SeatMeta> = {};
+  for (const [idStr, meta] of Object.entries(stripRosterLook(seats, store))) {
+    out[seatKey(Number(idStr), store.get(Number(idStr)))] = meta;
+  }
+  return out;
+}
+
+/** Persisted seats back to the webview's agent-id keys. Entries saved under the old numeric-id
+ *  keys match nothing here: such an agent gets a fresh seat instead of someone else's. */
+export function seatsForClient(
+  persisted: Record<string, SeatMeta>,
+  store: AgentStateStore,
+): Record<string, SeatMeta> {
+  const out: Record<string, SeatMeta> = {};
+  for (const [id, agent] of store) {
+    const meta = persisted[seatKey(id, agent)];
+    if (meta) out[String(id)] = meta;
+  }
+  return out;
+}

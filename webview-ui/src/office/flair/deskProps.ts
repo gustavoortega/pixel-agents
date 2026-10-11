@@ -1,4 +1,6 @@
 import { DESK_PROP_REACH_TILES, DESK_PROP_SLOTS_MAX } from '../../constants.js';
+import type { Direction } from '../types.js';
+import { Direction as Dir } from '../types.js';
 
 /**
  * Desk props an agent earns by level. Pure tables and slot picking; sprites live in
@@ -34,22 +36,80 @@ export interface Tile {
 
 const key = (t: Tile): string => `${t.col},${t.row}`;
 
-/**
- * The monitor a seat faces within `depth` tiles, or null. Stand-in for the seat-to-PC lookup the
- * seating rework provides; the merge replaces this one function.
- */
-export function pcTileForSeat(input: {
-  seat: Tile;
-  facing: Tile;
-  depth: number;
-  electronicsTiles: ReadonlySet<string>;
-}): Tile | null {
-  const { seat, facing, depth, electronicsTiles } = input;
-  for (let d = 1; d <= depth; d++) {
-    const t = { col: seat.col + facing.col * d, row: seat.row + facing.row * d };
-    if (electronicsTiles.has(key(t))) return t;
+export interface PcSeat {
+  uid: string;
+  col: number;
+  row: number;
+  facing: Direction;
+}
+
+export interface PcItem {
+  uid: string;
+  /** Catalog orientation of the placed item: front, back, side, left or right. */
+  orientation?: string;
+  /** Every footprint tile. */
+  tiles: readonly Tile[];
+}
+
+/** The screen a seat can use looks back at it: a seat facing down meets a PC shown from behind
+ *  (`back`), one facing up a PC shown from the front, a sideways seat a side PC (mirrored). */
+function orientationFits(facing: Direction, orientation: string | undefined): boolean {
+  if (facing === Dir.DOWN) return orientation === 'back';
+  if (facing === Dir.UP) return orientation === 'front';
+  return orientation === 'side' || orientation === 'left' || orientation === 'right';
+}
+
+const FRONT_OFFSET: Record<Direction, Tile> = {
+  [Dir.DOWN]: { col: 0, row: 1 },
+  [Dir.UP]: { col: 0, row: -1 },
+  [Dir.LEFT]: { col: -1, row: 0 },
+  [Dir.RIGHT]: { col: 1, row: 0 },
+};
+
+/** The tile of `tiles` nearest to `from` by Manhattan distance, ties to the lower column then row. */
+export function nearestTile(from: Tile, tiles: readonly Tile[]): Tile | null {
+  let best: Tile | null = null;
+  let bestD = Infinity;
+  for (const t of tiles) {
+    const d = Math.abs(t.col - from.col) + Math.abs(t.row - from.row);
+    if (
+      d < bestD ||
+      (d === bestD && best && (t.col < best.col || (t.col === best.col && t.row < best.row)))
+    ) {
+      best = t;
+      bestD = d;
+    }
   }
-  return null;
+  return best;
+}
+
+/**
+ * The PC each seat owns, seat uid -> furniture uid. A candidate faces the seat (see
+ * `orientationFits`) and has a footprint tile within one tile (Chebyshev) of the cell in front of
+ * the seat; the nearest to the seat wins, ties to the lower column. One PC per seat is what keeps
+ * a face-to-face pod from lighting the opposite desk's screen. Seats with no PC are absent.
+ */
+export function pcForSeat(seats: readonly PcSeat[], pcs: readonly PcItem[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const seat of seats) {
+    const off = FRONT_OFFSET[seat.facing];
+    const front = { col: seat.col + off.col, row: seat.row + off.row };
+    let best: { uid: string; tile: Tile; d: number } | null = null;
+    for (const pc of pcs) {
+      if (!orientationFits(seat.facing, pc.orientation)) continue;
+      const near = pc.tiles.some(
+        (t) => Math.max(Math.abs(t.col - front.col), Math.abs(t.row - front.row)) <= 1,
+      );
+      if (!near) continue;
+      const tile = nearestTile({ col: seat.col, row: seat.row }, pc.tiles)!;
+      const d = Math.abs(tile.col - seat.col) + Math.abs(tile.row - seat.row);
+      if (!best || d < best.d || (d === best.d && tile.col < best.tile.col)) {
+        best = { uid: pc.uid, tile, d };
+      }
+    }
+    if (best) out.set(seat.uid, best.uid);
+  }
+  return out;
 }
 
 /** The desk tile a companion takes: one tile right of the monitor. */

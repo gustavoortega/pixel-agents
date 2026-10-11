@@ -346,6 +346,8 @@ export interface Pet {
   followDuration: number;
   /** Random [5, 15] limit; FOLLOW exits when followDuration >= this. */
   followDurationLimit: number;
+  /** Room (Area label, '' for the lobby) the pet lives in; it never leaves it. Absent: roams the map. */
+  homeRoom?: string;
   /** Pet's heart-bubble overlay (set on click), or null. */
   bubbleType: 'heart' | null;
   /** Countdown timer for the heart bubble (mirrors character waiting bubble). */

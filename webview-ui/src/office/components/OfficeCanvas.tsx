@@ -399,6 +399,7 @@ export function OfficeCanvas({
             nowMs: Date.now(),
           },
           officeState.deskProps,
+          officeState.bubbleLift,
         );
         offsetRef.current = { x: offsetX, y: offsetY };
 

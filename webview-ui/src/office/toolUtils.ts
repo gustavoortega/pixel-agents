@@ -153,6 +153,11 @@ export function shouldShowXpPop(
   return worthy && (lastShownAt === undefined || now - lastShownAt >= XP_POP_COOLDOWN_MS);
 }
 
+/** The parent's count of live helpers, e.g. `+2 helpers`. */
+export function helpersLabel(n: number): string {
+  return `+${n} ${n === 1 ? 'helper' : 'helpers'}`;
+}
+
 export type OverlayContent =
   { mode: 'full' } | { mode: 'marker' } | { mode: 'compact'; plate: NameplateContent | null };
 
@@ -171,12 +176,28 @@ export function overlayContent(state: {
   name?: string;
   rarity?: Rarity;
   maxWidth: number;
+  /** Set for a helper (sub-agent): its parent's name. A helper gets one small line, no level. */
+  helperOf?: string;
 }): OverlayContent {
   if (state.expanded) return { mode: 'full' };
   if (state.maxWidth < COMPACT_LABEL_MIN_WIDTH_PX) return { mode: 'marker' };
+  if (state.helperOf !== undefined) {
+    return {
+      mode: 'compact',
+      plate: {
+        badge: null,
+        name: `helper \u00B7 ${state.helperOf}`,
+        sub: null,
+        rarity: null,
+        pill: null,
+      },
+    };
+  }
   const badge = state.level !== undefined ? levelBadge(state.level) : null;
   let name = state.name ?? '';
-  let sub = [state.label, state.subCount > 0 ? `+${state.subCount}` : ''].filter(Boolean).join(' ');
+  let sub = [state.label, state.subCount > 0 ? helpersLabel(state.subCount) : '']
+    .filter(Boolean)
+    .join(' ');
   // No roster member yet: the session label takes the name line instead of leaving it empty.
   if (!name && !badge && sub) {
     name = sub;
@@ -198,8 +219,8 @@ export function overlayContent(state: {
 
 /**
  * Which element an agent gets: the full box, the nameplate, or none.
- * Sub-agents have no nameplate (their parent shows +N); they get the full
- * box when they or their parent are hovered or selected. Agents always have a plate.
+ * Helpers (sub-agents) get a one-line plate naming their parent, and the full box when they or
+ * their parent are hovered or selected. Agents always have a plate.
  */
 export function showOverlay(s: {
   isSub: boolean;
@@ -209,7 +230,7 @@ export function showOverlay(s: {
   parentHovered: boolean;
 }): 'full' | 'compact' | null {
   const self = s.isSelected || s.isHovered;
-  if (s.isSub) return self || s.parentSelected || s.parentHovered ? 'full' : null;
+  if (s.isSub && (s.parentSelected || s.parentHovered)) return 'full';
   return self ? 'full' : 'compact';
 }
 

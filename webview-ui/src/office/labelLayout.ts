@@ -36,6 +36,9 @@ export interface LabelItem {
   y: number;
   w: number;
   h: number;
+  /** Heights of the plate and the chip inside `h` (the chip stacks above the plate on an above-head label). */
+  plateH?: number;
+  chipH?: number;
   /** Direction a colliding plate is pushed: down for a plate under the feet (default), up for
    *  one above the head, so a displaced plate never lands on its own character's face. */
   grow?: 'down' | 'up';

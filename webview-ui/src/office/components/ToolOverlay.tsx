@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { Button } from '../../components/ui/Button.js';
 import {
+  BUBBLE_VERTICAL_OFFSET_PX,
   COMPACT_LABEL_FEET_GAP_PX,
   CONTEXT_CRITICAL_THRESHOLD,
   CONTEXT_DANGER_THRESHOLD,
@@ -45,16 +46,19 @@ import {
   roomFloorRect,
 } from '../labelLayout.js';
 import {
-  nameplateHeight,
+  chipBoxHeight,
   nameplateStyle,
   plateAnchorAboveY,
+  plateBoxHeight,
   plateScale,
   plateShowsTitle,
   type PlateSide,
   plateSide,
 } from '../nameplate.js';
+import { stackAbove } from '../overlayStack.js';
 import { overlayProjection } from '../projection.js';
-import { seatedDrawOffsetPx } from '../seatDraw.js';
+import { seatedBubbleOffsetPx, seatedDrawOffsetPx } from '../seatDraw.js';
+import { BUBBLE_WAITING_SPRITE } from '../sprites/spriteData.js';
 import {
   agentLabel,
   agentStatus,
@@ -170,6 +174,8 @@ function CompactLabel({
 }) {
   const hasPlate = !!plate && (plate.badge || plate.name || plate.sub);
   const style = nameplateStyle(plate?.rarity ?? null);
+  // The chip sits over the plate on an above-head label and under it on a below-feet one.
+  const pillMargin = side === 'above' ? 'marginBottom' : 'marginTop';
   return (
     <div
       className="absolute flex flex-col items-center"
@@ -188,88 +194,182 @@ function CompactLabel({
       data-agent-id={id}
       data-status={status}
     >
-      {plate && hasPlate && (
-        <div
-          className={`nameplate relative flex flex-col max-w-full overflow-hidden${plate.rarity === Rarity.LEGENDARY ? ' rarity-shimmer' : ''}`}
-          style={
-            {
-              '--plate-bg': style.bg,
-              '--plate-text': style.text,
-              '--plate-border': style.border,
-              padding: `${NAMEPLATE_PAD_Y_PX}px 6px`,
-              ...(plate.rarity === Rarity.LEGENDARY
-                ? { '--rarity-shimmer-sec': `${RARITY_SHIMMER_SEC}s` }
-                : {}),
-            } as React.CSSProperties
-          }
-        >
-          {(plate.badge || plate.name) && (
+      {side === 'above' ? (
+        <>
+          {plate?.pill && (
             <span
-              className="flex items-center gap-4 whitespace-nowrap leading-none"
-              style={{ height: NAMEPLATE_LINE1_PX, fontSize: NAMEPLATE_NAME_FONT_PX }}
-            >
-              {plate.badge && (
-                <span
-                  className="shrink-0 text-2xs leading-none px-4"
-                  style={{
-                    background: style.badgeBg,
-                    color: style.badgeInk,
-                    border: `2px solid ${style.badgeInk}`,
-                    height: NAMEPLATE_LINE1_PX - 2,
-                    display: 'flex',
-                    alignItems: 'center',
-                  }}
-                >
-                  {plate.badge}
-                </span>
-              )}
-              <span className="overflow-hidden text-ellipsis">{plate.name}</span>
-            </span>
-          )}
-          {plate.sub && (
-            <span
-              className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none px-4"
+              className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none text-2xs cursor-pointer max-w-full"
+              // Plates ignore pointer events; the pill opts back in so one click acknowledges it.
               style={{
-                height: NAMEPLATE_LINE2_PX,
-                lineHeight: `${NAMEPLATE_LINE2_PX}px`,
-                fontSize: NAMEPLATE_SUB_FONT_PX,
-                background: style.subBg,
+                height: NAMEPLATE_PILL_HEIGHT_PX,
+                [pillMargin]: hasPlate ? NAMEPLATE_PILL_GAP_PX : 0,
+                padding: '0 6px',
+                lineHeight: `${NAMEPLATE_PILL_HEIGHT_PX - 4}px`,
+                background: 'var(--brand-rust)',
+                color: 'var(--brand-paper)',
+                border: '2px solid var(--brand-ink)',
+                pointerEvents: 'auto',
+              }}
+              title="Click to acknowledge"
+              data-testid="tripwire-alarm"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (tripwire) onAckTripwire(id, tripwire.count);
               }}
             >
-              {plate.sub}
+              {plate.pill}
             </span>
           )}
-        </div>
-      )}
-      {plate?.pill && (
-        <span
-          className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none text-2xs cursor-pointer max-w-full"
-          // Plates ignore pointer events; the pill opts back in so one click acknowledges it.
-          style={{
-            height: NAMEPLATE_PILL_HEIGHT_PX,
-            marginTop: hasPlate ? NAMEPLATE_PILL_GAP_PX : 0,
-            padding: '0 6px',
-            lineHeight: `${NAMEPLATE_PILL_HEIGHT_PX - 4}px`,
-            background: 'var(--brand-rust)',
-            color: 'var(--brand-paper)',
-            border: '2px solid var(--brand-ink)',
-            pointerEvents: 'auto',
-          }}
-          title="Click to acknowledge"
-          data-testid="tripwire-alarm"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (tripwire) onAckTripwire(id, tripwire.count);
-          }}
-        >
-          {plate.pill}
-        </span>
+          {plate && hasPlate && (
+            <div
+              className={`nameplate relative flex flex-col max-w-full overflow-hidden${plate.rarity === Rarity.LEGENDARY ? ' rarity-shimmer' : ''}`}
+              style={
+                {
+                  '--plate-bg': style.bg,
+                  '--plate-text': style.text,
+                  '--plate-border': style.border,
+                  padding: `${NAMEPLATE_PAD_Y_PX}px 6px`,
+                  ...(plate.rarity === Rarity.LEGENDARY
+                    ? { '--rarity-shimmer-sec': `${RARITY_SHIMMER_SEC}s` }
+                    : {}),
+                } as React.CSSProperties
+              }
+            >
+              {(plate.badge || plate.name) && (
+                <span
+                  className="flex items-center gap-4 whitespace-nowrap leading-none"
+                  style={{ height: NAMEPLATE_LINE1_PX, fontSize: NAMEPLATE_NAME_FONT_PX }}
+                >
+                  {plate.badge && (
+                    <span
+                      className="shrink-0 text-2xs leading-none px-4"
+                      style={{
+                        background: style.badgeBg,
+                        color: style.badgeInk,
+                        border: `2px solid ${style.badgeInk}`,
+                        height: NAMEPLATE_LINE1_PX - 2,
+                        display: 'flex',
+                        alignItems: 'center',
+                      }}
+                    >
+                      {plate.badge}
+                    </span>
+                  )}
+                  <span className="overflow-hidden text-ellipsis">{plate.name}</span>
+                </span>
+              )}
+              {plate.sub && (
+                <span
+                  className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none px-4"
+                  style={{
+                    height: NAMEPLATE_LINE2_PX,
+                    lineHeight: `${NAMEPLATE_LINE2_PX}px`,
+                    fontSize: NAMEPLATE_SUB_FONT_PX,
+                    background: style.subBg,
+                  }}
+                >
+                  {plate.sub}
+                </span>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {plate && hasPlate && (
+            <div
+              className={`nameplate relative flex flex-col max-w-full overflow-hidden${plate.rarity === Rarity.LEGENDARY ? ' rarity-shimmer' : ''}`}
+              style={
+                {
+                  '--plate-bg': style.bg,
+                  '--plate-text': style.text,
+                  '--plate-border': style.border,
+                  padding: `${NAMEPLATE_PAD_Y_PX}px 6px`,
+                  ...(plate.rarity === Rarity.LEGENDARY
+                    ? { '--rarity-shimmer-sec': `${RARITY_SHIMMER_SEC}s` }
+                    : {}),
+                } as React.CSSProperties
+              }
+            >
+              {(plate.badge || plate.name) && (
+                <span
+                  className="flex items-center gap-4 whitespace-nowrap leading-none"
+                  style={{ height: NAMEPLATE_LINE1_PX, fontSize: NAMEPLATE_NAME_FONT_PX }}
+                >
+                  {plate.badge && (
+                    <span
+                      className="shrink-0 text-2xs leading-none px-4"
+                      style={{
+                        background: style.badgeBg,
+                        color: style.badgeInk,
+                        border: `2px solid ${style.badgeInk}`,
+                        height: NAMEPLATE_LINE1_PX - 2,
+                        display: 'flex',
+                        alignItems: 'center',
+                      }}
+                    >
+                      {plate.badge}
+                    </span>
+                  )}
+                  <span className="overflow-hidden text-ellipsis">{plate.name}</span>
+                </span>
+              )}
+              {plate.sub && (
+                <span
+                  className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none px-4"
+                  style={{
+                    height: NAMEPLATE_LINE2_PX,
+                    lineHeight: `${NAMEPLATE_LINE2_PX}px`,
+                    fontSize: NAMEPLATE_SUB_FONT_PX,
+                    background: style.subBg,
+                  }}
+                >
+                  {plate.sub}
+                </span>
+              )}
+            </div>
+          )}
+          {plate?.pill && (
+            <span
+              className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none text-2xs cursor-pointer max-w-full"
+              // Plates ignore pointer events; the pill opts back in so one click acknowledges it.
+              style={{
+                height: NAMEPLATE_PILL_HEIGHT_PX,
+                [pillMargin]: hasPlate ? NAMEPLATE_PILL_GAP_PX : 0,
+                padding: '0 6px',
+                lineHeight: `${NAMEPLATE_PILL_HEIGHT_PX - 4}px`,
+                background: 'var(--brand-rust)',
+                color: 'var(--brand-paper)',
+                border: '2px solid var(--brand-ink)',
+                pointerEvents: 'auto',
+              }}
+              title="Click to acknowledge"
+              data-testid="tripwire-alarm"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (tripwire) onAckTripwire(id, tripwire.count);
+              }}
+            >
+              {plate.pill}
+            </span>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-/** Something already owns the slot right above the head (bubble, idle glyph, Zz, beacon). */
+/** Name a helper's plate shows for its parent: roster member, else session label, else a generic word. */
+function parentName(officeState: OfficeState, parentId: number): string {
+  const parent = officeState.characters.get(parentId);
+  return (
+    officeState.rosters.get(parentId)?.name ||
+    agentLabel(officeState.sessionTitles.get(parentId), parent?.folderName) ||
+    'agent'
+  );
+}
+
+/** Something is drawn on the canvas right above the head (bubble, idle glyph, Zz, beacon). */
 function headSlotTaken(ch: Character, hasTripwire: boolean): boolean {
   const bubble = ch.bubbleType && !(ch.bubbleType === 'waiting' && ch.waitingAwaitingInput);
   return !!bubble || hasTripwire || statusGlyph(ch, hasTripwire) !== null;
@@ -363,6 +463,7 @@ export function ToolOverlay({
         expanded: false,
         label: agentLabel(officeState.sessionTitles.get(id), ch.folderName),
         subCount: subagentCharacters.filter((s) => s.parentAgentId === id).length,
+        helperOf: parentId !== null ? parentName(officeState, parentId) : undefined,
         tripwire: officeState.tripwires.get(id),
         level: officeState.rosters.get(id)?.level,
         name: officeState.rosters.get(id)?.name,
@@ -379,7 +480,9 @@ export function ToolOverlay({
       if (shown.mode === 'compact' && shown.plate) {
         // Anchor on the tile centre, not the sprite, so plates do not reshuffle while agents walk.
         const sit = seatedDrawOffsetPx(ch);
-        const h = nameplateHeight(shown.plate) * scale;
+        const plateH = plateBoxHeight(shown.plate) * scale;
+        const chipH = chipBoxHeight(shown.plate) * scale;
+        const h = plateH + (plateH > 0 && chipH > 0 ? NAMEPLATE_PILL_GAP_PX : 0) + chipH;
         const side = plateSide(ch.dir);
         const tileMidY = (ch.tileRow + 0.5) * TILE_SIZE;
         labelItems.push({
@@ -390,16 +493,11 @@ export function ToolOverlay({
           y:
             side === 'below'
               ? project.toScreenY(tileMidY + sit) + COMPACT_LABEL_FEET_GAP_PX
-              : project.toScreenY(
-                  plateAnchorAboveY(
-                    tileMidY,
-                    sit,
-                    headSlotTaken(ch, officeState.tripwires.has(id)),
-                    napHeadBobPx(ch),
-                  ),
-                ) - h,
+              : project.toScreenY(plateAnchorAboveY(tileMidY, sit, false, napHeadBobPx(ch))) - h,
           w: maxWidth,
           h,
+          plateH,
+          chipH,
           grow: side === 'below' ? 'down' : 'up',
         });
       }
@@ -421,9 +519,15 @@ export function ToolOverlay({
     });
   }
   const placements = layoutLabels(labelItems, obstacles);
-  // Last step: a plate never leaves the floor of its room, so it cannot cross a wall or the top
-  // edge. Applied after the collision pass because the wall wins over the nicest spot.
+  // Last step: the stack above each head (plate, chip, bubble) never leaves the floor of its
+  // room, so it cannot cross a wall or the top edge. Applied after the collision pass because the
+  // wall wins over the nicest spot, and as a group so the order survives the clamp.
   const clamps = new Map<number, { dx: number; dy: number }>();
+  officeState.bubbleLift.clear();
+  const bubbleBox = {
+    w: (BUBBLE_WAITING_SPRITE[0]?.length ?? 0) * (1 / project.toWorldLength(1)),
+    h: BUBBLE_WAITING_SPRITE.length * (1 / project.toWorldLength(1)),
+  };
   for (const it of labelItems) {
     const ch = officeState.characters.get(it.id);
     if (!ch) continue;
@@ -436,8 +540,30 @@ export function ToolOverlay({
       w: project.toScreenX(world.x + world.w) - x0,
       h: project.toScreenY(world.y + world.h) - y0,
     };
-    const dy = placements.get(it.id)?.dy ?? 0;
-    const plate: Rect = { x: it.x - it.w / 2, y: it.y + dy, w: it.w, h: it.h };
+    const pdy = placements.get(it.id)?.dy ?? 0;
+    if (it.grow === 'up') {
+      const hasCanvasItem = headSlotTaken(ch, officeState.tripwires.has(it.id));
+      const stack = stackAbove({
+        x: it.x,
+        headTop: it.y + it.h,
+        plate: (it.plateH ?? 0) > 0 ? { w: it.w, h: it.plateH ?? 0 } : null,
+        chip: (it.chipH ?? 0) > 0 ? { w: it.w, h: it.chipH ?? 0 } : null,
+        bubble: hasCanvasItem ? bubbleBox : null,
+        dy: pdy,
+        floor,
+      });
+      clamps.set(it.id, { dx: stack.shift.dx, dy: stack.shift.dy - pdy });
+      if (stack.bubble) {
+        // World y of the bubble's bottom edge, against where the renderer draws it by default.
+        const bottomWorld = project.toWorldLength(
+          stack.bubble.y + stack.bubble.h - project.toScreenY(0),
+        );
+        const defaultBottom = ch.y + seatedBubbleOffsetPx(ch) - BUBBLE_VERTICAL_OFFSET_PX - 1;
+        officeState.bubbleLift.set(it.id, Math.max(0, defaultBottom - bottomWorld));
+      }
+      continue;
+    }
+    const plate: Rect = { x: it.x - it.w / 2, y: it.y + pdy, w: it.w, h: it.h };
     const fitted = clampPlate(plate, floor);
     clamps.set(it.id, { dx: fitted.x - plate.x, dy: fitted.y - plate.y });
   }
@@ -474,14 +600,7 @@ export function ToolOverlay({
               top={
                 side === 'below'
                   ? project.toScreenY(ch.y + sit) + COMPACT_LABEL_FEET_GAP_PX
-                  : project.toScreenY(
-                      plateAnchorAboveY(
-                        ch.y,
-                        sit,
-                        headSlotTaken(ch, officeState.tripwires.has(id)),
-                        napHeadBobPx(ch),
-                      ),
-                    )
+                  : project.toScreenY(plateAnchorAboveY(ch.y, sit, false, napHeadBobPx(ch)))
               }
               side={side}
               scale={scale}

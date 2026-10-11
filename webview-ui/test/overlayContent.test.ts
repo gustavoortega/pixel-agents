@@ -59,7 +59,7 @@ test('overlayContent: plate lines, +N, tripwire pill, full on hover, marker when
   });
   assert.deepEqual(overlayContent({ ...base, subCount: 2 }), {
     mode: 'compact',
-    plate: { ...plain, name: 'Fix login +2', sub: null },
+    plate: { ...plain, name: 'Fix login +2 helpers', sub: null },
   });
   assert.deepEqual(overlayContent({ ...base, tripwire }), {
     mode: 'compact',
@@ -73,7 +73,7 @@ test('overlayContent: plate lines, +N, tripwire pill, full on hover, marker when
   assert.equal(overlayContent({ ...base, maxWidth: 90 }).mode, 'compact');
 });
 
-test('showOverlay: sub-agents have no compact label but follow their parent', () => {
+test('showOverlay: helpers get a compact plate and follow their parent for the full box', () => {
   const none = {
     isSub: false,
     isSelected: false,
@@ -86,7 +86,7 @@ test('showOverlay: sub-agents have no compact label but follow their parent', ()
     ['agent, nothing', {}, 'compact'],
     ['agent, hovered', { isHovered: true }, 'full'],
     ['agent, selected', { isSelected: true }, 'full'],
-    ['sub, nothing', { isSub: true }, null],
+    ['sub, nothing', { isSub: true }, 'compact'],
     ['sub, hovered', { isSub: true, isHovered: true }, 'full'],
     ['sub, selected', { isSub: true, isSelected: true }, 'full'],
     ['sub, parent hovered', { isSub: true, parentHovered: true }, 'full'],
@@ -99,11 +99,27 @@ test('showOverlay: sub-agents have no compact label but follow their parent', ()
   }
 });
 
+test('overlayContent: a helper plate is one line naming its parent, with no level or title', () => {
+  const content = overlayContent({
+    expanded: false,
+    label: 'Fix login',
+    subCount: 2,
+    level: 7,
+    name: 'Nova',
+    maxWidth: 184,
+    helperOf: 'Ada',
+  });
+  assert.deepEqual(content, {
+    mode: 'compact',
+    plate: { badge: null, name: 'helper \u00B7 Ada', sub: null, rarity: null, pill: null },
+  });
+});
+
 test('overlayContent: badge and member name on line 1, session label on line 2', () => {
   const base = { expanded: false, label: 'Fix login', subCount: 1, maxWidth: 184 };
   assert.deepEqual(overlayContent({ ...base, level: 7, name: 'Nova' }), {
     mode: 'compact',
-    plate: { badge: 'Lv 7', name: 'Nova', sub: 'Fix login +1', pill: null, rarity: null },
+    plate: { badge: 'Lv 7', name: 'Nova', sub: 'Fix login +1 helper', pill: null, rarity: null },
   });
   // The badge shows without a label too.
   assert.deepEqual(overlayContent({ ...base, label: null, subCount: 0, level: 1, name: 'Nova' }), {

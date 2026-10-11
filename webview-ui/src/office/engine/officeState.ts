@@ -2,7 +2,6 @@ import { pickDiversePalette } from '../../../../core/src/paletteUtils.js';
 import type { ModelTier } from '../../../../core/src/provider.js';
 import {
   AUTO_ON_FACING_DEPTH,
-  AUTO_ON_SIDE_DEPTH,
   CHARACTER_HIT_HALF_WIDTH,
   CHARACTER_HIT_HEIGHT,
   COFFEE_COOLDOWN_SEC,
@@ -12,6 +11,7 @@ import {
   GREETER_TILE_MARGIN,
   INACTIVE_SEAT_TIMER_MIN_SEC,
   INACTIVE_SEAT_TIMER_RANGE_SEC,
+  LOBBY_CAT_ID,
   LOUNGE_FURNITURE_TYPE,
   MAX_PET_ID_LENGTH,
   PET_HIT_HALF_WIDTH,
@@ -30,7 +30,13 @@ import {
   updateCompanion,
 } from '../flair/companion.js';
 import type { DeskPropKind } from '../flair/deskProps.js';
-import { companionDeskTile, deskSlots, pcTileForSeat, propPlacements } from '../flair/deskProps.js';
+import {
+  companionDeskTile,
+  deskSlots,
+  nearestTile,
+  pcForSeat,
+  propPlacements,
+} from '../flair/deskProps.js';
 import { type HeroCandidate, heroPerRoom } from '../flair/hero.js';
 import { modelFlair } from '../flair/modelFlair.js';
 import { FxEngine } from '../fx/fxEngine.js';
@@ -92,6 +98,9 @@ export class OfficeState {
   /** Tripwire alarms by agent id. Keyed by id for the same reason as sessionTitles:
    *  an alarm can arrive before the (buffered) agentCreated does. */
   tripwires: Map<number, TripwireAlarm> = new Map();
+  /** World px each agent's bubble/beacon/glyph rises above its default slot so it clears the plate
+   *  and tripwire chip below it. Written by the overlay stack every frame, read by the renderer. */
+  bubbleLift: Map<number, number> = new Map();
   /** Roster member data by agent id. Same reason as sessionTitles: it is sent at claim time,
    *  before the (buffered) agentCreated. */
   rosters: Map<number, AgentRosterInfo> = new Map();
@@ -114,6 +123,9 @@ export class OfficeState {
   /** Desk tiles with their desk's sort depth, and the electronics tiles: where a hero's companion sits. */
   private deskTiles: Map<string, number>;
   private electronicsTiles: Set<string>;
+  /** Seat uid -> uid of the PC it owns, and each electronics item's footprint; set per layout load. */
+  private pcBySeat: Map<string, string> = new Map();
+  private electronicsById: Map<string, Tile[]> = new Map();
   /** Coffee table tiles with their sort depth: where the companion of someone on a sofa rests. */
   private tableTiles: Map<string, number> = new Map();
   pets: Pet[] = [];
@@ -175,6 +187,7 @@ export class OfficeState {
     this.furnitureTiles = getFurnitureTiles(this.layout.furniture);
     this.deskTiles = getDeskTiles(this.layout.furniture);
     this.electronicsTiles = this.buildElectronicsTileSet();
+    this.buildPcBySeat();
     this.tableTiles = this.buildTableTiles(this.layout);
     this.furniture = layoutToFurnitureInstances(this.layout.furniture);
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
@@ -193,6 +206,7 @@ export class OfficeState {
     this.furnitureTiles = getFurnitureTiles(layout.furniture);
     this.deskTiles = getDeskTiles(layout.furniture);
     this.electronicsTiles = this.buildElectronicsTileSet();
+    this.buildPcBySeat();
     this.tableTiles = this.buildTableTiles(layout);
     this.rebuildFurnitureInstances();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
@@ -363,6 +377,33 @@ export class OfficeState {
     return out;
   }
 
+  /** Seat -> PC lookup, computed once per layout load. */
+  private buildPcBySeat(): void {
+    this.electronicsById = new Map();
+    const pcs = [];
+    for (const item of this.layout.furniture) {
+      const entry = getCatalogEntry(item.type);
+      if (!entry || entry.category !== 'electronics') continue;
+      const tiles: Tile[] = [];
+      for (let dr = 0; dr < entry.footprintH; dr++) {
+        for (let dc = 0; dc < entry.footprintW; dc++) {
+          tiles.push({ col: item.col + dc, row: item.row + dr });
+        }
+      }
+      this.electronicsById.set(item.uid, tiles);
+      pcs.push({ uid: item.uid, orientation: entry.orientation, tiles });
+    }
+    this.pcBySeat = pcForSeat(
+      [...this.seats.values()].map((s) => ({
+        uid: s.uid,
+        col: s.seatCol,
+        row: s.seatRow,
+        facing: s.facingDir,
+      })),
+      pcs,
+    );
+  }
+
   /** Collect every tile occupied by electronics furniture (PCs, monitors, etc.). */
   private buildElectronicsTileSet(): Set<string> {
     const out = new Set<string>();
@@ -391,44 +432,17 @@ export class OfficeState {
   }
 
   /**
-   * Does this seat face an electronics tile (PC, monitor)? Mirrors the
-   * forward-and-flanking scan used by furniture auto-state.
-   */
-  private isSeatFacingElectronics(seat: Seat, electronicsTiles: Set<string>): boolean {
-    const { dCol, dRow } = seatFacingOffset(seat.facingDir);
-    for (let d = 1; d <= AUTO_ON_FACING_DEPTH; d++) {
-      const tileCol = seat.seatCol + dCol * d;
-      const tileRow = seat.seatRow + dRow * d;
-      if (electronicsTiles.has(`${tileCol},${tileRow}`)) return true;
-      if (dCol !== 0) {
-        if (
-          electronicsTiles.has(`${tileCol},${tileRow - 1}`) ||
-          electronicsTiles.has(`${tileCol},${tileRow + 1}`)
-        ) {
-          return true;
-        }
-      } else if (
-        electronicsTiles.has(`${tileCol - 1},${tileRow}`) ||
-        electronicsTiles.has(`${tileCol + 1},${tileRow}`)
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
    * Random-pick a seat from a candidate list, biased toward seats that face an
    * electronics tile. Returns null when the candidate list is empty.
    */
-  private pickFromSeats(seatUids: string[], electronicsTiles: Set<string>): string | null {
+  private pickFromSeats(seatUids: string[]): string | null {
     if (seatUids.length === 0) return null;
     const pcSeats: string[] = [];
     const otherSeats: string[] = [];
     for (const uid of seatUids) {
       const seat = this.seats.get(uid);
       if (!seat) continue;
-      if (this.isSeatFacingElectronics(seat, electronicsTiles)) {
+      if (this.pcBySeat.has(uid)) {
         pcSeats.push(uid);
       } else {
         otherSeats.push(uid);
@@ -454,7 +468,6 @@ export class OfficeState {
    * unzoned seats from a layout without `areaTiles`, which is every seat).
    */
   private findFreeSeat(folderName?: string): string | null {
-    const electronicsTiles = this.buildElectronicsTileSet();
     const freeSeats: string[] = [];
     const freeCouchSeats: string[] = [];
     for (const [uid, seat] of this.seats) {
@@ -474,17 +487,17 @@ export class OfficeState {
         const label = this.seatZone(uid);
         return label !== null && wanted.has(label);
       });
-      const pick = this.pickFromSeats(inArea, electronicsTiles);
+      const pick = this.pickFromSeats(inArea);
       if (pick) return pick;
     }
 
     // Stage 2 — unzoned seats (no area label, or layout has no areas at all).
     const unzoned = freeSeats.filter((uid) => this.seatZone(uid) === null);
-    const pick2 = this.pickFromSeats(unzoned, electronicsTiles);
+    const pick2 = this.pickFromSeats(unzoned);
     if (pick2) return pick2;
 
     // Stage 3 — any free seat.
-    return this.pickFromSeats(freeSeats, electronicsTiles);
+    return this.pickFromSeats(freeSeats);
   }
 
   /** Closest walkable tile to (col,row) not occupied by another character, or null. */
@@ -556,7 +569,14 @@ export class OfficeState {
     let seatId: string | null = null;
     if (preferredSeatId && this.seats.has(preferredSeatId)) {
       const seat = this.seats.get(preferredSeatId)!;
-      if (!seat.assigned) {
+      // A saved seat is honoured only inside the folder's mapped Areas: ids and layouts move
+      // between runs, and a seat in another room is how an agent ends up in the wrong one.
+      // With no mapping the seat stands (manual placement).
+      const wanted = folderName ? this.areaMappings[folderName] : undefined;
+      const zone = this.seatZone(preferredSeatId);
+      const inMappedArea =
+        !wanted || wanted.length === 0 || (zone !== null && wanted.includes(zone));
+      if (!seat.assigned && inMappedArea) {
         seatId = preferredSeatId;
       }
     }
@@ -796,7 +816,68 @@ export class OfficeState {
     return true;
   }
 
-  /** Create a sub-agent character with the parent's palette. Returns the sub-agent ID. */
+  /** Area label of a tile, LOBBY_ROOM outside every Area. */
+  private roomOfTile(col: number, row: number): string {
+    return this.layout.areaTiles?.[row * this.layout.cols + col] ?? LOBBY_ROOM;
+  }
+
+  /**
+   * Where a helper goes: the nearest free desk seat in its parent's room (helpers type at a desk),
+   * else a floor tile at least two tiles from the parent and outside the parent's column, so it
+   * never reads as a clone standing in front of or behind its parent. Null seat and tile only
+   * when the map has no walkable tile at all.
+   */
+  private helperPlacement(parentCh: Character | undefined): {
+    seatId: string | null;
+    tile: { col: number; row: number };
+  } {
+    const pc = parentCh ? parentCh.tileCol : 0;
+    const pr = parentCh ? parentCh.tileRow : 0;
+    // The room of the parent's seat, not of where it stands: a parent on a coffee walk still has a home room.
+    const parentSeat = parentCh?.seatId ? this.seats.get(parentCh.seatId) : undefined;
+    const homeRoom = parentSeat
+      ? this.roomOfTile(parentSeat.seatCol, parentSeat.seatRow)
+      : this.roomOfTile(pc, pr);
+    const dist = (col: number, row: number): number => Math.abs(col - pc) + Math.abs(row - pr);
+
+    let bestSeat: string | null = null;
+    let bestD = Infinity;
+    for (const [uid, seat] of this.seats) {
+      if (seat.assigned || seat.couch) continue;
+      if (this.roomOfTile(seat.seatCol, seat.seatRow) !== homeRoom) continue;
+      const d = dist(seat.seatCol, seat.seatRow);
+      if (d < bestD) {
+        bestD = d;
+        bestSeat = uid;
+      }
+    }
+    if (bestSeat) {
+      const seat = this.seats.get(bestSeat)!;
+      return { seatId: bestSeat, tile: { col: seat.seatCol, row: seat.seatRow } };
+    }
+
+    const occupied = new Set<string>();
+    for (const ch of this.characters.values()) occupied.add(`${ch.tileCol},${ch.tileRow}`);
+    let best: { col: number; row: number } | null = null;
+    let bestRank = Infinity;
+    for (const t of this.walkableTiles) {
+      if (occupied.has(`${t.col},${t.row}`)) continue;
+      if (Math.max(Math.abs(t.col - pc), Math.abs(t.row - pr)) < 2) continue;
+      if (t.col === pc) continue;
+      // Same room first, then nearest.
+      const rank = (this.roomOfTile(t.col, t.row) === homeRoom ? 0 : 10_000) + dist(t.col, t.row);
+      if (rank < bestRank) {
+        bestRank = rank;
+        best = t;
+      }
+    }
+    return { seatId: null, tile: best ?? this.walkableTiles[0] ?? { col: pc, row: pr } };
+  }
+
+  /**
+   * Create a helper (sub-agent) character. It keeps its parent's face and hair shape; the
+   * renderer washes the rest to gray (the helper look), so it never reads as a clone.
+   */
   addSubagent(parentAgentId: number, parentToolId: string): number {
     const key = `${parentAgentId}:${parentToolId}`;
     if (this.subagentIdMap.has(key)) return this.subagentIdMap.get(key)!;
@@ -806,21 +887,17 @@ export class OfficeState {
     const palette = parentCh ? parentCh.palette : 0;
     const hueShift = parentCh ? parentCh.hueShift : 0;
 
-    // Find the closest walkable tile to the parent, avoiding tiles occupied by other characters
-    const parentCol = parentCh ? parentCh.tileCol : 0;
-    const parentRow = parentCh ? parentCh.tileRow : 0;
-    let spawn = { col: parentCol, row: parentRow };
-    if (this.walkableTiles.length > 0) {
-      spawn = this.closestFreeWalkableTile(parentCol, parentRow) ?? this.walkableTiles[0];
-    }
+    const { seatId, tile: spawn } = this.helperPlacement(parentCh);
+    const seat = seatId ? this.seats.get(seatId)! : null;
+    if (seat) seat.assigned = true;
 
-    const ch = createCharacter(id, palette, null, null, hueShift);
+    const ch = createCharacter(id, palette, seatId, seat, hueShift);
     ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2;
     ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2;
     ch.tileCol = spawn.col;
     ch.tileRow = spawn.row;
-    // Face the same direction as the parent agent
-    if (parentCh) ch.dir = parentCh.dir;
+    if (seat) ch.dir = seat.facingDir;
+    else if (parentCh) ch.dir = parentCh.dir;
     ch.isSubagent = true;
     ch.parentAgentId = parentAgentId;
     startMatrixEffect(ch, 'spawn');
@@ -917,50 +994,26 @@ export class OfficeState {
   }
 
   /**
-   * Tiles whose electronics are lit: the desk tiles in front of every active agent's seat.
-   * Seam: this is the seat -> PC lookup for monitors; replace the body, not the callers, when
-   * seats learn which PC they own.
+   * Uids of the PCs that are lit: the one PC each seat owns, while the agent seated there is
+   * working (status truth). A PC with nobody at it, or an idle agent, stays off.
    */
-  private monitorTilesLitByActiveAgents(): Set<string> {
-    const autoOnTiles = new Set<string>();
+  private litPcUids(): Set<string> {
+    const lit = new Set<string>();
     for (const ch of this.characters.values()) {
-      if (!ch.isActive || !ch.seatId) continue;
+      if (ch.agentStatus !== WorkStatus.ACTIVE || !ch.seatId) continue;
       const seat = this.seats.get(ch.seatId);
-      if (!seat) continue;
-      // Find the desk tile(s) the agent faces from their seat
-      const dCol =
-        seat.facingDir === Direction.RIGHT ? 1 : seat.facingDir === Direction.LEFT ? -1 : 0;
-      const dRow = seat.facingDir === Direction.DOWN ? 1 : seat.facingDir === Direction.UP ? -1 : 0;
-      // Check tiles in the facing direction (desk could be 1-3 tiles deep)
-      for (let d = 1; d <= AUTO_ON_FACING_DEPTH; d++) {
-        const tileCol = seat.seatCol + dCol * d;
-        const tileRow = seat.seatRow + dRow * d;
-        autoOnTiles.add(`${tileCol},${tileRow}`);
-      }
-      // Also check tiles to the sides of the facing direction (desks can be wide)
-      for (let d = 1; d <= AUTO_ON_SIDE_DEPTH; d++) {
-        const baseCol = seat.seatCol + dCol * d;
-        const baseRow = seat.seatRow + dRow * d;
-        if (dCol !== 0) {
-          // Facing left/right: check tiles above and below
-          autoOnTiles.add(`${baseCol},${baseRow - 1}`);
-          autoOnTiles.add(`${baseCol},${baseRow + 1}`);
-        } else {
-          // Facing up/down: check tiles left and right
-          autoOnTiles.add(`${baseCol - 1},${baseRow}`);
-          autoOnTiles.add(`${baseCol + 1},${baseRow}`);
-        }
-      }
+      if (!seat || seat.seatCol !== ch.tileCol || seat.seatRow !== ch.tileRow) continue;
+      const pc = this.pcBySeat.get(ch.seatId);
+      if (pc) lit.add(pc);
     }
-
-    return autoOnTiles;
+    return lit;
   }
 
   /** Rebuild furniture instances with auto-state applied (active agents turn electronics ON) */
   private rebuildFurnitureInstances(): void {
-    const autoOnTiles = this.monitorTilesLitByActiveAgents();
+    const litPcs = this.litPcUids();
 
-    if (autoOnTiles.size === 0) {
+    if (litPcs.size === 0) {
       this.furniture = layoutToFurnitureInstances(this.layout.furniture);
       return;
     }
@@ -970,25 +1023,15 @@ export class OfficeState {
     const modifiedFurniture: PlacedFurniture[] = this.layout.furniture.map((item) => {
       const entry = getCatalogEntry(item.type);
       if (!entry) return item;
-      // Check if any tile of this furniture overlaps an auto-on tile
-      for (let dr = 0; dr < entry.footprintH; dr++) {
-        for (let dc = 0; dc < entry.footprintW; dc++) {
-          if (autoOnTiles.has(`${item.col + dc},${item.row + dr}`)) {
-            let onType = getOnStateType(item.type);
-            if (onType !== item.type) {
-              // Check if the on-state type has animation frames
-              const frames = getAnimationFrames(onType);
-              if (frames && frames.length > 1) {
-                const frameIdx = monitorLook(true, tick).frame % frames.length;
-                onType = frames[frameIdx];
-              }
-              return { ...item, type: onType };
-            }
-            return item;
-          }
-        }
+      if (!litPcs.has(item.uid)) return item;
+      const onType = getOnStateType(item.type);
+      if (onType === item.type) return item;
+      // The on-state may have animation frames: pick the one this tick shows.
+      const frames = getAnimationFrames(onType);
+      if (frames && frames.length > 1) {
+        return { ...item, type: frames[monitorLook(true, tick).frame % frames.length] };
       }
-      return item;
+      return { ...item, type: onType };
     });
 
     this.furniture = layoutToFurnitureInstances(modifiedFurniture);
@@ -1075,8 +1118,12 @@ export class OfficeState {
     if (this.pets.some((p) => p.id === placedPet.id)) return; // de-dupe
     if (this.walkableTiles.length === 0) return; // no spawn space — silently drop
 
-    const spawn = this.walkableTiles[Math.floor(Math.random() * this.walkableTiles.length)];
+    // The lobby cat lives in the lobby; any other pet lives in the room it spawns in.
+    const lobby = this.walkableTiles.filter((t) => this.roomOfTile(t.col, t.row) === LOBBY_ROOM);
+    const pool = placedPet.id === LOBBY_CAT_ID && lobby.length > 0 ? lobby : this.walkableTiles;
+    const spawn = pool[Math.floor(Math.random() * pool.length)];
     const pet = createPet(placedPet.id, placedPet.petType, spawn.col, spawn.row);
+    pet.homeRoom = this.roomOfTile(spawn.col, spawn.row);
     pet.name = getPetName(placedPet.petType);
     this.pets.push(pet);
     this.syncLayoutPets();
@@ -1278,6 +1325,13 @@ export class OfficeState {
           startCoffee: () => this.startCoffeeTrip(ch),
         });
         held = this.stepCoffeeTrip(ch, dt);
+      } else {
+        // A helper at its desk reads or naps when idle like anyone, but never goes for coffee.
+        stepPose(ch, dt, {
+          coffeeActive: () => false,
+          sofaFree: () => false,
+          startCoffee: () => false,
+        });
       }
 
       if (!held) {
@@ -1324,7 +1378,15 @@ export class OfficeState {
 
     // ── Pet FSM ────────────────────────────────────────────────
     for (const pet of this.pets) {
-      updatePet(pet, dt, this.walkableTiles, this.characters, this.tileMap, this.blockedTiles);
+      updatePet(
+        pet,
+        dt,
+        this.walkableTiles,
+        this.characters,
+        this.tileMap,
+        this.blockedTiles,
+        (c, r) => this.roomOfTile(c, r),
+      );
 
       // Tick heart bubble timer (mirrors character waiting-bubble pattern)
       if (pet.bubbleType) {
@@ -1536,14 +1598,15 @@ export class OfficeState {
       const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
       if (ch.isSubagent || !seat || ch.state === CharacterState.WALK) continue;
       if (seat.seatCol !== ch.tileCol || seat.seatRow !== ch.tileRow) continue;
-      const { dCol, dRow } = seatFacingOffset(seat.facingDir);
-      const pc = pcTileForSeat({
-        seat: { col: seat.seatCol, row: seat.seatRow },
-        facing: { col: dCol, row: dRow },
-        depth: AUTO_ON_FACING_DEPTH,
-        electronicsTiles: this.electronicsTiles,
-      });
+      const pcUid = this.pcBySeat.get(seat.uid);
+      const pc = pcUid
+        ? nearestTile(
+            { col: seat.seatCol, row: seat.seatRow },
+            this.electronicsById.get(pcUid) ?? [],
+          )
+        : null;
       if (!pc) continue;
+      const { dCol } = seatFacingOffset(seat.facingDir);
       seated.push({ id, pc, across: dCol === 0 ? { col: 1, row: 0 } : { col: 0, row: 1 }, level });
     }
     const blocked = new Set<string>();

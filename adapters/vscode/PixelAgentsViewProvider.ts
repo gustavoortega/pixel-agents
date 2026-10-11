@@ -55,7 +55,7 @@ import {
   hookProviders,
 } from '../../server/src/providers/index.js';
 import { RosterStore } from '../../server/src/roster.js';
-import { broadcastRoster, stripRosterLook } from '../../server/src/rosterAgent.js';
+import { broadcastRoster, seatsToPersist } from '../../server/src/rosterAgent.js';
 import { PixelAgentsServer } from '../../server/src/server.js';
 import { TokenLedger } from '../../server/src/tokenLedger.js';
 import { loadTripwireRules } from '../../server/src/tripwireConfig.js';
@@ -519,7 +519,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       } else if (message.type === 'saveAgentSeats') {
         // Store seat assignments in a separate key (never touched by persistAgents)
         console.log(`[Pixel Agents] State: saveAgentSeats:`, JSON.stringify(message.seats));
-        this.adapter.saveSeats(stripRosterLook(message.seats, this.store));
+        this.adapter.saveSeats(seatsToPersist(message.seats, this.store));
       } else if (message.type === 'saveLayout') {
         this.layoutWatcher?.markOwnWrite();
         writeLayoutToFile(message.layout as Record<string, unknown>);
