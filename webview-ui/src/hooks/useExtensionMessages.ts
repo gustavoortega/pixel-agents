@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { HooksConsentRequest } from '../../../core/src/messages.js';
-import { playDoneSound, playPermissionSound, setSoundEnabled } from '../notificationSound.js';
+import {
+  playAlarmSound,
+  playDoneSound,
+  playPermissionSound,
+  setSoundEnabled,
+} from '../notificationSound.js';
 import type { ExistingAgentMeta, PendingAgent } from '../office/engine/existingAgents.js';
 import { reconcileExistingAgents } from '../office/engine/existingAgents.js';
 import type { OfficeState } from '../office/engine/officeState.js';
@@ -12,6 +17,7 @@ import { migrateLayoutColors } from '../office/layout/layoutSerializer.js';
 import { setCarpetSprites } from '../office/sprites/carpetTiles.js';
 import { setPetTemplates } from '../office/sprites/petSpriteData.js';
 import { setCharacterTemplates } from '../office/sprites/spriteData.js';
+import { shouldPlayTripwireSound, type TripwireSeverity } from '../office/toolUtils.js';
 import {
   extractToolName,
   isSubagentToolName,
@@ -737,6 +743,17 @@ export function useExtensionMessages(
         os.setAgentContext(id, msg.contextTokens as number, msg.maxContextTokens as number);
       } else if (msg.type === 'agentSessionTitle') {
         os.setSessionTitle(msg.id as number, msg.title as string | undefined);
+      } else if (msg.type === 'agentTripwire') {
+        const id = msg.id as number;
+        const alarm = {
+          ruleName: msg.ruleName as string,
+          severity: msg.severity as TripwireSeverity,
+          count: msg.count as number,
+        };
+        if (shouldPlayTripwireSound(os.tripwires.get(id), alarm)) playAlarmSound();
+        os.setTripwire(id, alarm);
+      } else if (msg.type === 'agentTripwireClear') {
+        os.setTripwire(msg.id as number, undefined);
       }
     };
     const unsubscribe = transport.onMessage(handler);

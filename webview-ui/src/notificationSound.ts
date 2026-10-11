@@ -1,4 +1,10 @@
 import {
+  ALARM_NOTE_1_HZ,
+  ALARM_NOTE_1_START_SEC,
+  ALARM_NOTE_2_HZ,
+  ALARM_NOTE_2_START_SEC,
+  ALARM_NOTE_DURATION_SEC,
+  ALARM_VOLUME,
   NOTIFICATION_NOTE_1_HZ,
   NOTIFICATION_NOTE_1_START_SEC,
   NOTIFICATION_NOTE_2_HZ,
@@ -22,7 +28,7 @@ let audioCtx: AudioContext | null = null;
  *  declared by testHooks.ts). Records BEFORE the soundEnabled gate so tests
  *  verify dispatch independent of user audio prefs. Gated on the e2e harness
  *  flag so this unbounded log never grows in a real session. */
-function recordSoundForTests(kind: 'done' | 'permission'): void {
+function recordSoundForTests(kind: 'done' | 'permission' | 'alarm'): void {
   if (!isE2E || typeof window === 'undefined') return;
   if (!window.__pixelAgentsTestHooks) window.__pixelAgentsTestHooks = {};
   if (!window.__pixelAgentsTestHooks.playedSounds) {
@@ -106,6 +112,36 @@ export async function playPermissionSound(): Promise<void> {
       PERMISSION_NOTE_2_START_SEC,
       PERMISSION_NOTE_DURATION_SEC,
       PERMISSION_VOLUME,
+    );
+  } catch {
+    // Audio may not be available
+  }
+}
+
+export async function playAlarmSound(): Promise<void> {
+  recordSoundForTests('alarm');
+  if (!soundEnabled) return;
+  try {
+    if (!audioCtx) {
+      audioCtx = new AudioContext();
+    }
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume();
+    }
+    // Two alternating tones: B5 -> F#5
+    playNote(
+      audioCtx,
+      ALARM_NOTE_1_HZ,
+      ALARM_NOTE_1_START_SEC,
+      ALARM_NOTE_DURATION_SEC,
+      ALARM_VOLUME,
+    );
+    playNote(
+      audioCtx,
+      ALARM_NOTE_2_HZ,
+      ALARM_NOTE_2_START_SEC,
+      ALARM_NOTE_DURATION_SEC,
+      ALARM_VOLUME,
     );
   } catch {
     // Audio may not be available

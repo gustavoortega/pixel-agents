@@ -32,19 +32,21 @@ function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
   } as AgentState;
 }
 
-/** Resend minus the title message, which every agent gets, so the tests below can
- *  assert the other messages without restating it each time. */
-function resendActivityWithoutTitles(
+/** Resend minus the title and tripwire messages, which every agent gets, so the tests
+ *  below can assert the other messages without restating them each time. */
+function resendActivityWithoutTitlesOrAlarms(
   sent: Array<Record<string, unknown>>,
   store: AgentStateStore,
 ): void {
   resendAgentActivity((msg) => {
-    if (msg.type !== 'agentSessionTitle') sent.push(msg);
+    if (msg.type !== 'agentSessionTitle' && !String(msg.type).startsWith('agentTripwire')) {
+      sent.push(msg);
+    }
   }, store);
 }
 
 describe('resendAgentActivity', () => {
-  it('sends messages in order: team info, tools, waiting, context, title', () => {
+  it('sends messages in order: team info, tools, waiting, context, title, tripwire', () => {
     const store = new AgentStateStore();
     store.set(
       1,
@@ -66,6 +68,7 @@ describe('resendAgentActivity', () => {
       'agentStatus',
       'agentContextUsage',
       'agentSessionTitle',
+      'agentTripwireClear',
     ]);
   });
 
@@ -80,7 +83,7 @@ describe('resendAgentActivity', () => {
       }),
     );
     const sent: Array<Record<string, unknown>> = [];
-    resendActivityWithoutTitles(sent, store);
+    resendActivityWithoutTitlesOrAlarms(sent, store);
 
     expect(sent).toHaveLength(1);
     expect(sent[0]).toEqual({
@@ -128,7 +131,7 @@ describe('resendAgentActivity', () => {
       }),
     );
     const sent: Array<Record<string, unknown>> = [];
-    resendActivityWithoutTitles(sent, store);
+    resendActivityWithoutTitlesOrAlarms(sent, store);
 
     const toolStarts = sent.filter((m) => m.type === 'agentToolStart');
     expect(toolStarts).toHaveLength(2); // unnamed + named, NOT promoted
@@ -161,7 +164,7 @@ describe('resendAgentActivity', () => {
     let store = new AgentStateStore();
     store.set(1, createTestAgent({ id: 1, teamName: 'my-team' }));
     let sent: Array<Record<string, unknown>> = [];
-    resendActivityWithoutTitles(sent, store);
+    resendActivityWithoutTitlesOrAlarms(sent, store);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'agentTeamInfo', id: 1, teamName: 'my-team' });
 
@@ -169,7 +172,7 @@ describe('resendAgentActivity', () => {
     store = new AgentStateStore();
     store.set(2, createTestAgent({ id: 2, agentName: 'worker-1', leadAgentId: 1 }));
     sent = [];
-    resendActivityWithoutTitles(sent, store);
+    resendActivityWithoutTitlesOrAlarms(sent, store);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'agentTeamInfo', id: 2, agentName: 'worker-1' });
 
@@ -177,7 +180,7 @@ describe('resendAgentActivity', () => {
     store = new AgentStateStore();
     store.set(3, createTestAgent({ id: 3, isTeamLead: true }));
     sent = [];
-    resendActivityWithoutTitles(sent, store);
+    resendActivityWithoutTitlesOrAlarms(sent, store);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'agentTeamInfo', id: 3, isTeamLead: true });
 
@@ -185,7 +188,7 @@ describe('resendAgentActivity', () => {
     store = new AgentStateStore();
     store.set(4, createTestAgent({ id: 4 }));
     sent = [];
-    resendActivityWithoutTitles(sent, store);
+    resendActivityWithoutTitlesOrAlarms(sent, store);
     expect(sent.filter((m) => m.type === 'agentTeamInfo')).toHaveLength(0);
   });
 
@@ -193,13 +196,13 @@ describe('resendAgentActivity', () => {
     let store = new AgentStateStore();
     store.set(1, createTestAgent({ id: 1, isWaiting: true }));
     let sent: Array<Record<string, unknown>> = [];
-    resendActivityWithoutTitles(sent, store);
+    resendActivityWithoutTitlesOrAlarms(sent, store);
     expect(sent).toEqual([{ type: 'agentStatus', id: 1, status: 'waiting' }]);
 
     store = new AgentStateStore();
     store.set(2, createTestAgent({ id: 2, isWaiting: false }));
     sent = [];
-    resendActivityWithoutTitles(sent, store);
+    resendActivityWithoutTitlesOrAlarms(sent, store);
     expect(sent).toHaveLength(0);
   });
 
@@ -207,7 +210,7 @@ describe('resendAgentActivity', () => {
     let store = new AgentStateStore();
     store.set(1, createTestAgent({ id: 1, contextTokens: 50_000, maxContextTokens: 200_000 }));
     let sent: Array<Record<string, unknown>> = [];
-    resendActivityWithoutTitles(sent, store);
+    resendActivityWithoutTitlesOrAlarms(sent, store);
     expect(sent).toEqual([
       { type: 'agentContextUsage', id: 1, contextTokens: 50_000, maxContextTokens: 200_000 },
     ]);
@@ -215,7 +218,7 @@ describe('resendAgentActivity', () => {
     store = new AgentStateStore();
     store.set(2, createTestAgent({ id: 2, contextTokens: 0, maxContextTokens: 200_000 }));
     sent = [];
-    resendActivityWithoutTitles(sent, store);
+    resendActivityWithoutTitlesOrAlarms(sent, store);
     expect(sent).toHaveLength(0);
   });
 
@@ -223,7 +226,7 @@ describe('resendAgentActivity', () => {
     // Empty store
     let store = new AgentStateStore();
     let sent: Array<Record<string, unknown>> = [];
-    resendActivityWithoutTitles(sent, store);
+    resendActivityWithoutTitlesOrAlarms(sent, store);
     expect(sent).toHaveLength(0);
 
     // Multiple agents with different activity
@@ -238,7 +241,7 @@ describe('resendAgentActivity', () => {
     );
     store.set(2, createTestAgent({ id: 2, isWaiting: true }));
     sent = [];
-    resendActivityWithoutTitles(sent, store);
+    resendActivityWithoutTitlesOrAlarms(sent, store);
     expect(sent).toHaveLength(2);
     expect(sent[0]).toMatchObject({ type: 'agentToolStart', id: 1 });
     expect(sent[1]).toMatchObject({ type: 'agentStatus', id: 2, status: 'waiting' });
@@ -255,5 +258,36 @@ describe('resendAgentActivity', () => {
     expect(titles).toHaveLength(2);
     expect(titles[0]).toEqual({ type: 'agentSessionTitle', id: 1, title: 'Fix login bug' });
     expect(titles[1]).toEqual({ type: 'agentSessionTitle', id: 2, title: undefined });
+  });
+
+  it('sends the alarm of an alarmed agent and a clear for one without', () => {
+    const store = new AgentStateStore();
+    store.set(
+      1,
+      createTestAgent({
+        id: 1,
+        tripwire: {
+          ruleId: 'dotenv',
+          ruleName: 'Dotenv file access',
+          severity: 'medium',
+          count: 3,
+        },
+      }),
+    );
+    store.set(2, createTestAgent({ id: 2 }));
+    const sent: Array<Record<string, unknown>> = [];
+    resendAgentActivity((msg) => sent.push(msg), store);
+
+    expect(sent.filter((m) => String(m.type).startsWith('agentTripwire'))).toEqual([
+      {
+        type: 'agentTripwire',
+        id: 1,
+        ruleId: 'dotenv',
+        ruleName: 'Dotenv file access',
+        severity: 'medium',
+        count: 3,
+      },
+      { type: 'agentTripwireClear', id: 2 },
+    ]);
   });
 });

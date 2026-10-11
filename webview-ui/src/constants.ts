@@ -56,6 +56,15 @@ export const BUBBLE_SITTING_OFFSET_PX = 10;
 export const BUBBLE_VERTICAL_OFFSET_PX = 24;
 export const FALLBACK_FLOOR_COLOR = '#808080';
 
+// ── Tripwire alarm ───────────────────────────────────────────
+export const TRIPWIRE_COLOR_HIGH = '#e53935';
+export const TRIPWIRE_COLOR_MEDIUM = '#ffb300';
+export const TRIPWIRE_COLOR_LOW = '#fdd835';
+/** Beacon flash period in ms. */
+export const TRIPWIRE_FLASH_PERIOD_MS = 700;
+/** Beacon radius in sprite pixels (scaled by zoom). */
+export const TRIPWIRE_BEACON_RADIUS_PX = 3;
+
 // ── Rendering - Overlay Colors (canvas, not CSS) ─────────────
 export const SEAT_OWN_COLOR = 'rgba(0, 127, 212, 0.35)';
 export const SEAT_AVAILABLE_COLOR = 'rgba(0, 200, 80, 0.35)';
@@ -184,6 +193,14 @@ export const PERMISSION_NOTE_1_START_SEC = 0;
 export const PERMISSION_NOTE_2_START_SEC = 0.12;
 export const PERMISSION_NOTE_DURATION_SEC = 0.15;
 export const PERMISSION_VOLUME = 0.12;
+
+// Tripwire alarm: two quick alternating tones, harsher than the chimes above
+export const ALARM_NOTE_1_HZ = 987.77; // B5
+export const ALARM_NOTE_2_HZ = 740; // F#5
+export const ALARM_NOTE_1_START_SEC = 0;
+export const ALARM_NOTE_2_START_SEC = 0.14;
+export const ALARM_NOTE_DURATION_SEC = 0.12;
+export const ALARM_VOLUME = 0.14;
 
 // ── Furniture Animation ─────────────────────────────────────
 export const FURNITURE_ANIM_INTERVAL_SEC = 0.2;

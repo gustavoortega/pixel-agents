@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentStateStore } from '../src/agentStateStore.js';
 import { HookEventHandler } from '../src/hookEventHandler.js';
@@ -855,6 +855,112 @@ describe('HookEventHandler', () => {
           expect(msg).toBeUndefined();
         }
       }
+    });
+  });
+});
+
+describe('HookEventHandler: tripwires', () => {
+  const HIGH_CMD = 'cat ~/.aws/credentials';
+  const MEDIUM_CMD = 'source .env';
+  let agents: AgentStateStore;
+  let broadcasts: Array<Record<string, unknown>>;
+  let handler: HookEventHandler;
+  let consoleSpies: Array<ReturnType<typeof vi.spyOn>>;
+
+  const tripwires = (): Array<Record<string, unknown>> =>
+    broadcasts.filter((m) => m.type === 'agentTripwire');
+
+  function preToolUse(toolName: string, toolInput: Record<string, unknown>): void {
+    handler.handleEvent('claude', {
+      hook_event_name: 'PreToolUse',
+      session_id: 'sess-1',
+      tool_name: toolName,
+      tool_input: toolInput,
+    });
+  }
+
+  beforeEach(() => {
+    agents = new AgentStateStore();
+    broadcasts = [];
+    agents.on('broadcast', (msg) => broadcasts.push(msg));
+    handler = new HookEventHandler(
+      agents,
+      new Map(),
+      new Map(),
+      claudeProvider,
+      new SessionRouter(),
+    );
+    agents.set(1, createTestAgent({ id: 1 }));
+    handler.registerAgent('sess-1', 1);
+    consoleSpies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => {}),
+    );
+  });
+
+  afterEach(() => {
+    for (const spy of consoleSpies) spy.mockRestore();
+  });
+
+  it('broadcasts one agentTripwire with only ids and labels, and logs neither input nor text', () => {
+    preToolUse('Bash', { command: `${HIGH_CMD} #SENTINEL` });
+
+    expect(tripwires()).toEqual([
+      {
+        type: 'agentTripwire',
+        id: 1,
+        ruleId: 'cloud-credentials',
+        ruleName: 'Cloud credentials access',
+        severity: 'high',
+        count: 1,
+      },
+    ]);
+    // Only the tripwire message and the logs are checked: the existing tool display
+    // is a separate channel with its own status text.
+    const leaked =
+      JSON.stringify(tripwires()) +
+      consoleSpies.map((spy) => JSON.stringify(spy.mock.calls)).join('');
+    expect(leaked).not.toContain('.aws');
+    expect(leaked).not.toContain('SENTINEL');
+    expect(JSON.stringify(consoleSpies[0].mock.calls)).toContain(
+      'Tripwire cloud-credentials agent 1',
+    );
+  });
+
+  it('stays silent for a benign call', () => {
+    preToolUse('Bash', { command: 'ls' });
+    expect(tripwires()).toEqual([]);
+    expect(agents.get(1)?.tripwire).toBeUndefined();
+  });
+
+  it('counts a second hit', () => {
+    preToolUse('Bash', { command: HIGH_CMD });
+    preToolUse('Bash', { command: HIGH_CMD });
+    expect(tripwires().map((m) => m.count)).toEqual([1, 2]);
+  });
+
+  it('checks a Task call even though the office draws nothing for it', () => {
+    preToolUse('Task', { subagent_type: 'general', command: HIGH_CMD });
+    expect(tripwires()).toHaveLength(1);
+    expect(broadcasts.some((m) => m.type === 'agentToolStart')).toBe(false);
+  });
+
+  it('keeps the high rule on screen when a medium hit follows, but counts it', () => {
+    preToolUse('Bash', { command: HIGH_CMD });
+    preToolUse('Bash', { command: MEDIUM_CMD });
+    expect(tripwires()[1]).toMatchObject({
+      ruleId: 'cloud-credentials',
+      severity: 'high',
+      count: 2,
+    });
+  });
+
+  it('switches to the high rule when it follows a medium one', () => {
+    preToolUse('Bash', { command: MEDIUM_CMD });
+    preToolUse('Bash', { command: HIGH_CMD });
+    expect(tripwires()[1]).toMatchObject({
+      ruleId: 'cloud-credentials',
+      severity: 'high',
+      count: 2,
     });
   });
 });

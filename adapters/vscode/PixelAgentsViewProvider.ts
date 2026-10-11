@@ -52,6 +52,8 @@ import {
   hookProviders,
 } from '../../server/src/providers/index.js';
 import { PixelAgentsServer } from '../../server/src/server.js';
+import { loadTripwireRules } from '../../server/src/tripwireConfig.js';
+import { ackTripwire } from '../../server/src/tripwires.js';
 import {
   getProjectDirPath,
   launchNewTerminal,
@@ -179,7 +181,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     });
 
     // Create shared runtime (owns timer Maps, scanners, hook handler, dismissal tracker)
-    this.runtime = new AgentRuntime(this.store, claudeProvider);
+    this.runtime = new AgentRuntime(this.store, claudeProvider, loadTripwireRules());
 
     this.initServer();
   }
@@ -473,6 +475,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       } else if (message.type === 'saveLayout') {
         this.layoutWatcher?.markOwnWrite();
         writeLayoutToFile(message.layout as Record<string, unknown>);
+      } else if (message.type === 'ackTripwire') {
+        if (typeof message.id === 'number' && typeof message.count === 'number') {
+          const agent = this.store.get(message.id);
+          const reply = agent ? ackTripwire(agent, message.count) : null;
+          if (reply) this.store.broadcast(reply);
+        }
       } else if (message.type === 'setSoundEnabled') {
         this.adapter.setSetting(GLOBAL_KEY_SOUND_ENABLED, message.enabled);
       } else if (message.type === 'setLastSeenVersion') {

@@ -1,6 +1,7 @@
 import type { AgentStateStore } from './agentStateStore.js';
 import { derivedTitle } from './sessionTitle.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
+import { tripwireResendMessage } from './tripwires.js';
 
 /**
  * Replay an agent's active state to a connecting client.
@@ -12,6 +13,7 @@ import { hasPromotedBackgroundAgent } from './teamUtils.js';
  * 4. Waiting status
  * 5. Context usage
  * 6. Session title
+ * 7. Tripwire alarm
  */
 export function resendAgentActivity(
   send: (message: Record<string, unknown>) => void,
@@ -90,5 +92,9 @@ export function resendAgentActivity(
     // 6. Session title. Sent for untitled agents too (title omitted): a client that
     // was offline when a title was cleared would otherwise keep showing the stale one.
     send({ type: 'agentSessionTitle', id, title: derivedTitle(agent) });
+
+    // 7. Tripwire alarm, or a clear for agents without one: a client that was offline
+    // during an ack would otherwise keep an alarm the user already dismissed.
+    send(tripwireResendMessage(agent));
   }
 }

@@ -1,3 +1,5 @@
+import { TRIPWIRE_COLOR_HIGH, TRIPWIRE_COLOR_LOW, TRIPWIRE_COLOR_MEDIUM } from '../constants.js';
+
 /** Map status prefixes back to tool names for animation selection */
 const STATUS_TO_TOOL: Record<string, string> = {
   Reading: 'Read',
@@ -22,6 +24,36 @@ export function extractToolName(status: string): string | null {
 /** Text under the activity line: the session title, else the folder, else nothing. */
 export function agentLabel(sessionTitle?: string, folderName?: string): string | null {
   return sessionTitle || folderName || null;
+}
+
+export type TripwireSeverity = 'high' | 'medium' | 'low';
+
+export interface TripwireAlarm {
+  ruleName: string;
+  severity: TripwireSeverity;
+  count: number;
+}
+
+const TRIPWIRE_SEVERITY_RANK: Record<TripwireSeverity, number> = { low: 1, medium: 2, high: 3 };
+
+/** Beacon and overlay color for a severity. */
+export function tripwireColor(severity: TripwireSeverity): string {
+  if (severity === 'high') return TRIPWIRE_COLOR_HIGH;
+  if (severity === 'medium') return TRIPWIRE_COLOR_MEDIUM;
+  return TRIPWIRE_COLOR_LOW;
+}
+
+/** Overlay line for an agent's alarm; the count shows only once there is more than one hit. */
+export function tripwireLabel(ruleName: string, count: number): string {
+  return count > 1 ? `\u26A0 ${ruleName} \u00D7${count}` : `\u26A0 ${ruleName}`;
+}
+
+/** The alarm sound plays for the first hit since an ack or a severity escalation, never on a plain count bump. */
+export function shouldPlayTripwireSound(
+  prev: TripwireAlarm | undefined,
+  next: { severity: TripwireSeverity },
+): boolean {
+  return !prev || TRIPWIRE_SEVERITY_RANK[next.severity] > TRIPWIRE_SEVERITY_RANK[prev.severity];
 }
 
 // ── Provider capabilities (tool taxonomy for rendering decisions) ────────────

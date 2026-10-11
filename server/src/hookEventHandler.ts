@@ -7,6 +7,8 @@ import type { SessionRouter } from './sessionRouter.js';
 import { getInlineTeammates, hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import { notifyBackgroundAgentCompleted } from './transcriptParser.js';
+import { DEFAULT_TRIPWIRE_RULES } from './tripwireDefaults.js';
+import { applyTripwireHit, evaluateTripwires, type TripwireRule } from './tripwires.js';
 import type { AgentState } from './types.js';
 
 const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
@@ -69,6 +71,7 @@ export class HookEventHandler {
     private provider: HookProvider,
     private sessionRouter: SessionRouter,
     private watchAllSessionsRef?: { current: boolean },
+    private tripwireRules: readonly TripwireRule[] = DEFAULT_TRIPWIRE_RULES,
   ) {
     if (provider.protocolVersion !== HookEventHandler.SUPPORTED_PROTOCOL_VERSION) {
       console.warn(
@@ -321,6 +324,11 @@ export class HookEventHandler {
         `[Pixel Agents] Hook: Agent ${agentId} - ${eventName} (session=${event.session_id.slice(0, 8)}...)`,
       );
 
+    // Tripwires run before any display skip below (Task/Agent, inline teammates), so
+    // tool calls the office does not draw are still checked. Alert-only: the hook
+    // script ignores the response, so there is nothing to deny with.
+    if (normEvent.kind === 'toolStart') this.checkTripwires(normEvent, agent, agentId);
+
     // Dispatch on normalized AgentEvent.kind, not raw hook event names.
     // The TeammateIdle / TaskCompleted hooks normalize to `subagentTurnEnd` -- both
     // retain their raw payload for the team-routing handler's identity extraction.
@@ -360,6 +368,21 @@ export class HookEventHandler {
         // Not yet consumed by the office visualization. Silently drop.
         return;
     }
+  }
+
+  /**
+   * Check a tool call against the tripwire rules and broadcast the alarm. Only the
+   * rule id is logged: tool input can hold secrets and never leaves this function.
+   */
+  private checkTripwires(
+    normEvent: Extract<AgentEvent, { kind: 'toolStart' }>,
+    agent: AgentState,
+    agentId: number,
+  ): void {
+    const rule = evaluateTripwires(this.tripwireRules, normEvent.toolName, normEvent.input);
+    if (!rule) return;
+    console.log(`[Pixel Agents] Tripwire ${rule.id} agent ${agentId}`);
+    this.agents.broadcast(applyTripwireHit(agent, rule));
   }
 
   /**

@@ -12,6 +12,8 @@ import {
 import { getHooksEnabled, readConfig, setHooksEnabled } from '../src/configPersistence.js';
 import { FileStateAdapter } from '../src/fileStateAdapter.js';
 import { CLAUDE_HOOK_EVENTS } from '../src/providers/hook/claude/constants.js';
+import { DEFAULT_TRIPWIRE_RULES } from '../src/tripwireDefaults.js';
+import { applyTripwireHit } from '../src/tripwires.js';
 import type { AgentState } from '../src/types.js';
 
 /** Let the setHooksEnabled dispatch's async chain (side effect →
@@ -601,5 +603,57 @@ describe('clientMessageHandler: saveAgentSeats palette sync', () => {
       ctx,
     );
     expect(store.get(1)?.palette).toBe(7);
+  });
+});
+
+describe('clientMessageHandler: ackTripwire', () => {
+  let store: AgentStateStore;
+  let socketA: Array<Record<string, unknown>>;
+  let socketB: Array<Record<string, unknown>>;
+  const alarm = { ruleId: 'dotenv', ruleName: 'Dotenv file access', severity: 'medium' } as const;
+
+  const ack = (id: number, count: number): void =>
+    handleClientMessage({ type: 'ackTripwire', id, count }, () => {}, { store, cache: null });
+
+  beforeEach(() => {
+    store = new AgentStateStore();
+    socketA = [];
+    socketB = [];
+    // Each open socket subscribes to the store's broadcasts (see httpServer).
+    store.on('broadcast', (m) => socketA.push(m));
+    store.on('broadcast', (m) => socketB.push(m));
+  });
+
+  it('clears the alarm and tells every socket when the ack covers the count', () => {
+    store.set(1, createTestAgent({ id: 1, tripwire: { ...alarm, count: 2 } }));
+    ack(1, 2);
+
+    expect(store.get(1)?.tripwire).toBeUndefined();
+    expect(socketA).toEqual([{ type: 'agentTripwireClear', id: 1 }]);
+    expect(socketB).toEqual([{ type: 'agentTripwireClear', id: 1 }]);
+
+    // The next hit starts a fresh count.
+    const rule = DEFAULT_TRIPWIRE_RULES.find((r) => r.id === 'dotenv')!;
+    expect(applyTripwireHit(store.get(1)!, rule)).toMatchObject({ count: 1 });
+  });
+
+  it('does not clear on a stale ack and re-sends the current state', () => {
+    store.set(1, createTestAgent({ id: 1, tripwire: { ...alarm, count: 3 } }));
+    ack(1, 2);
+
+    expect(store.get(1)?.tripwire?.count).toBe(3);
+    expect(socketA).toEqual([{ type: 'agentTripwire', id: 1, ...alarm, count: 3 }]);
+    expect(socketB).toHaveLength(1);
+  });
+
+  it('ignores an unknown agent, an agent without an alarm and a malformed ack', () => {
+    store.set(1, createTestAgent({ id: 1 }));
+    expect(() => ack(99, 1)).not.toThrow();
+    ack(1, 1);
+    handleClientMessage({ type: 'ackTripwire', id: '1', count: 'x' }, () => {}, {
+      store,
+      cache: null,
+    });
+    expect(socketA).toEqual([]);
   });
 });
