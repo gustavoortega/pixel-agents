@@ -1,3 +1,4 @@
+import { ART_DENSITY } from '../../../../core/src/assets/constants.js';
 import type { SpriteData } from '../types.js';
 
 // DOM-free on purpose: the node-side tests import this directly.
@@ -13,41 +14,43 @@ const tintedOutlineCache = new WeakMap<SpriteData, Map<string, SpriteData>>();
 
 const SELECTION_OUTLINE_COLOR = '#FFFFFF';
 
-/** Build a 1px outline SpriteData of `color` (2px larger in each dimension) */
+/**
+ * Outline of `color` ART_DENSITY art px thick (one world px), the grid grown by that on every
+ * side. A clear pixel is outlined when an opaque one lies within ART_DENSITY straight up, down,
+ * left or right of it: a cross, not a disc, so on upscaled 1x art it is exactly the old 1 px
+ * 4-neighbour outline, corners included.
+ */
 function buildOutline(sprite: SpriteData, color: string): SpriteData {
+  const t = ART_DENSITY;
   const rows = sprite.length;
   const cols = sprite[0].length;
-  // Expanded grid: +2 in each dimension for 1px border
   const outline: string[][] = [];
-  for (let r = 0; r < rows + 2; r++) {
-    outline.push(new Array<string>(cols + 2).fill(''));
+  for (let r = 0; r < rows + 2 * t; r++) {
+    outline.push(new Array<string>(cols + 2 * t).fill(''));
   }
-
-  // For each opaque pixel, mark its 4 cardinal neighbors with the outline color
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       if (sprite[r][c] === '') continue;
-      const er = r + 1;
-      const ec = c + 1;
-      if (outline[er - 1][ec] === '') outline[er - 1][ec] = color;
-      if (outline[er + 1][ec] === '') outline[er + 1][ec] = color;
-      if (outline[er][ec - 1] === '') outline[er][ec - 1] = color;
-      if (outline[er][ec + 1] === '') outline[er][ec + 1] = color;
+      const er = r + t;
+      const ec = c + t;
+      for (let d = 1; d <= t; d++) {
+        outline[er - d][ec] = color;
+        outline[er + d][ec] = color;
+        outline[er][ec - d] = color;
+        outline[er][ec + d] = color;
+      }
     }
   }
-
-  // Clear pixels that overlap with original opaque pixels
+  // Clear what the sprite itself covers
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      if (sprite[r][c] !== '') {
-        outline[r + 1][c + 1] = '';
-      }
+      if (sprite[r][c] !== '') outline[r + t][c + t] = '';
     }
   }
   return outline;
 }
 
-/** Generate a 1px white outline SpriteData (2px larger in each dimension) */
+/** White outline, one world px thick around the sprite (see buildOutline). */
 export function getOutlineSprite(sprite: SpriteData): SpriteData {
   const cached = outlineCache.get(sprite);
   if (cached) return cached;

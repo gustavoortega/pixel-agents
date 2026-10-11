@@ -3,8 +3,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import {
   CAMERA_FOLLOW_LERP,
   CAMERA_FOLLOW_SNAP_THRESHOLD,
-  ZOOM_MAX,
-  ZOOM_MIN,
   ZOOM_SCROLL_THRESHOLD,
 } from '../../constants.js';
 import { unlockAudio } from '../../notificationSound.js';
@@ -15,6 +13,7 @@ import {
   fitTarget,
   panAfterZoom,
   roomsOf,
+  stepZoom,
 } from '../camera.js';
 import { getColorizedSprite } from '../colorize.js';
 import { canPlaceFurniture, getWallPlacementRow } from '../editor/editorActions.js';
@@ -221,11 +220,7 @@ export function OfficeCanvas({
               );
               const pickedColor = editorState.pickedFurnitureColor;
               editorRender.ghostSprite = pickedColor
-                ? getColorizedSprite(
-                    `ghost-${editorState.selectedFurnitureType}-${pickedColor.h}-${pickedColor.s}-${pickedColor.b}-${pickedColor.c}-${pickedColor.colorize ?? ''}`,
-                    entry.sprite,
-                    pickedColor,
-                  )
+                ? getColorizedSprite(entry.sprite, pickedColor)
                 : entry.sprite;
               editorRender.ghostRow = placementRow;
               editorRender.ghostMirrored =
@@ -948,9 +943,9 @@ export function OfficeCanvas({
         // Accumulate scroll delta, step zoom when threshold crossed
         zoomAccumulatorRef.current += e.deltaY;
         if (Math.abs(zoomAccumulatorRef.current) >= ZOOM_SCROLL_THRESHOLD) {
-          const delta = zoomAccumulatorRef.current < 0 ? 1 : -1;
+          const dir = zoomAccumulatorRef.current < 0 ? 1 : -1;
           zoomAccumulatorRef.current = 0;
-          const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom + delta));
+          const newZoom = stepZoom(zoom, dir);
           if (newZoom !== zoom) {
             // The wheel zooms toward the cursor: the world point under it stays under it.
             const rect = canvasRef.current?.getBoundingClientRect();

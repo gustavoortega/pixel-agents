@@ -36,6 +36,25 @@ export function mapOffset(
   };
 }
 
+/** Where the map sits on the canvas and how big a world px is there. */
+export interface DeviceView {
+  offsetX: number;
+  offsetY: number;
+  zoom: number;
+}
+
+/**
+ * Device px of a world point. The one snapping rule for the canvas and the DOM overlays (which
+ * divide by dpr): scale first, round once. World positions can be half px (one art px at
+ * ART_DENSITY 2), and rounding before scaling would throw that half away at every zoom.
+ */
+export function worldToDevice(view: DeviceView, x: number, y: number): { x: number; y: number } {
+  return {
+    x: view.offsetX + Math.round(x * view.zoom),
+    y: view.offsetY + Math.round(y * view.zoom),
+  };
+}
+
 /** Projects world points into CSS pixels within the overlay container that
  *  sits on top of the canvas. */
 export interface OverlayProjection {
@@ -67,9 +86,10 @@ export function overlayProjection(
     pan.x,
     pan.y,
   );
+  const view = { offsetX, offsetY, zoom };
   return {
-    toScreenX: (worldX) => (offsetX + worldX * zoom) / dpr,
-    toScreenY: (worldY) => (offsetY + worldY * zoom) / dpr,
+    toScreenX: (worldX) => worldToDevice(view, worldX, 0).x / dpr,
+    toScreenY: (worldY) => worldToDevice(view, 0, worldY).y / dpr,
     viewportWorldWidth: canvasW / zoom,
     viewportWorldHeight: canvasH / zoom,
     toWorldLength: (cssPx) => (cssPx * dpr) / zoom,

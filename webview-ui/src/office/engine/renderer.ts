@@ -81,7 +81,7 @@ import { areaSignRect } from '../labelLayout.js';
 import type { GlowFixtures, GlowSource, Lighting } from '../lighting.js';
 import { glowDraws } from '../lighting.js';
 import { monitorLook, monitorTick } from '../monitor.js';
-import { mapOffset } from '../projection.js';
+import { mapOffset, worldToDevice } from '../projection.js';
 import { seatedBubbleOffsetPx, seatedDrawOffsetPx } from '../seatDraw.js';
 import { characterLayerZ, shadowSprite } from '../shadow.js';
 import type { Shaft } from '../shafts.js';
@@ -212,7 +212,7 @@ export interface DeskPropDraw {
  * Per junction (cols+1 × rows+1 grid of corners), we gather every
  * (variant, palette) pair from the up-to-4 adjacent tiles. Each pair becomes
  * one local "layer" drawn in ascending `order`, so the highest-order carpet
- * visually wins at overlaps. Sprite anchor: each 16×16 junction sprite is
+ * visually wins at overlaps. Sprite anchor: each one-tile junction sprite is
  * centered on the corner — drawn at (offsetX + jx*s - halfS, offsetY + jy*s - halfS).
  *
  * @internal
@@ -488,6 +488,7 @@ export function renderScene(
   deskProps: readonly DeskPropDraw[] = [],
 ): void {
   const drawables: ZDrawable[] = [];
+  const view = { offsetX, offsetY, zoom };
 
   // Furniture
   for (const f of furniture) {
@@ -589,8 +590,9 @@ export function renderScene(
     {
       const shadowCached = getCachedSprite(shadowSprite(ch.isSubagent), zoom);
       const sit = seatedDrawOffsetPx(ch);
-      const sx = Math.round(offsetX + ch.x * zoom - shadowCached.width / 2);
-      const sy = Math.round(offsetY + (ch.y + sit) * zoom - shadowCached.height / 2);
+      const at = worldToDevice(view, ch.x, ch.y + sit);
+      const sx = at.x - Math.floor(shadowCached.width / 2);
+      const sy = at.y - Math.floor(shadowCached.height / 2);
       drawables.push({
         zY: layerZ.shadow,
         draw: (c) => {
@@ -632,7 +634,8 @@ export function renderScene(
       for (const kind of flair.accessories) {
         const placement = accessoryPlacement(kind, ch.dir, frame, tier);
         const accCached = getCachedSprite(placement.sprite, zoom);
-        const accY = drawY + placement.dy * zoom;
+        // dy is world px and may be a half (one art px): round after scaling
+        const accY = drawY + Math.round(placement.dy * zoom);
         drawables.push({
           zY: accessoryZ(kind, ch.dir, charZY),
           draw: (c) => {
@@ -653,7 +656,11 @@ export function renderScene(
           c.save();
           for (const s of ANCHORS.sparkles) {
             c.globalAlpha = sparkleAlpha(nowMs, s.phaseMs);
-            c.drawImage(sparkleCached, drawX + s.dx * zoom, drawY + s.dy * zoom);
+            c.drawImage(
+              sparkleCached,
+              drawX + Math.round(s.dx * zoom),
+              drawY + Math.round(s.dy * zoom),
+            );
           }
           c.restore();
         },
@@ -671,8 +678,8 @@ export function renderScene(
             : null;
       if (held) {
         const heldCached = getCachedSprite(held.sprite, zoom);
-        const hx = drawX + held.dx * zoom;
-        const hy = drawY + held.dy * zoom;
+        const hx = drawX + Math.round(held.dx * zoom);
+        const hy = drawY + Math.round(held.dy * zoom);
         drawables.push({
           zY: charZY + ACCESSORY_FRONT_Z_OFFSET,
           draw: (c) => {
@@ -707,21 +714,19 @@ export function renderScene(
       const sprite = getCompanionSprite(comp.kind, comp.set, comp.frame, comp.facingRight);
       const cached = getCachedSprite(sprite, zoom);
       const hover = companionHoverOffsetPx(comp.kind, look.nowMs / 1000);
-      const drawX = Math.round(offsetX + comp.x * zoom - cached.width / 2);
       // Feet a touch above the tile's bottom edge; flying kinds hover above that
       const feetY = comp.y + TILE_SIZE / 2 - COMPANION_FEET_INSET_PX + hover;
-      const drawY = Math.round(offsetY + feetY * zoom - cached.height);
+      const feet = worldToDevice(view, comp.x, feetY);
+      const drawX = feet.x - Math.floor(cached.width / 2);
+      const drawY = feet.y - cached.height;
       // On a desk it sorts just in front of the desk, or the desk top would hide it.
       const compZY =
         comp.deskZY !== null ? comp.deskZY + COMPANION_DESK_Z_OFFSET : comp.y + TILE_SIZE / 2;
       // Shadow stays on the ground under a flying companion, not under its hover height.
       const shadowCached = getCachedSprite(shadowSprite(true), zoom);
-      const shX = Math.round(offsetX + comp.x * zoom - shadowCached.width / 2);
-      const shY = Math.round(
-        offsetY +
-          (comp.y + TILE_SIZE / 2 - COMPANION_FEET_INSET_PX) * zoom -
-          shadowCached.height / 2,
-      );
+      const ground = worldToDevice(view, comp.x, comp.y + TILE_SIZE / 2 - COMPANION_FEET_INSET_PX);
+      const shX = ground.x - Math.floor(shadowCached.width / 2);
+      const shY = ground.y - Math.floor(shadowCached.height / 2);
       drawables.push({
         zY: characterLayerZ(compZY).shadow,
         draw: (c) => {
@@ -744,9 +749,10 @@ export function renderScene(
     if (!spriteData) continue;
 
     const cached = getCachedSprite(spriteData, zoom);
-    // Anchor at bottom-center at (pet.x, pet.y) — round to integer device pixels
-    const drawX = Math.round(offsetX + pet.x * zoom - cached.width / 2);
-    const drawY = Math.round(offsetY + pet.y * zoom - cached.height);
+    // Anchor at bottom-center at (pet.x, pet.y)
+    const feet = worldToDevice(view, pet.x, pet.y);
+    const drawX = feet.x - Math.floor(cached.width / 2);
+    const drawY = feet.y - cached.height;
 
     // Z-sort key: matches the chair/character "row boundary" formula.
     // pet.y is the pixel center, so + TILE_SIZE/2 lifts us to the row's bottom edge.

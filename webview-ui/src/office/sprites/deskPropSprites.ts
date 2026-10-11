@@ -1,3 +1,5 @@
+import { upscaleSprite } from '../../../../core/src/assets/artDensity.js';
+import { ART_DENSITY } from '../../../../core/src/assets/constants.js';
 import type { DeskPropKind } from '../flair/deskProps.js';
 import type { SpriteData } from '../types.js';
 
@@ -18,8 +20,12 @@ const PALETTE: Record<string, string> = {
   O: '#c8962a',
 };
 
+/** Authored at 1x, one character per world px; upscaled to ART_DENSITY like legacy files. */
 function build(rows: string[]): SpriteData {
-  return rows.map((r) => [...r].map((ch) => PALETTE[ch] ?? ''));
+  return upscaleSprite(
+    rows.map((r) => [...r].map((ch) => PALETTE[ch] ?? '')),
+    ART_DENSITY,
+  );
 }
 
 const SPRITES: Record<DeskPropKind, SpriteData> = {

@@ -1,4 +1,6 @@
+import { ART_DENSITY } from '../../../core/src/assets/constants.js';
 import { ZOOM_MAX, ZOOM_MIN } from '../constants.js';
+import { stepZoom } from '../office/camera.js';
 import { Button } from './ui/Button.js';
 
 interface ZoomControlsProps {
@@ -24,12 +26,13 @@ export function ZoomControls({ zoom, onZoomChange, fitActive, onFit }: ZoomContr
           title="Zoom level"
           data-testid="zoom-level"
         >
-          {zoom}x
+          {/* Art px per device px: the ladder reads 0.5x, 1x, 2x, ... 10x */}
+          {zoom / ART_DENSITY}x
         </div>
         <Button
           size="icon_lg"
           variant="brand"
-          onClick={() => onZoomChange(zoom + 1)}
+          onClick={() => onZoomChange(stepZoom(zoom, 1))}
           disabled={maxDisabled}
           title="Zoom in (Ctrl+Scroll)"
         >
@@ -57,7 +60,7 @@ export function ZoomControls({ zoom, onZoomChange, fitActive, onFit }: ZoomContr
         <Button
           size="icon_lg"
           variant="brand"
-          onClick={() => onZoomChange(zoom - 1)}
+          onClick={() => onZoomChange(stepZoom(zoom, -1))}
           disabled={minDisabled}
           title="Zoom out (Ctrl+Scroll)"
         >

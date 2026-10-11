@@ -12,9 +12,9 @@ import * as path from 'path';
 import {
   decodeCharacterPng,
   decodeFloorPng,
+  decodeFurniturePng,
   parseCarpetPng,
   parseWallPng,
-  pngToSpriteData,
 } from './pngDecoder.js';
 import type { CatalogEntry, CharacterDirectionSprites } from './types.js';
 
@@ -80,7 +80,7 @@ export function decodeAllFurniture(
       const filePath = path.join(assetsDir, entry.furniturePath);
       if (!fs.existsSync(filePath)) continue;
       const pngBuffer = fs.readFileSync(filePath);
-      sprites[entry.id] = pngToSpriteData(pngBuffer, entry.width, entry.height);
+      sprites[entry.id] = decodeFurniturePng(pngBuffer, entry.id, entry.width, entry.height);
     } catch (err) {
       console.warn(`[decodeAssets] Failed to decode ${entry.id}:`, err);
     }

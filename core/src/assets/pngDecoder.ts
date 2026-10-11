@@ -7,31 +7,17 @@
 
 import { PNG } from 'pngjs';
 
-import { rgbaToHex } from './colorUtils.js';
+import type { RgbaImage } from './artDensity.js';
 import {
-  CARPET_GRID_COLS,
-  CARPET_MARCHING_SQUARES_COUNT,
-  CARPET_TILE_SIZE,
-  CHAR_FRAME_H,
-  CHAR_FRAME_W,
-  CHAR_FRAMES_PER_ROW,
-  CHAR_IDLE_FRAMES,
-  CHAR_IDLE_ROW,
-  CHARACTER_DIRECTIONS,
-  FLOOR_TILE_SIZE,
-  PET_FRAME_H,
-  PET_FRAME_W_LARGE,
-  PET_FRAME_W_SMALL,
-  PET_IDLE_FRAMES_VERT,
-  PET_IMAGE_HEIGHT,
-  PET_IMAGE_WIDTH,
-  PET_WALK_FRAMES_HORIZ,
-  PET_WALK_FRAMES_VERT,
-  WALL_BITMASK_COUNT,
-  WALL_GRID_COLS,
-  WALL_PIECE_HEIGHT,
-  WALL_PIECE_WIDTH,
-} from './constants.js';
+  decodeCarpetSet,
+  decodeCharacterSheet,
+  decodeFloorTile,
+  decodeFurnitureImage,
+  decodePetSheet,
+  decodeWallSet,
+  emptyArtSprite,
+} from './artDensity.js';
+import { FLOOR_TILE_SIZE, PET_FRAME_H, PET_FRAME_W_LARGE, PET_FRAME_W_SMALL } from './constants.js';
 import type { CharacterDirectionSprites, PetSpriteFrames } from './types.js';
 
 // ── Sprite decoding ──────────────────────────────────────────
@@ -59,257 +45,76 @@ function sanitizePngBuffer(buf: Buffer): Buffer {
   return buf;
 }
 
-/**
- * Convert a PNG buffer to SpriteData (2D array of hex color strings).
- * '' = transparent, '#RRGGBB' = opaque, '#RRGGBBAA' = semi-transparent.
- */
-export function pngToSpriteData(pngBuffer: Buffer, width: number, height: number): string[][] {
-  try {
-    const png = PNG.sync.read(sanitizePngBuffer(pngBuffer));
-
-    if (png.width !== width || png.height !== height) {
-      console.warn(
-        `PNG dimensions mismatch: expected ${width}×${height}, got ${png.width}×${png.height}`,
-      );
-    }
-
-    const sprite: string[][] = [];
-    const data = png.data;
-
-    for (let y = 0; y < height; y++) {
-      const row: string[] = [];
-      for (let x = 0; x < width; x++) {
-        const pixelIndex = (y * png.width + x) * 4;
-        const r = data[pixelIndex];
-        const g = data[pixelIndex + 1];
-        const b = data[pixelIndex + 2];
-        const a = data[pixelIndex + 3];
-        row.push(rgbaToHex(r, g, b, a));
-      }
-      sprite.push(row);
-    }
-
-    return sprite;
-  } catch (err) {
-    console.warn(`Failed to parse PNG: ${err instanceof Error ? err.message : err}`);
-    const sprite: string[][] = [];
-    for (let y = 0; y < height; y++) {
-      sprite.push(new Array(width).fill(''));
-    }
-    return sprite;
-  }
-}
-
-/**
- * Parse a single wall PNG (64×128, 4×4 grid of 16×32 pieces) into 16 bitmask sprites.
- * Piece at bitmask M: col = M % 4, row = floor(M / 4).
- */
-export function parseWallPng(pngBuffer: Buffer): string[][][] {
+function readPng(pngBuffer: Buffer): RgbaImage {
   const png = PNG.sync.read(sanitizePngBuffer(pngBuffer));
-  const sprites: string[][][] = [];
-  for (let mask = 0; mask < WALL_BITMASK_COUNT; mask++) {
-    const ox = (mask % WALL_GRID_COLS) * WALL_PIECE_WIDTH;
-    const oy = Math.floor(mask / WALL_GRID_COLS) * WALL_PIECE_HEIGHT;
-    const sprite: string[][] = [];
-    for (let r = 0; r < WALL_PIECE_HEIGHT; r++) {
-      const row: string[] = [];
-      for (let c = 0; c < WALL_PIECE_WIDTH; c++) {
-        const idx = ((oy + r) * png.width + (ox + c)) * 4;
-        const rv = png.data[idx];
-        const gv = png.data[idx + 1];
-        const bv = png.data[idx + 2];
-        const av = png.data[idx + 3];
-        row.push(rgbaToHex(rv, gv, bv, av));
-      }
-      sprite.push(row);
-    }
-    sprites.push(sprite);
-  }
-  return sprites;
+  return { width: png.width, height: png.height, data: png.data };
 }
 
 /**
- * Parse a single carpet PNG (64×64, 4×4 grid of 16×16 pieces) into 16
- * marching-squares sprites. The piece at case N is located at
- * col = N % 4, row = floor(N / 4); piece 0 (empty junction) is included
- * but the renderer skips it.
- *
- * Returns sprites[msCase][row][col] of hex strings. Pixel encoding matches
- * the floor and wall convention: '' = transparent, '#RRGGBB' = opaque,
- * '#RRGGBBAA' = semi-transparent.
+ * Decode a furniture PNG into SpriteData at ART_DENSITY. `width`/`height` are the manifest's
+ * WORLD px; a PNG at neither 1x nor ART_DENSITY of them throws an error naming `id`.
  */
+export function decodeFurniturePng(
+  pngBuffer: Buffer,
+  id: string,
+  width: number,
+  height: number,
+): string[][] {
+  return decodeFurnitureImage(readPng(pngBuffer), id, width, height);
+}
+
+/** Decode a wall set PNG (4x4 grid of pieces, 1x or ART_DENSITY) into 16 bitmask sprites. */
+export function parseWallPng(pngBuffer: Buffer): string[][][] {
+  return decodeWallSet(readPng(pngBuffer));
+}
+
+/** Decode a carpet PNG (4x4 grid of marching-squares pieces, 1x or ART_DENSITY) into 16 sprites;
+ *  case 0 (empty junction) is included but the renderer skips it. */
 export function parseCarpetPng(pngBuffer: Buffer): string[][][] {
-  const png = PNG.sync.read(pngBuffer);
-  const sprites: string[][][] = [];
-  for (let msCase = 0; msCase < CARPET_MARCHING_SQUARES_COUNT; msCase++) {
-    const ox = (msCase % CARPET_GRID_COLS) * CARPET_TILE_SIZE;
-    const oy = Math.floor(msCase / CARPET_GRID_COLS) * CARPET_TILE_SIZE;
-    const sprite: string[][] = [];
-    for (let r = 0; r < CARPET_TILE_SIZE; r++) {
-      const row: string[] = [];
-      for (let c = 0; c < CARPET_TILE_SIZE; c++) {
-        const idx = ((oy + r) * png.width + (ox + c)) * 4;
-        const rv = png.data[idx];
-        const gv = png.data[idx + 1];
-        const bv = png.data[idx + 2];
-        const av = png.data[idx + 3];
-        row.push(rgbaToHex(rv, gv, bv, av));
-      }
-      sprite.push(row);
-    }
-    sprites.push(sprite);
-  }
-  return sprites;
+  return decodeCarpetSet(readPng(pngBuffer));
 }
 
 /**
- * Decode a single character PNG (112×96, or 112×128 with the idle row) into direction-keyed
- * frame arrays. Rows 0-2 are down, up, right × 7 frames (16×32 each). The optional 4th row holds
- * the 4 front-view idle poses; they are appended to `down` as frames 7..10, so the wire shape
- * (`down`, `up`, `right`: arrays of frames) is unchanged and a sheet without the row decodes as before.
+ * Decode a character sheet (7 frames per row; rows down, up, right and the optional front-view
+ * idle row, appended to `down` as frames 7..10). A sheet without the idle row decodes as before.
  */
 export function decodeCharacterPng(pngBuffer: Buffer): CharacterDirectionSprites {
-  const png = PNG.sync.read(sanitizePngBuffer(pngBuffer));
-  const charData: CharacterDirectionSprites = { down: [], up: [], right: [] };
-
-  const readFrame = (rowOffsetY: number, frameOffsetX: number): string[][] => {
-    const sprite: string[][] = [];
-    for (let y = 0; y < CHAR_FRAME_H; y++) {
-      const row: string[] = [];
-      for (let x = 0; x < CHAR_FRAME_W; x++) {
-        const idx = ((rowOffsetY + y) * png.width + (frameOffsetX + x)) * 4;
-        const r = png.data[idx];
-        const g = png.data[idx + 1];
-        const b = png.data[idx + 2];
-        const a = png.data[idx + 3];
-        row.push(rgbaToHex(r, g, b, a));
-      }
-      sprite.push(row);
-    }
-    return sprite;
-  };
-
-  for (let dirIdx = 0; dirIdx < CHARACTER_DIRECTIONS.length; dirIdx++) {
-    const dir = CHARACTER_DIRECTIONS[dirIdx];
-    const frames: string[][][] = [];
-    for (let f = 0; f < CHAR_FRAMES_PER_ROW; f++) {
-      frames.push(readFrame(dirIdx * CHAR_FRAME_H, f * CHAR_FRAME_W));
-    }
-    charData[dir] = frames;
-  }
-
-  if (png.height >= (CHAR_IDLE_ROW + 1) * CHAR_FRAME_H) {
-    for (let f = 0; f < CHAR_IDLE_FRAMES; f++) {
-      charData.down.push(readFrame(CHAR_IDLE_ROW * CHAR_FRAME_H, f * CHAR_FRAME_W));
-    }
-  }
-
-  return charData;
+  return decodeCharacterSheet(readPng(pngBuffer));
 }
 
-/**
- * Decode a single floor tile PNG (16×16 grayscale pattern).
- */
+/** Decode a floor tile PNG. A broken file becomes a clear tile so one bad pattern does not abort
+ *  the floor broadcast. */
 export function decodeFloorPng(pngBuffer: Buffer): string[][] {
-  return pngToSpriteData(pngBuffer, FLOOR_TILE_SIZE, FLOOR_TILE_SIZE);
+  try {
+    return decodeFloorTile(readPng(pngBuffer));
+  } catch (err) {
+    console.warn(`Failed to parse floor PNG: ${err instanceof Error ? err.message : err}`);
+    return emptyArtSprite(FLOOR_TILE_SIZE, FLOOR_TILE_SIZE);
+  }
 }
 
 /**
- * Decode a single pet PNG (96×96) into direction- and state-keyed frame arrays.
+ * Decode a pet PNG into direction- and state-keyed frames. walkLeft / idleLeft are derived at
+ * render time by horizontal flip (webview).
  *
- * Layout (52be7e8 spec):
- *   Row 0 (y=0..32):   6 frames × 16w — walkDown[0..2] then idleDown[0..2]
- *   Row 1 (y=32..64):  6 frames × 16w — walkUp[0..2]   then idleUp[0..2]
- *   Row 2 (y=64..96):  3 frames × 32w — walkRight[0..2]
- *
- * walkLeft / idleLeft are derived at render time by horizontal flip (webview).
- *
- * Safe-fallback: returns all-empty frames on any decode error so a broken
- * spritesheet doesn't abort the pet asset broadcast.
+ * Safe-fallback: returns all-empty frames on any decode error so a broken spritesheet doesn't
+ * abort the pet asset broadcast.
  */
 export function decodePetPng(pngBuffer: Buffer): PetSpriteFrames {
   try {
-    const png = PNG.sync.read(sanitizePngBuffer(pngBuffer));
-
-    if (png.width !== PET_IMAGE_WIDTH || png.height !== PET_IMAGE_HEIGHT) {
-      console.warn(
-        `[PngDecoder] Pet sprite has unexpected dimensions: ${png.width}×${png.height} (expected ${PET_IMAGE_WIDTH}×${PET_IMAGE_HEIGHT})`,
-      );
-      throw new Error('Invalid pet sprite dimensions');
-    }
-
-    function extractFrame(ox: number, oy: number, w: number, h: number): string[][] {
-      const sprite: string[][] = [];
-      for (let y = 0; y < h; y++) {
-        const row: string[] = [];
-        for (let x = 0; x < w; x++) {
-          const idx = ((oy + y) * png.width + (ox + x)) * 4;
-          row.push(
-            rgbaToHex(png.data[idx], png.data[idx + 1], png.data[idx + 2], png.data[idx + 3]),
-          );
-        }
-        sprite.push(row);
-      }
-      return sprite;
-    }
-
-    // Row 0 (y=0): 6 frames @ 16w — walkDown[0..2] + idleDown[0..2]
-    const walkDown: string[][][] = [];
-    for (let f = 0; f < PET_WALK_FRAMES_VERT; f++) {
-      walkDown.push(extractFrame(f * PET_FRAME_W_SMALL, 0, PET_FRAME_W_SMALL, PET_FRAME_H));
-    }
-    const idleDown: string[][][] = [];
-    for (let f = 0; f < PET_IDLE_FRAMES_VERT; f++) {
-      idleDown.push(
-        extractFrame(
-          (PET_WALK_FRAMES_VERT + f) * PET_FRAME_W_SMALL,
-          0,
-          PET_FRAME_W_SMALL,
-          PET_FRAME_H,
-        ),
-      );
-    }
-
-    // Row 1 (y=32): 6 frames @ 16w — walkUp[0..2] + idleUp[0..2]
-    const walkUp: string[][][] = [];
-    for (let f = 0; f < PET_WALK_FRAMES_VERT; f++) {
-      walkUp.push(extractFrame(f * PET_FRAME_W_SMALL, PET_FRAME_H, PET_FRAME_W_SMALL, PET_FRAME_H));
-    }
-    const idleUp: string[][][] = [];
-    for (let f = 0; f < PET_IDLE_FRAMES_VERT; f++) {
-      idleUp.push(
-        extractFrame(
-          (PET_WALK_FRAMES_VERT + f) * PET_FRAME_W_SMALL,
-          PET_FRAME_H,
-          PET_FRAME_W_SMALL,
-          PET_FRAME_H,
-        ),
-      );
-    }
-
-    // Row 2 (y=64): 3 frames @ 32w — walkRight[0..2]
-    const walkRight: string[][][] = [];
-    for (let f = 0; f < PET_WALK_FRAMES_HORIZ; f++) {
-      walkRight.push(
-        extractFrame(f * PET_FRAME_W_LARGE, PET_FRAME_H * 2, PET_FRAME_W_LARGE, PET_FRAME_H),
-      );
-    }
-
-    return { walkDown, idleDown, walkUp, idleUp, walkRight };
+    return decodePetSheet(readPng(pngBuffer));
   } catch (err) {
     console.warn(
       `[PngDecoder] Failed to parse pet PNG: ${err instanceof Error ? err.message : err}`,
     );
-    const emptySmall = (): string[][] =>
-      Array.from({ length: PET_FRAME_H }, () => new Array(PET_FRAME_W_SMALL).fill(''));
-    const emptyLarge = (): string[][] =>
-      Array.from({ length: PET_FRAME_H }, () => new Array(PET_FRAME_W_LARGE).fill(''));
+    const small = (): string[][] => emptyArtSprite(PET_FRAME_W_SMALL, PET_FRAME_H);
+    const large = (): string[][] => emptyArtSprite(PET_FRAME_W_LARGE, PET_FRAME_H);
     return {
-      walkDown: [emptySmall(), emptySmall(), emptySmall()],
-      idleDown: [emptySmall(), emptySmall(), emptySmall()],
-      walkUp: [emptySmall(), emptySmall(), emptySmall()],
-      idleUp: [emptySmall(), emptySmall(), emptySmall()],
-      walkRight: [emptyLarge(), emptyLarge(), emptyLarge()],
+      walkDown: [small(), small(), small()],
+      idleDown: [small(), small(), small()],
+      walkUp: [small(), small(), small()],
+      idleUp: [small(), small(), small()],
+      walkRight: [large(), large(), large()],
     };
   }
 }

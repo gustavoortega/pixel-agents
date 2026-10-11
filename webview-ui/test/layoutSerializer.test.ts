@@ -11,12 +11,21 @@
 
 import assert from 'node:assert/strict';
 
-import { test } from 'vitest';
+import * as path from 'path';
+import { beforeAll, describe, test } from 'vitest';
 
+import { buildFurnitureCatalog } from '../../core/src/assets/build.js';
+import { ART_DENSITY } from '../../core/src/assets/constants.js';
 import type { ColorValue } from '../src/components/ui/types.js';
-import { migrateLayoutColors } from '../src/office/layout/layoutSerializer.js';
+import { TILE_SIZE } from '../src/constants.js';
+import { buildDynamicCatalog, getCatalogEntry } from '../src/office/layout/furnitureCatalog.js';
+import {
+  layoutToFurnitureInstances,
+  migrateLayoutColors,
+} from '../src/office/layout/layoutSerializer.js';
 import type { OfficeLayout, PlacedFurniture, PlacedPet } from '../src/office/types.js';
 import { TileType } from '../src/office/types.js';
+import { loadRealAssets } from './realAssets.js';
 
 // ── Helpers ────────────────────────────────────────────────────
 
@@ -146,4 +155,59 @@ test('migrateLayoutColors is idempotent (running twice produces equivalent outpu
   assert.deepEqual(twice.pets, once.pets);
   assert.deepEqual(twice.tiles, once.tiles);
   assert.deepEqual(twice.tileColors, once.tileColors);
+});
+
+// ── World size of art-density sprites ─────────────────────────
+
+describe('furniture world size', () => {
+  beforeAll(loadRealAssets);
+
+  test('a 2x1-tile bookshelf sorts at the bottom of its footprint, not of its art', () => {
+    // Its sprite is 64x32 art px at ART_DENSITY 2; in the world it is footprint * 16 = 32x16.
+    const [shelf] = layoutToFurnitureInstances([{ uid: 'b', type: 'BOOKSHELF', col: 3, row: 4 }]);
+    assert.equal(shelf.zY, (4 + 1) * TILE_SIZE);
+  });
+});
+
+// ── Couch slices ──────────────────────────────────────────────
+
+describe('couch slices', () => {
+  const ASSETS = path.resolve(__dirname, '..', 'public', 'assets');
+  const ORIENTATIONS = ['SOFA_FRONT', 'SOFA_BACK', 'SOFA_SIDE', 'SOFA_SIDE:left'];
+
+  /** Stack the slices back at their own y; every art row must come back exactly once. */
+  function assertSlicesRebuild(type: string): void {
+    const row = 3;
+    const full = getCatalogEntry(type)!.sprite;
+    const rows: Array<readonly string[] | undefined> = new Array(full.length);
+    for (const part of layoutToFurnitureInstances([{ uid: 'c', type, col: 2, row }])) {
+      const artTop = (part.y - row * TILE_SIZE) * ART_DENSITY;
+      part.sprite.forEach((r, i) => {
+        assert.equal(rows[artTop + i], undefined, `${type}: art row ${artTop + i} drawn twice`);
+        rows[artTop + i] = r;
+      });
+    }
+    assert.deepEqual(rows, full, `${type}: every art row exactly once`);
+  }
+
+  test('rebuild the whole sprite for every orientation, from the bundled 1x art (upscaled)', () => {
+    loadRealAssets();
+    for (const type of ORIENTATIONS) assertSlicesRebuild(type);
+  });
+
+  test('rebuild the whole sprite for every orientation, from 2x art with every row distinct', () => {
+    // Upscaled art repeats each row twice, which can hide an off-by-one-art-row cut; here no two
+    // art rows are alike.
+    const catalog = buildFurnitureCatalog(ASSETS).filter((e) => e.groupId === 'SOFA');
+    const sprites = Object.fromEntries(
+      catalog.map((e, k) => [
+        e.id,
+        Array.from({ length: e.height * ART_DENSITY }, (_, y) =>
+          Array.from({ length: e.width * ART_DENSITY }, (_, x) => `${k}:${x},${y}`),
+        ),
+      ]),
+    );
+    buildDynamicCatalog({ catalog, sprites });
+    for (const type of ORIENTATIONS) assertSlicesRebuild(type);
+  });
 });

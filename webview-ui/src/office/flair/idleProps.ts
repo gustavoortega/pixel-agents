@@ -1,3 +1,4 @@
+import { spriteAtArtDensity } from '../../../../core/src/assets/artDensity.js';
 import idlePropsData from '../sprites/flair/idle-props.json';
 import type { SpriteData } from '../types.js';
 import { ANCHORS } from './accessories.js';
@@ -9,6 +10,8 @@ import { ANCHORS } from './accessories.js';
  */
 
 interface PropsJson {
+  /** Art px per world px of the pixel maps; absent = legacy 1x. Offsets are world px. */
+  density?: number;
   palette: Record<string, string>;
   book: { dx: number; dy: number; a: string[][]; b: string[][] };
   mug: { dx: number; dy: number; pixels: string[][] };
@@ -17,7 +20,8 @@ interface PropsJson {
 const props = idlePropsData as PropsJson;
 
 function resolve(pixels: string[][]): SpriteData {
-  return pixels.map((row) => row.map((key) => props.palette[key] ?? ''));
+  const sprite = pixels.map((row) => row.map((key) => props.palette[key] ?? ''));
+  return spriteAtArtDensity(sprite, props.density, 'idle prop sprite');
 }
 
 // Built once: getCachedSprite keys its canvases on SpriteData identity.
@@ -29,7 +33,7 @@ export const MUG_SPRITE: SpriteData = resolve(props.mug.pixels);
 
 export interface PropPlacement {
   sprite: SpriteData;
-  /** Offset from the character sprite's top-left, in sprite px. */
+  /** Offset from the character sprite's top-left, in WORLD px. */
   dx: number;
   dy: number;
 }

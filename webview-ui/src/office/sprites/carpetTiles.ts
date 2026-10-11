@@ -2,7 +2,7 @@
  * Carpet sprite cache + dual-color colorization for marching-squares autotiling.
  *
  * Wire format: `setCarpetSprites(sets)` receives `sets[variant][msCase]` where
- * each entry is a 16×16 SpriteData. Marching-squares case is a 4-bit bitmask
+ * each entry is one tile (16×16 world px) of SpriteData at ART_DENSITY. Marching-squares case is a 4-bit bitmask
  * over the four tiles surrounding a junction (NW=1, NE=2, SE=4, SW=8).
  *
  * Dual-color: each variant is classified once at registration time by sorting
@@ -36,7 +36,7 @@ const carpetCache: Map<string, SpriteData> = new Map();
 /**
  * Register carpet sprite sheets. Invalidates the dual-color cache.
  *
- * @param sets `sets[variant][msCase]` — 16×16 SpriteData per marching-squares case.
+ * @param sets `sets[variant][msCase]`: one tile of SpriteData per marching-squares case.
  *             Expected 16 msCase entries per variant; missing entries are tolerated
  *             via tileHasVariant() and getCarpetJunctionSprite() guards.
  */

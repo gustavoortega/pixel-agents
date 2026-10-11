@@ -118,8 +118,16 @@ export const CAMERA_FOLLOW_LERP = 0.1;
 export const CAMERA_FOLLOW_SNAP_THRESHOLD = 0.5;
 
 // ── Zoom ─────────────────────────────────────────────────────
+/** Zoom is device px per WORLD px. Art is ART_DENSITY art px per world px, so an art px is
+ *  zoom / 2 device px: every even zoom keeps it whole. 1 is the one exception, drawn from a 2x2
+ *  downsample, for whole-map views on small panels. */
 export const ZOOM_MIN = 1;
-export const ZOOM_MAX = 10;
+export const ZOOM_MAX = 20;
+export const ZOOM_STEP = 2;
+export const ZOOM_LEVELS: readonly number[] = [
+  ZOOM_MIN,
+  ...Array.from({ length: ZOOM_MAX / ZOOM_STEP }, (_, i) => (i + 1) * ZOOM_STEP),
+];
 export const ZOOM_DEFAULT_DPR_FACTOR = 2;
 export const ZOOM_SCROLL_THRESHOLD = 50;
 
@@ -238,21 +246,6 @@ export const INACTIVE_SEAT_TIMER_MIN_SEC = 3.0;
 export const INACTIVE_SEAT_TIMER_RANGE_SEC = 2.0;
 /** Default/fallback palette count (bundled characters). Actual count comes from getLoadedCharacterCount(). */
 export const PALETTE_COUNT = 12;
-/** Skin ramp of the bundled characters plus each tone's mouth shade, as the PNG decoder reports
- *  them (uppercase). The hue shift skips these pixels so a repeated palette keeps a human skin tone.
- *  Mirrors SKIN_RAMP in scripts/cozy-art/characters.ts. */
-export const SKIN_TONES: ReadonlySet<string> = new Set([
-  '#F6D9B8',
-  '#F2C9A0',
-  '#C98D5E',
-  '#8D5A3B',
-  '#5A3A28',
-  '#998772',
-  '#967D63',
-  '#7D573A',
-  '#573825',
-  '#382419',
-]);
 export const AUTO_ON_FACING_DEPTH = 3;
 export const CHARACTER_HIT_HALF_WIDTH = 8;
 export const CHARACTER_HIT_HEIGHT = 24;
@@ -277,6 +270,9 @@ export const CHARACTER_SPRITE_HEIGHT_PX = 32;
 /** Plates scale with the zoom relative to the zoom at which the whole map fits, between these. */
 export const PLATE_SCALE_MIN = 0.6;
 export const PLATE_SCALE_MAX = 1.5;
+/** Plates scale against the whole-map fit, but never against less than this: at a fit of 1 every
+ *  zoom would read as a big multiple and the plates would sit at their cap. */
+export const PLATE_SCALE_FIT_FLOOR = 2;
 /** Below this scale the plate drops its title (second) line and keeps `Lv N  Name`. */
 export const PLATE_TITLE_MIN_SCALE = 1;
 /** Nameplate box, CSS px. Line 1 is the badge + member name, line 2 the session label. */

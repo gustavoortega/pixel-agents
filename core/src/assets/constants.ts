@@ -7,6 +7,10 @@
 
 // ── PNG / Asset Parsing ─────────────────────────────────────
 export const PNG_ALPHA_THRESHOLD = 2;
+/** Art pixels per world pixel. Every SpriteData the decoders hand out is at this density: legacy
+ *  1x art is upscaled at load, so the renderer never has to know which kind a file was. The
+ *  frame, tile and piece sizes below stay in world px; slicing multiplies them by this. */
+export const ART_DENSITY = 2;
 export const WALL_PIECE_WIDTH = 16;
 export const WALL_PIECE_HEIGHT = 32;
 export const WALL_GRID_COLS = 4;

@@ -1,3 +1,4 @@
+import { ART_DENSITY } from '../../../../core/src/assets/constants.js';
 import {
   MATRIX_COLUMN_STAGGER_RANGE,
   MATRIX_FLICKER_FPS,
@@ -51,7 +52,9 @@ export function renderMatrixEffect(
     const headRow = colProgress * totalSweep;
 
     for (let row = 0; row < MATRIX_SPRITE_ROWS; row++) {
-      const pixel = spriteData[row]?.[col];
+      // The sweep runs on the world grid: sample one art px per world cell, which is exact for
+      // upscaled 1x art and only a 0.3 s blur of the detail on 2x art.
+      const pixel = spriteData[row * ART_DENSITY]?.[col * ART_DENSITY];
       const hasPixel = pixel && pixel !== '';
       const distFromHead = headRow - row;
       const px = drawX + col * zoom;

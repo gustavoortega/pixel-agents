@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import { afterAll, beforeAll, test, vi } from 'vitest';
 
+import { ART_DENSITY } from '../../core/src/assets/constants.js';
 import {
   AREA_SIGN_PLATE_COLOR,
   SHADOW_SIZE_PX,
@@ -52,6 +53,9 @@ function recorder(): Recorder {
         return (img: { width: number }) => drawnWidths.push(img.width);
       }
       if (prop === 'measureText') return () => ({ width: 10 });
+      if (prop === 'createImageData') {
+        return (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4), width: w });
+      }
       if (prop in target) return target[prop];
       return () => undefined;
     },
@@ -174,12 +178,14 @@ test('characterLayerZ: shadow sorts under the outline, which sorts under the bod
 test('shadowSprite: an oval, smaller for sub-agents and companions', () => {
   const big = shadowSprite(false);
   const small = shadowSprite(true);
-  assert.deepEqual([big[0].length, big.length], [SHADOW_SIZE_PX.w, SHADOW_SIZE_PX.h]);
+  // Sprites are art px: the oval is its world size times ART_DENSITY.
+  const D = ART_DENSITY;
+  assert.deepEqual([big[0].length, big.length], [SHADOW_SIZE_PX.w * D, SHADOW_SIZE_PX.h * D]);
   assert.deepEqual(
     [small[0].length, small.length],
-    [SHADOW_SMALL_SIZE_PX.w, SHADOW_SMALL_SIZE_PX.h],
+    [SHADOW_SMALL_SIZE_PX.w * D, SHADOW_SMALL_SIZE_PX.h * D],
   );
   assert.equal(big[0][0], '', 'corners are clear');
-  assert.notEqual(big[1][SHADOW_SIZE_PX.w / 2], '', 'the middle is filled');
+  assert.notEqual(big[D][(SHADOW_SIZE_PX.w / 2) * D], '', 'the middle is filled');
   assert.equal(shadowSprite(false), big, 'built once, so the per-zoom canvas cache can key on it');
 });

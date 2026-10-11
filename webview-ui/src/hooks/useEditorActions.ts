@@ -7,8 +7,8 @@ import {
   LAYOUT_SAVE_DEBOUNCE_MS,
   ZOOM_DEFAULT_DPR_FACTOR,
   ZOOM_MAX,
-  ZOOM_MIN,
 } from '../constants.js';
+import { snapZoom } from '../office/camera.js';
 import type { ExpandDirection } from '../office/editor/editorActions.js';
 import {
   addArea,
@@ -98,13 +98,14 @@ interface EditorActions {
   handleAreaColorChange: (label: string, color: string) => void;
 }
 
-/** Default integer zoom (device pixels per sprite pixel) for a fresh session.
+/** Default zoom (device px per world px) for a fresh session: two device px per world px per
+ *  dpr, snapped down to a zoom level (dpr 1.5 gives 3, which snaps to 2).
  *  Lives here, with the zoom state it seeds, rather than in the office modules:
  *  it reads `devicePixelRatio`, and a viewport concern in a state module drags
  *  the DOM into every graph that imports it (OfficeState's included). */
 function defaultZoom(): number {
   const dpr = window.devicePixelRatio || 1;
-  return Math.max(ZOOM_MIN, Math.round(ZOOM_DEFAULT_DPR_FACTOR * dpr));
+  return snapZoom(Math.round(ZOOM_DEFAULT_DPR_FACTOR * dpr));
 }
 
 export function useEditorActions(
@@ -548,7 +549,7 @@ export function useEditorActions(
   }, []);
 
   const handleZoomChange = useCallback((newZoom: number) => {
-    setZoom(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newZoom)));
+    setZoom(snapZoom(Math.min(ZOOM_MAX, newZoom)));
   }, []);
 
   const handleDragMove = useCallback(

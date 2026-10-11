@@ -8,20 +8,13 @@
  * Only imported in browser runtime; tree-shaken from VS Code webview runtime.
  */
 
-import { rgbaToHex } from '../../core/src/assets/colorUtils.ts';
+import type { RgbaImage } from '../../core/src/assets/artDensity.ts';
 import {
-  CHAR_FRAME_H,
-  CHAR_FRAME_W,
-  CHAR_FRAMES_PER_ROW,
-  CHAR_IDLE_FRAMES,
-  CHAR_IDLE_ROW,
-  CHARACTER_DIRECTIONS,
-  FLOOR_TILE_SIZE,
-  WALL_BITMASK_COUNT,
-  WALL_GRID_COLS,
-  WALL_PIECE_HEIGHT,
-  WALL_PIECE_WIDTH,
-} from '../../core/src/assets/constants.ts';
+  decodeCharacterSheet,
+  decodeFloorTile,
+  decodeFurnitureImage,
+  decodeWallSet,
+} from '../../core/src/assets/artDensity.ts';
 import type {
   AssetIndex,
   CatalogEntry,
@@ -43,43 +36,10 @@ interface MockPayload {
 let mockPayload: MockPayload | null = null;
 
 // ── PNG decode helpers (browser fallback) ───────────────────────────────────
+// Slicing and density detection are the core decoders the server uses, so a 1x and a 2x asset
+// directory decode the same here as over the wire.
 
-interface DecodedPng {
-  width: number;
-  height: number;
-  data: Uint8ClampedArray;
-}
-
-function getPixel(
-  data: Uint8ClampedArray,
-  width: number,
-  x: number,
-  y: number,
-): [number, number, number, number] {
-  const idx = (y * width + x) * 4;
-  return [data[idx], data[idx + 1], data[idx + 2], data[idx + 3]];
-}
-
-function readSprite(
-  png: DecodedPng,
-  width: number,
-  height: number,
-  offsetX = 0,
-  offsetY = 0,
-): string[][] {
-  const sprite: string[][] = [];
-  for (let y = 0; y < height; y++) {
-    const row: string[] = [];
-    for (let x = 0; x < width; x++) {
-      const [r, g, b, a] = getPixel(png.data, png.width, offsetX + x, offsetY + y);
-      row.push(rgbaToHex(r, g, b, a));
-    }
-    sprite.push(row);
-  }
-  return sprite;
-}
-
-async function decodePng(url: string): Promise<DecodedPng> {
+async function decodePng(url: string): Promise<RgbaImage> {
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`Failed to fetch PNG: ${url} (${res.status.toString()})`);
@@ -121,33 +81,7 @@ async function decodeCharactersFromPng(
   const sprites: CharacterDirectionSprites[] = [];
   for (const relPath of index.characters) {
     const png = await decodePng(`${base}assets/${getIndexedAssetPath('characters', relPath)}`);
-    const byDir: CharacterDirectionSprites = { down: [], up: [], right: [] };
-
-    for (let dirIdx = 0; dirIdx < CHARACTER_DIRECTIONS.length; dirIdx++) {
-      const dir = CHARACTER_DIRECTIONS[dirIdx];
-      const rowOffsetY = dirIdx * CHAR_FRAME_H;
-      const frames: string[][][] = [];
-      for (let frame = 0; frame < CHAR_FRAMES_PER_ROW; frame++) {
-        frames.push(readSprite(png, CHAR_FRAME_W, CHAR_FRAME_H, frame * CHAR_FRAME_W, rowOffsetY));
-      }
-      byDir[dir] = frames;
-    }
-    // The idle row (front view) follows the seven `down` frames, as decodeCharacterPng does.
-    if (png.height >= (CHAR_IDLE_ROW + 1) * CHAR_FRAME_H) {
-      for (let frame = 0; frame < CHAR_IDLE_FRAMES; frame++) {
-        byDir.down.push(
-          readSprite(
-            png,
-            CHAR_FRAME_W,
-            CHAR_FRAME_H,
-            frame * CHAR_FRAME_W,
-            CHAR_IDLE_ROW * CHAR_FRAME_H,
-          ),
-        );
-      }
-    }
-
-    sprites.push(byDir);
+    sprites.push(decodeCharacterSheet(png));
   }
   return sprites;
 }
@@ -156,7 +90,7 @@ async function decodeFloorsFromPng(base: string, index: AssetIndex): Promise<str
   const floors: string[][][] = [];
   for (const relPath of index.floors) {
     const png = await decodePng(`${base}assets/${getIndexedAssetPath('floors', relPath)}`);
-    floors.push(readSprite(png, FLOOR_TILE_SIZE, FLOOR_TILE_SIZE));
+    floors.push(decodeFloorTile(png));
   }
   return floors;
 }
@@ -165,13 +99,7 @@ async function decodeWallsFromPng(base: string, index: AssetIndex): Promise<stri
   const wallSets: string[][][][] = [];
   for (const relPath of index.walls) {
     const png = await decodePng(`${base}assets/${getIndexedAssetPath('walls', relPath)}`);
-    const set: string[][][] = [];
-    for (let mask = 0; mask < WALL_BITMASK_COUNT; mask++) {
-      const ox = (mask % WALL_GRID_COLS) * WALL_PIECE_WIDTH;
-      const oy = Math.floor(mask / WALL_GRID_COLS) * WALL_PIECE_HEIGHT;
-      set.push(readSprite(png, WALL_PIECE_WIDTH, WALL_PIECE_HEIGHT, ox, oy));
-    }
-    wallSets.push(set);
+    wallSets.push(decodeWallSet(png));
   }
   return wallSets;
 }
@@ -183,7 +111,11 @@ async function decodeFurnitureFromPng(
   const sprites: Record<string, string[][]> = {};
   for (const entry of catalog) {
     const png = await decodePng(`${base}assets/${entry.furniturePath}`);
-    sprites[entry.id] = readSprite(png, entry.width, entry.height);
+    try {
+      sprites[entry.id] = decodeFurnitureImage(png, entry.id, entry.width, entry.height);
+    } catch (err) {
+      console.warn(`[BrowserMock] ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
   return sprites;
 }

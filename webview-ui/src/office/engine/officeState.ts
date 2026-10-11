@@ -1,3 +1,4 @@
+import { spriteWorldHeight } from '../../../../core/src/assets/artDensity.js';
 import { pickDiversePalette } from '../../../../core/src/paletteUtils.js';
 import type { ModelTier } from '../../../../core/src/provider.js';
 import {
@@ -368,7 +369,7 @@ export class OfficeState {
       if (item.type !== LOUNGE_FURNITURE_TYPE) continue;
       const entry = getCatalogEntry(item.type);
       if (!entry) continue;
-      const zY = item.row * TILE_SIZE + entry.sprite.length;
+      const zY = item.row * TILE_SIZE + spriteWorldHeight(entry.sprite);
       for (let dr = 0; dr < entry.footprintH; dr++) {
         for (let dc = 0; dc < entry.footprintW; dc++)
           out.set(`${item.col + dc},${item.row + dr}`, zY);

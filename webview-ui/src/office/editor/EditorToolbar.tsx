@@ -373,8 +373,7 @@ export function EditorToolbar({
                       ctx.fillRect(0, 0, w, h);
                       return;
                     }
-                    const cacheKey = `wall-preview-${i}-${wallColor.h}-${wallColor.s}-${wallColor.b}-${wallColor.c}`;
-                    const colorized = getColorizedSprite(cacheKey, sprite, {
+                    const colorized = getColorizedSprite(sprite, {
                       ...wallColor,
                       colorize: true,
                     });
@@ -607,11 +606,7 @@ export function EditorToolbar({
                   deps={[entry.type, entry.sprite, pickedFurnitureColor]}
                   draw={(ctx, w, h) => {
                     const sprite = pickedFurnitureColor
-                      ? getColorizedSprite(
-                          `thumb-${entry.type}-${pickedFurnitureColor.h}-${pickedFurnitureColor.s}-${pickedFurnitureColor.b}-${pickedFurnitureColor.c}-${pickedFurnitureColor.colorize ?? ''}`,
-                          entry.sprite,
-                          pickedFurnitureColor,
-                        )
+                      ? getColorizedSprite(entry.sprite, pickedFurnitureColor)
                       : entry.sprite;
                     const cached = getCachedSprite(sprite, 2);
                     const scale = Math.min(w / cached.width, h / cached.height) * 0.85;

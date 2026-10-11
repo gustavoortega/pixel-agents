@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { spriteWorldHeight, spriteWorldWidth } from '../../../../core/src/assets/artDensity.js';
 import { Button } from '../../components/ui/Button.js';
 import {
   BUBBLE_VERTICAL_OFFSET_PX,
@@ -525,8 +526,8 @@ export function ToolOverlay({
   const clamps = new Map<number, { dx: number; dy: number }>();
   officeState.bubbleLift.clear();
   const bubbleBox = {
-    w: (BUBBLE_WAITING_SPRITE[0]?.length ?? 0) * (1 / project.toWorldLength(1)),
-    h: BUBBLE_WAITING_SPRITE.length * (1 / project.toWorldLength(1)),
+    w: spriteWorldWidth(BUBBLE_WAITING_SPRITE) * (1 / project.toWorldLength(1)),
+    h: spriteWorldHeight(BUBBLE_WAITING_SPRITE) * (1 / project.toWorldLength(1)),
   };
   for (const it of labelItems) {
     const ch = officeState.characters.get(it.id);

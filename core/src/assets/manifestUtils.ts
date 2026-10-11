@@ -39,6 +39,9 @@ export interface FurnitureManifest {
   canPlaceOnWalls: boolean;
   canPlaceOnSurfaces: boolean;
   backgroundTiles: number;
+  /** Optional declaration of the PNGs' art density (1 or 2). Validation only: the decoder
+   *  measures each PNG against width/height, which stay WORLD px at any density. */
+  density?: number;
   // If type is 'asset', these fields are present:
   type: 'asset' | 'group';
   file?: string;
