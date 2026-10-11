@@ -224,9 +224,6 @@ export const ALARM_NOTE_2_START_SEC = 0.14;
 export const ALARM_NOTE_DURATION_SEC = 0.12;
 export const ALARM_VOLUME = 0.14;
 
-// ── Furniture Animation ─────────────────────────────────────
-export const FURNITURE_ANIM_INTERVAL_SEC = 0.2;
-
 // ── Version Notice ──────────────────────────────────────────
 export const WHATS_NEW_AUTO_CLOSE_MS = 20000;
 export const WHATS_NEW_FADE_MS = 1000;
@@ -486,20 +483,17 @@ export const LIGHT_PHASES = {
     tint: { color: '#2a3570', alpha: 0.24 },
     monitorGlow: 0.75,
     lampGlow: 0.6,
-    windowShaft: 0,
   },
   dawn: {
     tint: { color: '#ffb0a0', alpha: 0.15 },
     monitorGlow: 0.4,
     lampGlow: 0.3,
-    windowShaft: 0,
   },
-  day: { tint: null, monitorGlow: 0.3, lampGlow: 0, windowShaft: 0.18 },
+  day: { tint: null, monitorGlow: 0.3, lampGlow: 0 },
   golden: {
     tint: { color: '#ff9a3c', alpha: 0.28 },
     monitorGlow: 0.45,
     lampGlow: 0.35,
-    windowShaft: 0.3,
   },
 } as const;
 /** Glow radii in tiles, and how far below its anchor tile a monitor glow is centered so it
@@ -507,18 +501,53 @@ export const LIGHT_PHASES = {
 export const GLOW_MONITOR_RADIUS_TILES = 2;
 export const GLOW_LAMP_RADIUS_TILES = 2.5;
 export const GLOW_DOWN_OFFSET_TILES = 0.5;
-/** Window light shaft, in tiles: width, and length from the window's bottom edge downward. */
-export const GLOW_SHAFT_WIDTH_TILES = 3;
-export const GLOW_SHAFT_LENGTH_TILES = 4;
-/** Radial glow gradient stops (centre, edge) per kind; the shaft is a vertical gradient. */
+/** Radial glow gradient stops (centre, edge) per kind. */
 export const GLOW_COLORS = {
-  monitor: { core: 'rgba(130, 255, 200, 0.45)', edge: 'rgba(130, 255, 200, 0)' },
+  monitor: { core: 'rgba(207, 232, 255, 0.4)', edge: 'rgba(207, 232, 255, 0)' },
   lamp: { core: 'rgba(255, 200, 110, 0.55)', edge: 'rgba(255, 200, 110, 0)' },
-  shaft: { core: 'rgba(255, 190, 110, 0.5)', edge: 'rgba(255, 190, 110, 0)' },
 } as const;
-/** Map vignette: the edges darken toward this color, starting at this share of the radius. */
-export const VIGNETTE_COLOR = 'rgba(50, 20, 5, 0.35)';
-export const VIGNETTE_CLEAR_RADIUS_PCT = 55;
+/** Map vignette: lighter than the first pass so the corners stay readable. One string, so the
+ *  DOM layer and anything that inspects it share a single source. */
+export const VIGNETTE_COLOR = 'rgba(50, 20, 5, 0.22)';
+export const VIGNETTE_CLEAR_RADIUS_PCT = 65;
+export const VIGNETTE_CENTER = '50% 55%';
+export const VIGNETTE_BACKGROUND = `radial-gradient(ellipse at ${VIGNETTE_CENTER}, transparent ${VIGNETTE_CLEAR_RADIUS_PCT}%, ${VIGNETTE_COLOR})`;
+
+// ── Cozy look: window light shafts ──────────────────────────────
+/** A shaft is a parallelogram on the floor below a window: width and length in tiles, and how
+ *  far its far end slides sideways (tiles). */
+export const SHAFT_WIDTH_TILES = 2;
+export const SHAFT_LENGTH_TILES = 3;
+export const SHAFT_SKEW_TILES = 0.5;
+/** Shaft color at the two keyframe times (minutes after midnight). Before the first keyframe
+ *  the morning color holds, after the last the evening color holds; the shaft is off from
+ *  LIGHT_NIGHT_START_MIN to LIGHT_DAY_START_MIN. */
+export const SHAFT_MORNING = { minute: 9 * 60, r: 255, g: 236, b: 190, alpha: 0.16 } as const;
+export const SHAFT_EVENING = { minute: 18 * 60, r: 255, g: 170, b: 110, alpha: 0.1 } as const;
+/** CSS color for a shaft's rgb channels (alpha is applied through globalAlpha). */
+export const shaftCss = (r: number, g: number, b: number): string => `rgb(${r}, ${g}, ${b})`;
+/** Shafts are painted in their own composite pass with this blend, never `screen`. */
+export const SHAFT_BLEND_MODE = 'soft-light';
+
+// ── Cozy look: CRT monitors ─────────────────────────────────────
+/** Furniture id prefix of a PC drawn with its screen on. */
+export const MONITOR_ON_TYPE_PREFIX = 'PC_FRONT_ON';
+/** Screen interior in the PC_FRONT sprites, in sprite px. */
+export const MONITOR_SCREEN_RECT = { x: 4, y: 3, w: 8, h: 6 } as const;
+/** Flicker tick, the number of ON frames it cycles, and the share of ticks a screen dims. */
+export const MONITOR_FLICKER_TICK_MS = 300;
+export const MONITOR_ON_FRAME_COUNT = 3;
+export const MONITOR_DIM_ONE_IN = 4;
+/** Overlays painted on the screen pixels only. */
+export const MONITOR_GLOW_COLOR = '#cfe8ff';
+export const MONITOR_GLOW_ALPHA = 0.1;
+export const MONITOR_DIM_COLOR = '#000000';
+export const MONITOR_DIM_ALPHA = 0.35;
+export const MONITOR_SCANLINE_COLOR = '#000000';
+export const MONITOR_SCANLINE_ALPHA = 0.1;
+/** Scanlines are 1 device px every 2; below this many device px per sprite px they would
+ *  swallow the screen, so they are not drawn. The renderer's zoom is already in device px. */
+export const MONITOR_SCANLINE_MIN_ZOOM = 8;
 /** Furniture ids that emit light. */
 export const LIGHT_FIXTURE_WINDOW = 'WINDOW';
 export const LIGHT_FIXTURE_LAMP = 'FLOOR_LAMP';

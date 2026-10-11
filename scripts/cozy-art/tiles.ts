@@ -193,6 +193,9 @@ function wallRole(mask: number, x: number, y: number): WallRole {
   return 'c';
 }
 
+/** The three face rows just above the bottom outline that carry the baseboard. */
+const WALL_BASEBOARD_ROWS = { first: 28, last: 30 } as const;
+
 const WALL = {
   outline: '#4a3020',
   capLight: '#f3e4c4',
@@ -202,7 +205,8 @@ const WALL = {
   paperDot: '#d9b988',
   skirtTop: '#c98f5a',
   skirt: '#b77b4b',
-  skirtDark: '#9b6338',
+  /** The wood line where the wall meets the floor. Walls without a layout color show it raw. */
+  baseboard: '#6b4128',
   shadow: '#d9c196',
 };
 
@@ -214,8 +218,11 @@ function wallPixel(role: WallRole, y: number, x: number, mask: number): string {
     return y === 1 ? WALL.capLight : y === 7 && (mask & 4) === 0 ? WALL.shadow : WALL.cap;
   }
   // face: wallpaper with soft stripes and tiny flowers, wood baseboard on the last rows
-  if (y >= 25 && y <= 29) {
-    return y === 25 ? WALL.skirtTop : y === 29 ? WALL.skirtDark : WALL.skirt;
+  if (y >= WALL_BASEBOARD_ROWS.first && y <= WALL_BASEBOARD_ROWS.last) {
+    return WALL.baseboard;
+  }
+  if (y >= 25 && y < WALL_BASEBOARD_ROWS.first) {
+    return y === 25 ? WALL.skirtTop : WALL.skirt;
   }
   if (y === 24) {
     return WALL.shadow;

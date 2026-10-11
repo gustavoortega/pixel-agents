@@ -153,11 +153,19 @@ export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): Furnit
 
     if (isCouch(entry)) {
       instances.push(
-        ...couchInstances(sprite, x, y, item.row, entry.footprintH, entry.orientation, mirrored),
+        ...couchInstances(
+          sprite,
+          x,
+          y,
+          item.row,
+          entry.footprintH,
+          entry.orientation,
+          mirrored,
+        ).map((inst) => ({ ...inst, type: item.type })),
       );
       continue;
     }
-    instances.push({ sprite, x, y, zY, ...(mirrored ? { mirrored: true } : {}) });
+    instances.push({ sprite, type: item.type, x, y, zY, ...(mirrored ? { mirrored: true } : {}) });
   }
   return instances;
 }

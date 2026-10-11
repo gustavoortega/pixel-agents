@@ -109,6 +109,8 @@ const PC_PAL: Palette = {
   a: '#ffd166',
   b: '#7fc4ff',
   r: '#3a4252',
+  d: '#8a8f99',
+  e: '#9ba0a9',
 };
 
 /** Frame with an 8x6 screen interior filled from `screen` (rows of 8 chars). */
@@ -140,7 +142,8 @@ function pcFront(screen: readonly string[], led: boolean): string[] {
   return rows;
 }
 
-const SCREEN_OFF = ['rssssssr', 'srsssssr', 'ssrsssss', 'sssrssss', 'ssssssss', 'ssssssss'];
+/** Idle screen: a flat gray with a faint glare, so a lit screen reads as a change. */
+const SCREEN_OFF = ['edddddde', 'deddddde', 'ddeddddd', 'dddedddd', 'dddddddd', 'dddddddd'];
 const SCREEN_ON = [
   ['ggggsgss', 'ssgggsss', 'ggsssggs', 'sssssssb', 'gggsgsss', 'gsssssss'],
   ['gggsssss', 'ssggggss', 'sssgsggs', 'bbbbsssa', 'ggsggsss', 'ssgsssss'],

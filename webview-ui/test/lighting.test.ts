@@ -51,13 +51,7 @@ test('lightingFor: phase boundaries and the tints', () => {
   );
 });
 
-test('lightingFor: window light only 07:00-19:59, lamps only when there is a tint', () => {
-  const shaft = (h: number, m: number) => lightingFor(h, m).windowShaft > 0;
-  assert.equal(shaft(6, 59), false);
-  assert.equal(shaft(7, 0), true);
-  assert.equal(shaft(19, 59), true);
-  assert.equal(shaft(20, 0), false);
-
+test('lightingFor: lamps only when there is a tint', () => {
   const lamp = (h: number, m: number) => lightingFor(h, m).lampGlow > 0;
   assert.equal(lamp(12, 0), false, 'plain daylight');
   assert.equal(lamp(6, 30), true, 'dawn');
@@ -86,7 +80,7 @@ const BASE = {
   offsetY: 20,
   cols: 10,
   rows: 8,
-  fixtures: { lamps: [], windows: [] },
+  fixtures: { lamps: [] },
   enabled: true,
   lighting: lightingFor(12, 0),
 };
@@ -119,24 +113,21 @@ test('glowDraws: idle agents, a disabled setting and zero-strength kinds draw no
     glowDraws({ ...BASE, sources: [seat(3, 2, Direction.DOWN)], enabled: false }),
     [],
   );
-  const noon = { ...BASE, sources: [], fixtures: { lamps: [{ col: 5, row: 3 }], windows: [] } };
+  const noon = { ...BASE, sources: [], fixtures: { lamps: [{ col: 5, row: 3 }] } };
   assert.deepEqual(glowDraws(noon), [], 'lamps are off in plain daylight');
 });
 
-test('glowDraws: window light and lamp glow have their own anchors', () => {
+test('glowDraws: the lamp glow is anchored on the lamp head', () => {
   const golden = lightingFor(17, 0);
   const draws = glowDraws({
     ...BASE,
     lighting: golden,
     sources: [],
-    fixtures: { lamps: [{ col: 5, row: 3 }], windows: [{ col: 2, row: 0 }] },
+    fixtures: { lamps: [{ col: 5, row: 3 }] },
   });
   const lamp = draws.find((d) => d.kind === 'lamp')!;
   // head centre (186, 20 + 96 + 12 = 128), radius 80
   assert.deepEqual(rectOf(lamp), { x: 106, y: 48, w: 160, h: 160, sx: 0, sy: 0 });
-  const shaft = draws.find((d) => d.kind === 'shaft')!;
-  // under the 2x2 window (bottom edge y 84), 3 tiles wide centred on it, 4 tiles long
-  assert.deepEqual(rectOf(shaft), { x: 58, y: 84, w: 96, h: 128, sx: 0, sy: 0 });
 });
 
 test('glowDraws: every rect is inside the map and monitor glows stay below their pod top', () => {
@@ -156,7 +147,6 @@ test('glowDraws: every rect is inside the map and monitor glows stay below their
         { col: 0, row: 0 },
         { col: 9, row: 6 },
       ],
-      windows: [{ col: 8, row: 5 }],
     },
   });
   assert.ok(draws.length > sources.length);
@@ -186,7 +176,6 @@ test('monitorSources: seated working agents light their screen, sub-agents and t
   const seats = new Map([['s1', { seatCol: 4, seatRow: 2, facingDir: Direction.UP }]]);
   const ch = (patch: Record<string, unknown>) => ({
     seatId: 's1',
-    state: CharacterState.TYPE,
     isActive: true,
     isSubagent: false,
     ...patch,
@@ -194,12 +183,13 @@ test('monitorSources: seated working agents light their screen, sub-agents and t
   assert.deepEqual(monitorSources([ch({})], seats), [
     { seatCol: 4, seatRow: 2, facing: Direction.UP, active: true },
   ]);
-  assert.equal(monitorSources([ch({ state: CharacterState.IDLE })], seats)[0].active, false);
+  // Status truth, not pose: an active agent still walking to its desk keeps the screen lit.
+  assert.equal(monitorSources([ch({ state: CharacterState.WALK })], seats)[0].active, true);
   assert.equal(monitorSources([ch({ isActive: false })], seats)[0].active, false);
   assert.deepEqual(monitorSources([ch({ isSubagent: true }), ch({ seatId: null })], seats), []);
 });
 
-test('lightFixtures: finds windows and floor lamps by furniture id', () => {
+test('lightFixtures: finds floor lamps by furniture id', () => {
   const found = lightFixtures([
     { type: 'WINDOW', col: 2, row: 0 },
     { type: 'FLOOR_LAMP', col: 5, row: 3 },
@@ -207,6 +197,5 @@ test('lightFixtures: finds windows and floor lamps by furniture id', () => {
   ]);
   assert.deepEqual(found, {
     lamps: [{ col: 5, row: 3 }],
-    windows: [{ col: 2, row: 0 }],
   });
 });

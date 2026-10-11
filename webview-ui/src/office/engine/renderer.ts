@@ -42,6 +42,8 @@ import {
   HEADLESS_CHARACTER_ALPHA,
   IDLE_GLYPH_COLOR,
   IDLE_GLYPH_SHADOW_COLOR,
+  MONITOR_ON_TYPE_PREFIX,
+  MONITOR_SCREEN_RECT,
   NAP_ZZ_CELL_PX,
   NAP_ZZ_PERIOD_MS,
   NAP_ZZ_RISE_CELLS,
@@ -51,6 +53,8 @@ import {
   SEAT_OWN_COLOR,
   SELECTION_DASH_PATTERN,
   SELECTION_HIGHLIGHT_COLOR,
+  SHAFT_BLEND_MODE,
+  shaftCss,
   TRIPWIRE_BEACON_RADIUS_PX,
   TRIPWIRE_FLASH_PERIOD_MS,
   VOID_TILE_DASH_PATTERN,
@@ -72,15 +76,18 @@ import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTi
 import { areaSignRect } from '../labelLayout.js';
 import type { GlowFixtures, GlowSource, Lighting } from '../lighting.js';
 import { glowDraws } from '../lighting.js';
+import { monitorLook, monitorTick } from '../monitor.js';
 import { mapOffset } from '../projection.js';
 import { seatedBubbleOffsetPx, seatedDrawOffsetPx } from '../seatDraw.js';
 import { characterLayerZ, shadowSprite } from '../shadow.js';
+import type { Shaft } from '../shafts.js';
 import {
   getCarpetJunctionSprite,
   getCarpetPaletteKey,
   hasCarpetSprites,
 } from '../sprites/carpetTiles.js';
 import { getGlowSprite } from '../sprites/glowSprites.js';
+import { getMonitorOverlay } from '../sprites/monitorSprites.js';
 import { getPetSprites } from '../sprites/petSpriteData.js';
 import {
   getCachedSprite,
@@ -165,6 +172,8 @@ export interface LightingRenderState {
   lighting: Lighting;
   sources: readonly GlowSource[];
   fixtures: GlowFixtures;
+  /** Window light shafts for the current hour (empty at night). */
+  shafts: readonly Shaft[];
 }
 
 /** The Area color wash is an editing aid: it shows only while the Areas tool is active.
@@ -483,10 +492,20 @@ export function renderScene(
         },
       });
     } else {
+      const onScreen = cozyLighting && f.type?.startsWith(MONITOR_ON_TYPE_PREFIX);
       drawables.push({
         zY: f.zY,
         draw: (c) => {
           c.drawImage(cached, fx, fy);
+          if (onScreen) {
+            // An active CRT: glow, the occasional dim and scanlines, over the screen pixels only.
+            const { dim } = monitorLook(true, monitorTick(look?.nowMs ?? 0), f.x * 31 + f.y);
+            c.drawImage(
+              getMonitorOverlay(zoom, dim),
+              fx + MONITOR_SCREEN_RECT.x * zoom,
+              fy + MONITOR_SCREEN_RECT.y * zoom,
+            );
+          }
         },
       });
     }
@@ -1231,6 +1250,42 @@ export interface SelectionRenderState {
   characters: Map<number, Character>;
 }
 
+/** Window light: each shaft is clipped to the floor cells it may land on and painted in its own
+ *  pass with the shaft blend (not `screen`), under the furniture and characters so nothing
+ *  standing in the light is tinted. */
+function renderShafts(
+  ctx: CanvasRenderingContext2D,
+  shafts: readonly Shaft[],
+  zoom: number,
+  offsetX: number,
+  offsetY: number,
+): void {
+  if (shafts.length === 0) return;
+  const s = TILE_SIZE * zoom;
+  ctx.save();
+  ctx.globalCompositeOperation = SHAFT_BLEND_MODE;
+  for (const shaft of shafts) {
+    const { r, g, b, alpha } = shaft.color;
+    ctx.save();
+    ctx.beginPath();
+    for (const cell of shaft.cells) ctx.rect(offsetX + cell.col * s, offsetY + cell.row * s, s, s);
+    ctx.clip();
+    ctx.beginPath();
+    shaft.polygon.forEach(([col, row], i) => {
+      const x = offsetX + col * s;
+      const y = offsetY + row * s;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = shaftCss(r, g, b);
+    ctx.globalAlpha = alpha;
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 /** Paint the glows with `screen` inside the map rect: one composite switch per frame, and
  *  nothing can spill onto the transparent canvas around the map. */
 function renderGlows(
@@ -1311,6 +1366,11 @@ export function renderFrame(
   // Carpet layer (above floor, below seat indicators / furniture / characters)
   if (carpetTiles && carpetTiles.length > 0) {
     renderCarpetLayer(ctx, carpetTiles, cols, rows, offsetX, offsetY, zoom);
+  }
+
+  // Window light shafts on the floor, under everything that stands in them
+  if (lightingState && cozyLighting) {
+    renderShafts(ctx, lightingState.shafts, zoom, offsetX, offsetY);
   }
 
   // Area overlay (translucent color wash) — above carpets, below seat indicators. Editing only.

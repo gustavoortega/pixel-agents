@@ -30,6 +30,8 @@ import type {
 import { renderFrame } from '../engine/renderer.js';
 import { getCatalogEntry, isRotatable } from '../layout/furnitureCatalog.js';
 import { lightFixtures, lightingFor, monitorSources } from '../lighting.js';
+import { type Shaft, shaftRects } from '../shafts.js';
+import type { OfficeLayout } from '../types.js';
 import { EditTool, TILE_SIZE } from '../types.js';
 import { computeNormalModeCursor } from './officeCanvasCursor.js';
 
@@ -58,6 +60,16 @@ interface OfficeCanvasProps {
   onAutoZoom: (zoom: number) => void;
   /** Currently-selected area label in the editor (alpha-bumped overlay). null otherwise. */
   activeAreaLabel: string | null;
+}
+
+/** Shafts only change with the layout or the minute, so rebuild them then, not every frame. */
+let shaftMemo: { layout: OfficeLayout; minute: number; shafts: Shaft[] } | null = null;
+function shaftsFor(layout: OfficeLayout, now: Date): Shaft[] {
+  const minute = now.getHours() * 60 + now.getMinutes();
+  if (!shaftMemo || shaftMemo.layout !== layout || shaftMemo.minute !== minute) {
+    shaftMemo = { layout, minute, shafts: shaftRects(layout, now.getHours(), now.getMinutes()) };
+  }
+  return shaftMemo.shafts;
 }
 
 export function OfficeCanvas({
@@ -379,6 +391,7 @@ export function OfficeCanvas({
             lighting: lightingFor(new Date().getHours(), new Date().getMinutes()),
             sources: monitorSources(officeState.characters.values(), officeState.seats),
             fixtures: lightFixtures(layout.furniture),
+            shafts: shaftsFor(layout, new Date()),
           },
         );
         offsetRef.current = { x: offsetX, y: offsetY };
