@@ -20,6 +20,7 @@ import {
   panAfterZoom,
   refitView,
   roomsOf,
+  stepZoom,
   type TileBox,
   zoomAbout,
 } from '../src/office/camera.js';
@@ -107,21 +108,42 @@ test('fitView: the frame is EXACTLY the room union plus one tile of margin', () 
   const target = fitTarget(rooms, [agent('A')]);
   const fit = fitView(target, { cols: 12, rows: 6 }, { width: 1280, height: 720 }, 1);
   assert.deepEqual(fit.box, box(-1, -1, 8, 6));
-  // 10x8 tiles: floor(min(1280/160, 720/128)) = 5
-  assert.equal(fit.zoom, 5);
+  // 10x8 tiles: min(1280/160, 720/128) = 5.6, and the largest zoom level under it is 4
+  assert.equal(fit.zoom, 4);
   assert.deepEqual(fit.center, { x: 64, y: 48 });
 });
 
-test('fitView: no target is the whole map at the biggest integer zoom', () => {
+test('fitView: no target is the whole map at the biggest zoom level that fits', () => {
   const fit = fitView(null, { cols: 20, rows: 11 }, { width: 1280, height: 720 }, 1);
   assert.equal(fit.zoom, 4);
   assert.deepEqual(fit.center, { x: 160, y: 88 });
-  // dpr doubles the device pixels: 2560 x 1440 fits 20 x 11 tiles at floor(min(8, 8.18)) = 8.
+  // dpr doubles the device pixels: 2560 x 1440 fits 20 x 11 tiles at min(8, 8.18) = 8.
   assert.equal(fitView(null, { cols: 20, rows: 11 }, { width: 1280, height: 720 }, 2).zoom, 8);
 });
 
-test('fitZoomWholeMap: the 27x21 layout on a 2560x1300 device-px canvas fits at 3', () => {
-  assert.equal(fitZoomWholeMap({ cols: 27, rows: 21 }, { width: 1280, height: 650 }, 2), 3);
+test('fitView: the zoom is the largest of {1, 2, 4, ..., 20} that fits, never odd', () => {
+  // The whole 20x11 map on a very wide canvas: 11 rows x 16 px = 176 device px per zoom unit
+  const fitAt = (height: number) =>
+    fitView(null, { cols: 20, rows: 11 }, { width: 100000, height }, 1).zoom;
+  assert.equal(fitAt(176 * 3.9), 2);
+  assert.equal(fitAt(176 * 5), 4);
+  assert.equal(fitAt(176 * 1.9), 1);
+  assert.equal(fitAt(176 * 25), 20);
+});
+
+test('stepZoom: + and - walk the zoom levels, 1 <-> 2 then by 2, and stop at the ends', () => {
+  const walk = (from: number, dir: 1 | -1, n: number) => {
+    const seen = [from];
+    for (let i = 0; i < n; i++) seen.push(stepZoom(seen[seen.length - 1], dir));
+    return seen;
+  };
+  assert.deepEqual(walk(1, 1, 4), [1, 2, 4, 6, 8]);
+  assert.deepEqual(walk(8, -1, 5), [8, 6, 4, 2, 1, 1]);
+  assert.deepEqual(walk(18, 1, 2), [18, 20, 20]);
+});
+
+test('fitZoomWholeMap: the 27x21 layout on a 2560x1300 device-px canvas fits at 2 (3.87 snaps down)', () => {
+  assert.equal(fitZoomWholeMap({ cols: 27, rows: 21 }, { width: 1280, height: 650 }, 2), 2);
 });
 
 // ── Hysteresis ─────────────────────────────────────────────────
@@ -146,8 +168,8 @@ test('refitView: a target outside the view re-centres but never zooms in', () =>
 
 test('refitView: a target that no longer fits zooms out', () => {
   const current = { zoom: 5, center: { x: 160, y: 88 } };
-  // the 22x13 tiles with margin fit at floor(min(3.6, 3.46)) = 3
-  assert.equal(refitView(current, box(0, 0, 19, 10), { cols: 20, rows: 11 }, CANVAS, 1)?.zoom, 3);
+  // the 22x13 tiles with margin fit at min(3.6, 3.46), and the zoom level under it is 2
+  assert.equal(refitView(current, box(0, 0, 19, 10), { cols: 20, rows: 11 }, CANVAS, 1)?.zoom, 2);
 });
 
 const input = (patch: Partial<AutoFitInput> = {}): AutoFitInput => ({
@@ -155,7 +177,8 @@ const input = (patch: Partial<AutoFitInput> = {}): AutoFitInput => ({
   map: WIDE,
   canvas: CANVAS,
   dpr: 1,
-  zoom: 3,
+  // the zoom level the first fit of these fixtures lands on
+  zoom: 2,
   pan: { x: 0, y: 0 },
   nowMs: 0,
   editing: false,
@@ -172,14 +195,15 @@ test('AutoFit: fits once on start, then leaves a target inside the view alone', 
 
 test('AutoFit: a target outside the view eases the centre over 300 ms, keeps the zoom, and stays void-free', () => {
   const fit = new AutoFit();
-  fit.step(input({ target: box(0, 0, 5, 10) }));
-  const far = input({ target: box(30, 5, 32, 6), nowMs: 1000 });
+  // 8x8 tiles with the margin: fits at zoom 4, a 20-tile-wide view that cannot see column 30
+  fit.step(input({ target: box(0, 0, 5, 5), zoom: 4 }));
+  const far = input({ target: box(30, 5, 32, 6), zoom: 4, nowMs: 1000 });
   const first = fit.step(far);
-  assert.equal(first.zoom, undefined, 'integer zoom is not animated or changed');
+  assert.equal(first.zoom, undefined, 'the zoom is not animated or changed');
   assert.deepEqual(first.pan, { x: 0, y: 0 }, 'starts where the view is');
   const done = fit.step({ ...far, nowMs: 1300 });
-  // The centre would pan -552, past the right edge of the 40-tile map: clamped to -320.
-  assert.deepEqual(done.pan, { x: -320, y: 0 }, 'ends on the new rooms, without void');
+  // The centre would pan -736, past the right edge of the 40-tile map: clamped to -640.
+  assert.deepEqual(done.pan, { x: -640, y: 0 }, 'ends on the new rooms, without void');
 });
 
 test('AutoFit: a manual zoom or pan, an open editor or a followed agent stops refits; Fit resumes', () => {

@@ -5,7 +5,7 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { SKIN_TONES } from '../src/constants.js';
+import { HUE_LOCKED } from '../../core/src/assets/skinTones.js';
 import { OfficeState } from '../src/office/engine/officeState.js';
 import { getCharacterSprites } from '../src/office/sprites/spriteData.js';
 import type { OfficeLayout, PlacedFurniture } from '../src/office/types.js';
@@ -54,7 +54,7 @@ describe('helper look', () => {
       parentBefore.forEach((row, y) =>
         row.forEach((px, x) => {
           if (px === '') return;
-          if (SKIN_TONES.has(px)) {
+          if (HUE_LOCKED.has(px)) {
             skin++;
             expect(helper[y][x], `char_${n} skin at ${x},${y}`).toBe(px);
           } else {

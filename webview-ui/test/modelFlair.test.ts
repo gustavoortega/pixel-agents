@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { ART_DENSITY } from '../../core/src/assets/constants.js';
 import {
   ACCESSORY_FRONT_Z_OFFSET,
   CAPE_BEHIND_Z_OFFSET,
@@ -240,8 +241,8 @@ describe('tinted outline memo', () => {
     expect(getTintedOutlineSprite(first, RARITY_COLORS.rare)).not.toBe(a);
     const other = getCharacterSprite({ ...ch, frame: 1 }, getCharacterSprites(0, 0));
     expect(getTintedOutlineSprite(other, RARITY_COLORS.epic)).not.toBe(a);
-    // and it really is tinted, one pixel larger on each side
-    expect(a).toHaveLength(34);
+    // and it really is tinted, one world px (ART_DENSITY art px) larger on each side
+    expect(a).toHaveLength(32 + 2 * ART_DENSITY);
     expect(a.flat()).toContain(RARITY_COLORS.epic);
   });
 });

@@ -1,3 +1,5 @@
+import { spriteWorldHeight } from '../../../../core/src/assets/artDensity.js';
+import { ART_DENSITY } from '../../../../core/src/assets/constants.js';
 import type { ColorValue } from '../../components/ui/types.js';
 import {
   CHARACTER_SITTING_OFFSET_PX,
@@ -84,7 +86,8 @@ function couchInstances(
             [top + cut, top + TILE_SIZE, rowZ + 1],
           ];
     for (const [y0, y1, zY] of parts) {
-      const part = sliceRows(sprite, y0, y1);
+      // The cut is in world px; the sprite is art px.
+      const part = sliceRows(sprite, y0 * ART_DENSITY, y1 * ART_DENSITY);
       if (part.length === 0) continue;
       out.push({ sprite: part, x, y: y + y0, zY, ...mirror });
     }
@@ -103,7 +106,7 @@ export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): Furnit
     if (!entry) continue;
     const x = item.col * TILE_SIZE;
     const y = item.row * TILE_SIZE;
-    const spriteH = entry.sprite.length;
+    const spriteH = spriteWorldHeight(entry.sprite);
     let zY = y + spriteH;
 
     // Chair z-sorting: ensure characters sitting on chairs render correctly
@@ -134,12 +137,7 @@ export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): Furnit
     // Colorize sprite if this furniture has a color override
     let sprite = entry.sprite;
     if (item.color) {
-      const { h, s, b: bv, c: cv } = item.color;
-      sprite = getColorizedSprite(
-        `furn-${item.type}-${h}-${s}-${bv}-${cv}-${item.color.colorize ? 1 : 0}`,
-        entry.sprite,
-        item.color,
-      );
+      sprite = getColorizedSprite(entry.sprite, item.color);
     }
 
     // Determine if this instance should be mirrored (side asset used in "left" orientation)
@@ -218,7 +216,7 @@ export function getDeskTiles(furniture: PlacedFurniture[]): Map<string, number> 
   for (const item of furniture) {
     const entry = getCatalogEntry(item.type);
     if (!entry || !entry.isDesk) continue;
-    const zY = item.row * TILE_SIZE + entry.sprite.length;
+    const zY = item.row * TILE_SIZE + spriteWorldHeight(entry.sprite);
     for (let dr = 0; dr < entry.footprintH; dr++) {
       for (let dc = 0; dc < entry.footprintW; dc++) {
         const key = `${item.col + dc},${item.row + dr}`;
@@ -300,11 +298,13 @@ function deskSeatSink(
       ) {
         continue;
       }
-      // First row (px from the sprite's top) with an opaque pixel in the seat's column.
-      const x0 = (col - item.col) * TILE_SIZE;
+      // First art row with an opaque pixel in the seat's column, read at art resolution and
+      // brought back to world px.
+      const x0 = (col - item.col) * TILE_SIZE * ART_DENSITY;
+      const x1 = x0 + TILE_SIZE * ART_DENSITY;
       let top = -1;
       for (let y = 0; y < entry.sprite.length && top < 0; y++) {
-        for (let x = x0; x < x0 + TILE_SIZE; x++) {
+        for (let x = x0; x < x1; x++) {
           if (pixelAlpha(entry.sprite[y]?.[x] ?? '') >= OPAQUE_ALPHA) {
             top = y;
             break;
@@ -312,7 +312,7 @@ function deskSeatSink(
         }
       }
       if (top < 0) continue;
-      const deskTopY = item.row * TILE_SIZE + top;
+      const deskTopY = item.row * TILE_SIZE + top / ART_DENSITY;
       const seatY = seatRow * TILE_SIZE + TILE_SIZE / 2;
       return Math.max(
         0,

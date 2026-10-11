@@ -38,7 +38,8 @@ export default [
     },
   },
   {
-    files: ['adapters/vscode/constants.ts'],
+    // Palette data: the hue-locked skin colors are the module's whole content.
+    files: ['adapters/vscode/constants.ts', 'core/src/assets/skinTones.ts'],
     rules: {
       'pixel-agents/no-inline-colors': 'off',
     },

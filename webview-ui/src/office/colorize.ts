@@ -6,32 +6,76 @@
  * - Adjust (default for furniture): shift original pixel HSL values.
  */
 
+import { HUE_LOCKED } from '../../../core/src/assets/skinTones.js';
 import type { ColorValue } from '../components/ui/types.js';
 import type { SpriteData } from './types.js';
 
-/** Generic colorized sprite cache: arbitrary string key → SpriteData */
-const colorizeCache = new Map<string, SpriteData>();
+/**
+ * Recolored sprites, keyed by (source sprite, color key). Keyed on the sprite object, not a name,
+ * so a reloaded sheet never gets a stale hit and the same request always returns the same object
+ * (the canvas cache keys on SpriteData identity, so a fresh array would rebuild a canvas per draw).
+ */
+let colorizeCache = new WeakMap<SpriteData, Map<string, SpriteData>>();
+
+/** Every field that changes the output, including the mode. */
+function colorKey(color: ColorValue): string {
+  return `${color.h}|${color.s}|${color.b}|${color.c}|${color.colorize ? 1 : 0}`;
+}
+
+function memo(sprite: SpriteData, key: string, build: () => SpriteData): SpriteData {
+  let byKey = colorizeCache.get(sprite);
+  if (!byKey) {
+    byKey = new Map();
+    colorizeCache.set(sprite, byKey);
+  }
+  let hit = byKey.get(key);
+  if (!hit) {
+    hit = build();
+    byKey.set(key, hit);
+  }
+  return hit;
+}
 
 /**
  * Get a color-adjusted sprite from cache, or compute and cache it.
  * Dispatches to colorize or adjust mode based on `color.colorize`.
- * Caller provides a unique cache key that must include the colorize flag.
  */
-export function getColorizedSprite(
-  cacheKey: string,
-  sprite: SpriteData,
-  color: ColorValue,
-): SpriteData {
-  const cached = colorizeCache.get(cacheKey);
-  if (cached) return cached;
-  const result = color.colorize ? colorizeSprite(sprite, color) : adjustSprite(sprite, color);
-  colorizeCache.set(cacheKey, result);
-  return result;
+export function getColorizedSprite(sprite: SpriteData, color: ColorValue): SpriteData {
+  return memo(sprite, colorKey(color), () =>
+    color.colorize ? colorizeSprite(sprite, color) : adjustSprite(sprite, color),
+  );
+}
+
+/**
+ * Adjust mode that leaves every HUE_LOCKED color as it is: the character hue shift and the gray
+ * helper look change hair and outfit, never skin, blush or eye shine.
+ */
+export function getHueLockedSprite(sprite: SpriteData, color: ColorValue): SpriteData {
+  return memo(sprite, `locked|${colorKey(color)}`, () =>
+    remapColors(sprite, (px) => (HUE_LOCKED.has(px) ? px : adjustColor(px, color))),
+  );
 }
 
 /** Clear all cached colorized sprites (e.g., on asset reload) */
 export function clearColorizeCache(): void {
-  colorizeCache.clear();
+  colorizeCache = new WeakMap();
+}
+
+/** Rebuild the sprite with each distinct color mapped once: a sprite has a few dozen colors and
+ *  thousands of pixels, so the HSL math runs per color, not per pixel. */
+function remapColors(sprite: SpriteData, map: (px: string) => string): SpriteData {
+  const seen = new Map<string, string>();
+  return sprite.map((row) =>
+    row.map((px) => {
+      if (px === '') return '';
+      let out = seen.get(px);
+      if (out === undefined) {
+        out = map(px);
+        seen.set(px, out);
+      }
+      return out;
+    }),
+  );
 }
 
 /**
@@ -45,50 +89,27 @@ export function clearColorizeCache(): void {
  * 5. Convert HSL -> RGB -> hex
  */
 export function colorizeSprite(sprite: SpriteData, color: ColorValue): SpriteData {
+  return remapColors(sprite, (px) => colorizeColor(px, color));
+}
+
+function colorizeColor(pixel: string, color: ColorValue): string {
   const { h, s, b, c } = color;
-  const result: SpriteData = [];
-
-  for (const row of sprite) {
-    const newRow: string[] = [];
-    for (const pixel of row) {
-      if (pixel === '') {
-        newRow.push('');
-        continue;
-      }
-
-      // Parse hex to get RGB values
-      const r = parseInt(pixel.slice(1, 3), 16);
-      const g = parseInt(pixel.slice(3, 5), 16);
-      const bv = parseInt(pixel.slice(5, 7), 16);
-      // Use perceived luminance for grayscale
-      let lightness = (0.299 * r + 0.587 * g + 0.114 * bv) / 255;
-
-      // Apply contrast: expand/compress around 0.5
-      if (c !== 0) {
-        const factor = (100 + c) / 100;
-        lightness = 0.5 + (lightness - 0.5) * factor;
-      }
-
-      // Apply brightness: shift up/down
-      if (b !== 0) {
-        lightness = lightness + b / 200;
-      }
-
-      // Clamp
-      lightness = Math.max(0, Math.min(1, lightness));
-
-      // Preserve original alpha
-      const alpha = extractAlpha(pixel);
-
-      // Convert HSL to RGB
-      const satFrac = s / 100;
-      const hex = hslToHex(h, satFrac, lightness);
-      newRow.push(appendAlpha(hex, alpha));
-    }
-    result.push(newRow);
+  const r = parseInt(pixel.slice(1, 3), 16);
+  const g = parseInt(pixel.slice(3, 5), 16);
+  const bv = parseInt(pixel.slice(5, 7), 16);
+  // Use perceived luminance for grayscale
+  let lightness = (0.299 * r + 0.587 * g + 0.114 * bv) / 255;
+  // Apply contrast: expand/compress around 0.5
+  if (c !== 0) {
+    const factor = (100 + c) / 100;
+    lightness = 0.5 + (lightness - 0.5) * factor;
   }
-
-  return result;
+  // Apply brightness: shift up/down
+  if (b !== 0) {
+    lightness = lightness + b / 200;
+  }
+  lightness = Math.max(0, Math.min(1, lightness));
+  return appendAlpha(hslToHex(h, s / 100, lightness), extractAlpha(pixel));
 }
 
 /** Extract alpha from a hex pixel string. Returns 255 for #RRGGBB, parsed value for #RRGGBBAA. */
@@ -206,48 +227,26 @@ export function flatColorizeSprite(sprite: SpriteData, color: ColorValue): Sprit
  * C slider (-100 to 100): adjusts contrast around midpoint
  */
 export function adjustSprite(sprite: SpriteData, color: ColorValue): SpriteData {
+  return remapColors(sprite, (px) => adjustColor(px, color));
+}
+
+function adjustColor(pixel: string, color: ColorValue): string {
   const { h: hShift, s: sShift, b, c } = color;
-  const result: SpriteData = [];
-
-  for (const row of sprite) {
-    const newRow: string[] = [];
-    for (const pixel of row) {
-      if (pixel === '') {
-        newRow.push('');
-        continue;
-      }
-
-      const r = parseInt(pixel.slice(1, 3), 16);
-      const g = parseInt(pixel.slice(3, 5), 16);
-      const bv = parseInt(pixel.slice(5, 7), 16);
-      const alpha = extractAlpha(pixel);
-      const [origH, origS, origL] = rgbToHsl(r, g, bv);
-
-      // Shift hue
-      const newH = (((origH + hShift) % 360) + 360) % 360;
-
-      // Shift saturation
-      const newS = Math.max(0, Math.min(1, origS + sShift / 100));
-
-      // Apply contrast: expand/compress around 0.5
-      let lightness = origL;
-      if (c !== 0) {
-        const factor = (100 + c) / 100;
-        lightness = 0.5 + (lightness - 0.5) * factor;
-      }
-
-      // Apply brightness
-      if (b !== 0) {
-        lightness = lightness + b / 200;
-      }
-
-      lightness = Math.max(0, Math.min(1, lightness));
-
-      const hex = hslToHex(newH, newS, lightness);
-      newRow.push(appendAlpha(hex, alpha));
-    }
-    result.push(newRow);
+  const r = parseInt(pixel.slice(1, 3), 16);
+  const g = parseInt(pixel.slice(3, 5), 16);
+  const bv = parseInt(pixel.slice(5, 7), 16);
+  const [origH, origS, origL] = rgbToHsl(r, g, bv);
+  const newH = (((origH + hShift) % 360) + 360) % 360;
+  const newS = Math.max(0, Math.min(1, origS + sShift / 100));
+  // Apply contrast: expand/compress around 0.5
+  let lightness = origL;
+  if (c !== 0) {
+    const factor = (100 + c) / 100;
+    lightness = 0.5 + (lightness - 0.5) * factor;
   }
-
-  return result;
+  if (b !== 0) {
+    lightness = lightness + b / 200;
+  }
+  lightness = Math.max(0, Math.min(1, lightness));
+  return appendAlpha(hslToHex(newH, newS, lightness), extractAlpha(pixel));
 }

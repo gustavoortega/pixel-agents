@@ -3,6 +3,8 @@
  * renderer and the tests share one definition of "below the outline".
  */
 
+import { upscaleSprite } from '../../../core/src/assets/artDensity.js';
+import { ART_DENSITY } from '../../../core/src/assets/constants.js';
 import {
   OUTLINE_Z_SORT_OFFSET,
   SHADOW_COLOR,
@@ -35,9 +37,13 @@ function ovalSprite(w: number, h: number): SpriteData {
   return rows;
 }
 
-// Built once: getCachedSprite keys its canvases by sprite identity.
-const SHADOW_SPRITE = ovalSprite(SHADOW_SIZE_PX.w, SHADOW_SIZE_PX.h);
-const SHADOW_SMALL_SPRITE = ovalSprite(SHADOW_SMALL_SIZE_PX.w, SHADOW_SMALL_SIZE_PX.h);
+// Built once: getCachedSprite keys its canvases by sprite identity. Rasterized in world px and
+// upscaled, so the oval keeps the exact shape it had before art went to ART_DENSITY.
+const SHADOW_SPRITE = upscaleSprite(ovalSprite(SHADOW_SIZE_PX.w, SHADOW_SIZE_PX.h), ART_DENSITY);
+const SHADOW_SMALL_SPRITE = upscaleSprite(
+  ovalSprite(SHADOW_SMALL_SIZE_PX.w, SHADOW_SMALL_SIZE_PX.h),
+  ART_DENSITY,
+);
 
 /** Sub-agents and companions get the small oval. */
 export function shadowSprite(small: boolean): SpriteData {

@@ -9,6 +9,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
+import { ART_DENSITY } from '../../core/src/assets/constants.js';
 import { TILE_SIZE } from '../src/constants.js';
 import { getCharacterSprite } from '../src/office/engine/characters.js';
 import { OfficeState } from '../src/office/engine/officeState.js';
@@ -54,12 +55,16 @@ function composite(os: OfficeState, ch: Character): Array<Array<Label | null>> {
     { zY: ch.y + TILE_SIZE / 2 + 0.5, sprite, x: drawX, y: drawY, label: 'char' as Label },
   ].sort((a, b) => a.zY - b.zY);
   const solid = (p: string) => p !== '' && (p.length === 7 || parseInt(p.slice(7, 9), 16) >= 128);
+  // Sprites are art px (ART_DENSITY per world px): one screen pixel per world px samples every
+  // ART_DENSITY-th art pixel, which is exact for the upscaled 1x art.
   for (const l of layers) {
-    l.sprite.forEach((row, dy) =>
-      row.forEach((p, dx) => {
+    for (let dy = 0; dy * ART_DENSITY < l.sprite.length; dy++) {
+      const row = l.sprite[dy * ART_DENSITY];
+      for (let dx = 0; dx * ART_DENSITY < row.length; dx++) {
+        const p = row[dx * ART_DENSITY];
         if (solid(p) && px[l.y + dy]?.[l.x + dx] !== undefined) px[l.y + dy][l.x + dx] = l.label;
-      }),
-    );
+      }
+    }
   }
   return px;
 }

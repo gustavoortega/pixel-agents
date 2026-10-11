@@ -4,6 +4,7 @@ import * as path from 'path';
 import { PNG } from 'pngjs';
 import { afterAll, describe, expect, it } from 'vitest';
 
+import { ART_DENSITY, CHAR_FRAME_H, CHAR_FRAME_W } from '../../core/src/assets/constants.js';
 import { decodeCharacterPng } from '../../core/src/assets/pngDecoder.js';
 import { buildAssets } from '../../scripts/cozy-art/generate.js';
 
@@ -58,8 +59,9 @@ describe('cozy art pack', () => {
         // The idle row is decoded as frames 7..10 of `down`.
         expect(sheet[dir]).toHaveLength(dir === 'down' ? 11 : 7);
         sheet[dir].forEach((frame, f) => {
-          expect(frame).toHaveLength(32);
-          expect(frame[0]).toHaveLength(16);
+          // Decoded frames are art px: the 1x sheet comes back upscaled to ART_DENSITY.
+          expect(frame).toHaveLength(CHAR_FRAME_H * ART_DENSITY);
+          expect(frame[0]).toHaveLength(CHAR_FRAME_W * ART_DENSITY);
           const opaque = frame.flat().filter((px) => px !== '').length;
           expect(opaque, `char_${i} ${dir} frame ${f}`).toBeGreaterThan(40);
         });
@@ -165,7 +167,8 @@ describe('cozy art pack', () => {
       expect(a.shoulderBob).toHaveLength(sheet[dir].length);
       sheet[dir].forEach((frame, f) => {
         const top = frame.findIndex((row) => row.some((px) => px !== ''));
-        expect(top, `${dir} frame ${f}`).toBe(a.headTopY + a.bob[f]);
+        // anchors are world px, frames art px
+        expect(top / ART_DENSITY, `${dir} frame ${f}`).toBe(a.headTopY + a.bob[f]);
       });
       expect(a.shoulderY).toBeGreaterThan(a.headTopY);
     }

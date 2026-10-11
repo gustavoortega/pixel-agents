@@ -10,6 +10,7 @@
  * Bitmask convention: N=1, E=2, S=4, W=8. Out-of-bounds = NOT wall.
  */
 
+import { spriteWorldHeight } from '../../../core/src/assets/artDensity.js';
 import type { ColorValue } from '../components/ui/types.js';
 import { getColorizedSprite } from './colorize.js';
 import type { FurnitureInstance, SpriteData, TileType as TileTypeVal } from './types.js';
@@ -73,7 +74,7 @@ function getWallSprite(
   if (!sprite) return null;
 
   // Anchor sprite at bottom of tile — tall sprites extend upward
-  return { sprite, offsetY: TILE_SIZE - sprite.length };
+  return { sprite, offsetY: TILE_SIZE - spriteWorldHeight(sprite) };
 }
 
 /**
@@ -95,10 +96,9 @@ function getColorizedWallSprite(
   const sprite = sprites[mask];
   if (!sprite) return null;
 
-  const cacheKey = `wall-${setIndex}-${mask}-${color.h}-${color.s}-${color.b}-${color.c}`;
-  const colorized = getColorizedSprite(cacheKey, sprite, { ...color, colorize: true });
+  const colorized = getColorizedSprite(sprite, { ...color, colorize: true });
 
-  return { sprite: colorized, offsetY: TILE_SIZE - sprite.length };
+  return { sprite: colorized, offsetY: TILE_SIZE - spriteWorldHeight(sprite) };
 }
 
 /**

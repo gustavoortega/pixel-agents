@@ -1,6 +1,8 @@
+import { emptyArtSprite, spriteAtArtDensity } from '../../../../core/src/assets/artDensity.js';
+import { CHAR_FRAME_H, CHAR_FRAME_W } from '../../../../core/src/assets/constants.js';
 import type { ColorValue } from '../../components/ui/types.js';
-import { HELPER_LOOK, PALETTE_COUNT, SKIN_TONES } from '../../constants.js';
-import { adjustSprite } from '../colorize.js';
+import { HELPER_LOOK, PALETTE_COUNT } from '../../constants.js';
+import { getHueLockedSprite } from '../colorize.js';
 import type { Direction, SpriteData } from '../types.js';
 import { Direction as Dir } from '../types.js';
 import bubblePermissionData from './bubble-permission.json';
@@ -10,21 +12,24 @@ import bubbleWaitingData from './bubble-waiting.json';
 // ── Speech Bubble Sprites ───────────────────────────────────────
 
 interface BubbleSpriteJson {
+  /** Art px per world px; absent = legacy 1x. */
+  density?: number;
   palette: Record<string, string>;
   pixels: string[][];
 }
 
 function resolveBubbleSprite(data: BubbleSpriteJson): SpriteData {
-  return data.pixels.map((row) => row.map((key) => data.palette[key] ?? key));
+  const sprite = data.pixels.map((row) => row.map((key) => data.palette[key] ?? key));
+  return spriteAtArtDensity(sprite, data.density, 'bubble sprite');
 }
 
-/** Permission bubble: white square with "..." in amber, and a tail pointer (11x13) */
+/** Permission bubble: white square with "..." in amber, and a tail pointer (11x13 world px) */
 export const BUBBLE_PERMISSION_SPRITE: SpriteData = resolveBubbleSprite(bubblePermissionData);
 
-/** Waiting bubble: white square with green checkmark, and a tail pointer (11x13) */
+/** Waiting bubble: white square with green checkmark, and a tail pointer (11x13 world px) */
 export const BUBBLE_WAITING_SPRITE: SpriteData = resolveBubbleSprite(bubbleWaitingData);
 
-/** Heart bubble: pet petting feedback (11x13) */
+/** Heart bubble: pet petting feedback (11x13 world px) */
 export const BUBBLE_HEART_SPRITE: SpriteData = resolveBubbleSprite(bubblePetData);
 
 // ════════════════════════════════════════════════════════════════
@@ -116,13 +121,10 @@ function mapCharacterSprites(
   };
 }
 
-/** Adjust every pixel except skin: the face stays the parent's, only hair and outfit change. */
+/** Adjust every pixel except the HUE_LOCKED ones: the face stays the parent's, only hair and
+ *  outfit change. */
 function adjustSpritesKeepingSkin(sprites: CharacterSprites, color: ColorValue): CharacterSprites {
-  return mapCharacterSprites(sprites, (s) =>
-    adjustSprite(s, color).map((row, y) =>
-      row.map((px, x) => (SKIN_TONES.has(s[y][x]) ? s[y][x] : px)),
-    ),
-  );
+  return mapCharacterSprites(sprites, (s) => getHueLockedSprite(s, color));
 }
 
 /** Apply hue shift to every sprite in a CharacterSprites set. Skin pixels keep their color:
@@ -134,15 +136,6 @@ export function hueShiftSprites(sprites: CharacterSprites, hueShift: number): Ch
 /** The helper look: the parent's sheet with hair and outfit washed out to gray. */
 export function helperSprites(sprites: CharacterSprites): CharacterSprites {
   return adjustSpritesKeepingSkin(sprites, HELPER_LOOK);
-}
-
-/** Create a transparent placeholder sprite of given dimensions */
-function emptySprite(w: number, h: number): SpriteData {
-  const rows: string[][] = [];
-  for (let y = 0; y < h; y++) {
-    rows.push(new Array(w).fill(''));
-  }
-  return rows;
 }
 
 /**
@@ -190,8 +183,8 @@ export function getCharacterSprites(
       idle: [d[7] ?? d[3], d[8] ?? d[3], d[9] ?? d[5], d[10] ?? d[6]],
     };
   } else {
-    // Fallback: return transparent placeholder sprites (16×32)
-    const e = emptySprite(16, 32);
+    // Fallback: transparent placeholders of one frame's size
+    const e = emptyArtSprite(CHAR_FRAME_W, CHAR_FRAME_H);
     const walkSet: [SpriteData, SpriteData, SpriteData, SpriteData] = [e, e, e, e];
     const pairSet: [SpriteData, SpriteData] = [e, e];
     sprites = {

@@ -20,6 +20,7 @@ import {
   NAMEPLATE_SLOT_CLEARANCE_PX,
   NAMEPLATE_SUB_BG,
   NAMEPLATE_TEXT_COLOR,
+  PLATE_SCALE_FIT_FLOOR,
   PLATE_SCALE_MAX,
   PLATE_SCALE_MIN,
   PLATE_TITLE_MIN_SCALE,
@@ -39,7 +40,10 @@ export type PlateSide = 'above' | 'below';
  * unreadable or a billboard.
  */
 export function plateScale(zoom: number, fitZoomWholeMap: number): number {
-  return Math.max(PLATE_SCALE_MIN, Math.min(PLATE_SCALE_MAX, zoom / Math.max(1, fitZoomWholeMap)));
+  return Math.max(
+    PLATE_SCALE_MIN,
+    Math.min(PLATE_SCALE_MAX, zoom / Math.max(PLATE_SCALE_FIT_FLOOR, fitZoomWholeMap)),
+  );
 }
 
 /** The title line (`sub`) only shows at full size; below it the plate is `Lv N  Name`. */

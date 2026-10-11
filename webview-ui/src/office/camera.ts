@@ -13,7 +13,7 @@ import {
   FIT_MIN_ROOMS,
   LOUNGE_FURNITURE_TYPE,
   TILE_SIZE,
-  ZOOM_MAX,
+  ZOOM_LEVELS,
   ZOOM_MIN,
 } from '../constants.js';
 
@@ -184,9 +184,22 @@ function boxCenter(box: TileBox): Point {
   };
 }
 
-/** Largest integer zoom at which `tilesW` x `tilesH` tiles fit the canvas (device px). */
+/** Largest zoom of ZOOM_LEVELS at or below `zoom`; ZOOM_MIN when none is. */
+export function snapZoom(zoom: number): number {
+  let best = ZOOM_MIN;
+  for (const level of ZOOM_LEVELS) if (level <= zoom) best = level;
+  return best;
+}
+
+/** The next zoom level in `dir` (+1 in, -1 out), staying put at either end. */
+export function stepZoom(zoom: number, dir: 1 | -1): number {
+  const i = ZOOM_LEVELS.indexOf(snapZoom(zoom));
+  return ZOOM_LEVELS[Math.max(0, Math.min(ZOOM_LEVELS.length - 1, i + dir))];
+}
+
+/** Largest zoom level at which `tilesW` x `tilesH` tiles fit the canvas (device px). */
 function zoomToFit(tilesW: number, tilesH: number, devW: number, devH: number): number {
-  return Math.floor(Math.min(devW / (tilesW * TILE_SIZE), devH / (tilesH * TILE_SIZE)));
+  return snapZoom(Math.min(devW / (tilesW * TILE_SIZE), devH / (tilesH * TILE_SIZE)));
 }
 
 /** Zoom at which the whole map fits the canvas: the reference the plates scale against. */
@@ -195,13 +208,12 @@ export function fitZoomWholeMap(
   canvas: { width: number; height: number },
   dpr: number,
 ): number {
-  const fit = zoomToFit(map.cols, map.rows, canvas.width * dpr, canvas.height * dpr);
-  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fit));
+  return zoomToFit(map.cols, map.rows, canvas.width * dpr, canvas.height * dpr);
 }
 
 /**
  * Zoom and centre that frame the target box plus a margin, or the whole map when there is no
- * target. The zoom is the largest integer at which the frame fits, so the frame fills the shorter
+ * target. The zoom is the largest zoom level at which the frame fits, so the frame fills the shorter
  * viewport axis; the longer one is left to the pan clamp's centring. `canvas` is in CSS px.
  */
 export function fitView(
@@ -215,8 +227,7 @@ export function fitView(
   const box = target
     ? withMargin(target)
     : { col0: 0, row0: 0, col1: map.cols - 1, row1: map.rows - 1 };
-  const fit = zoomToFit(box.col1 - box.col0 + 1, box.row1 - box.row0 + 1, devW, devH);
-  const zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fit));
+  const zoom = zoomToFit(box.col1 - box.col0 + 1, box.row1 - box.row0 + 1, devW, devH);
   return { zoom, center: boxCenter(box), box };
 }
 

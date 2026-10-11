@@ -1,3 +1,4 @@
+import { spriteAtArtDensity } from '../../../../core/src/assets/artDensity.js';
 import type { ModelTier } from '../../../../core/src/provider.js';
 import {
   ACCESSORY_FRONT_Z_OFFSET,
@@ -6,6 +7,7 @@ import {
   SPARKLE_MIN_ALPHA,
   SPARKLE_PERIOD_MS,
 } from '../../constants.js';
+import { worldToDevice } from '../projection.js';
 import { seatedDrawOffsetPx } from '../seatDraw.js';
 import anchorsData from '../sprites/flair/anchors.json';
 import capeData from '../sprites/flair/cape.json';
@@ -26,13 +28,15 @@ import { AccessoryKind } from './modelFlair.js';
 type FacingKey = 'down' | 'up' | 'right';
 
 interface DirectionMap {
-  /** Map row that lands on the anchor row. */
+  /** Row (WORLD px from the map's top) that lands on the anchor row. */
   row: number;
   pixels: string[][];
 }
 
 interface AccessoryJson {
   anchor: 'head' | 'shoulder';
+  /** Art px per world px of the pixel maps; absent = legacy 1x. */
+  density?: number;
   palette: Record<string, string>;
   /** Palette overrides keyed by model tier (the cape's color). */
   variants?: Record<string, Record<string, string>>;
@@ -76,7 +80,8 @@ function flipHorizontal(sprite: SpriteData): SpriteData {
 
 function resolve(json: AccessoryJson, pixels: string[][], tier: ModelTier | undefined): SpriteData {
   const palette = { ...json.palette, ...(tier === undefined ? {} : json.variants?.[tier]) };
-  return pixels.map((row) => row.map((key) => palette[key] ?? ''));
+  const sprite = pixels.map((row) => row.map((key) => palette[key] ?? ''));
+  return spriteAtArtDensity(sprite, json.density, 'accessory sprite');
 }
 
 // Module constants: one SpriteData per (accessory, direction, tier), built once.
@@ -101,7 +106,7 @@ export function getAccessorySprite(
 
 export interface AccessoryPlacement {
   sprite: SpriteData;
-  /** Rows (sprite pixels) from the character sprite's top edge to the accessory's top edge; may be negative. */
+  /** WORLD px from the character sprite's top edge to the accessory's top edge; may be negative. */
   dy: number;
 }
 
@@ -154,18 +159,24 @@ export function characterDrawOrigin(
   zoom: number,
 ): { drawX: number; drawY: number } {
   const sittingOffset = seatedDrawOffsetPx(ch);
+  const feet = worldToDevice({ offsetX, offsetY, zoom }, ch.x, ch.y + sittingOffset);
   return {
-    drawX: Math.round(offsetX + ch.x * zoom - spriteWidthPx / 2),
-    drawY: Math.round(offsetY + (ch.y + sittingOffset) * zoom - spriteHeightPx),
+    drawX: feet.x - Math.floor(spriteWidthPx / 2),
+    drawY: feet.y - spriteHeightPx,
   };
 }
 
 // ── Sparkles ────────────────────────────────────────────────────
 
-export const SPARKLE_SPRITE: SpriteData = (
-  sparkleData as { palette: Record<string, string>; pixels: string[][] }
-).pixels.map((row) =>
-  row.map((key) => (sparkleData as { palette: Record<string, string> }).palette[key] ?? ''),
+const sparkleJson = sparkleData as {
+  density?: number;
+  palette: Record<string, string>;
+  pixels: string[][];
+};
+export const SPARKLE_SPRITE: SpriteData = spriteAtArtDensity(
+  sparkleJson.pixels.map((row) => row.map((key) => sparkleJson.palette[key] ?? '')),
+  sparkleJson.density,
+  'sparkle sprite',
 );
 
 /** Alpha of one sparkle at `timeMs`: a triangle wave between the floor and 1, offset by its phase. */

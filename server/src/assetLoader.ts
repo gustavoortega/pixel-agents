@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type * as vscode from 'vscode';
 
+import { validateManifestDensity } from '../../core/src/assets/artDensity.js';
 import {
   CHAR_FRAMES_PER_ROW,
   MAX_PET_PNG_SIZE,
@@ -24,10 +25,10 @@ import { flattenManifest } from '../../core/src/assets/manifestUtils.js';
 import {
   decodeCharacterPng,
   decodeFloorPng,
+  decodeFurniturePng,
   decodePetPng,
   parseCarpetPng,
   parseWallPng,
-  pngToSpriteData,
 } from '../../core/src/assets/pngDecoder.js';
 import type {
   CharacterDirectionSprites,
@@ -94,6 +95,7 @@ export async function loadFurnitureAssets(workspaceRoot: string): Promise<Loaded
       try {
         const manifestContent = fs.readFileSync(manifestPath, 'utf-8');
         const manifest = JSON.parse(manifestContent) as FurnitureManifest;
+        validateManifestDensity(manifest.density, manifest.id);
 
         // Build the inherited props from the root manifest
         const inherited: InheritedProps = {
@@ -162,7 +164,7 @@ export async function loadFurnitureAssets(workspaceRoot: string): Promise<Loaded
             }
 
             const pngBuffer = fs.readFileSync(assetPath);
-            const spriteData = pngToSpriteData(pngBuffer, asset.width, asset.height);
+            const spriteData = decodeFurniturePng(pngBuffer, asset.id, asset.width, asset.height);
             sprites.set(asset.id, spriteData);
           } catch (err) {
             console.warn(
@@ -327,7 +329,7 @@ export interface LoadedCarpetTiles {
    * Carpet sprite sets indexed [variant][msCase][row][col].
    *   variant: PNG file index (sorted numerically by carpet_N.png suffix)
    *   msCase:  marching-squares case 0..15
-   *   row/col: pixel coordinates within the 16×16 sprite
+   *   row/col: art px within the tile (16×16 world px at ART_DENSITY)
    */
   sets: string[][][][];
 }
@@ -398,13 +400,13 @@ export function sendCarpetTilesToWebview(
 }
 
 interface LoadedFloorTiles {
-  sprites: string[][][]; // N sprites (one per floor_N.png), each 16x16 SpriteData
+  sprites: string[][][]; // N sprites (one per floor_N.png), each one tile at ART_DENSITY
 }
 
 /**
  * Load floor tile patterns from assets/floors/ folder.
  * Each file is named floor_N.png (e.g. floor_0.png, floor_1.png, ...).
- * Files are loaded in numeric order; each PNG is a 16×16 grayscale tile.
+ * Files are loaded in numeric order; each PNG is a 16×16 (or 32×32 HD) grayscale tile.
  */
 export async function loadFloorTiles(assetsRoot: string): Promise<LoadedFloorTiles | null> {
   try {
@@ -482,7 +484,7 @@ export function mergeCharacterSprites(
 /**
  * Load pre-colored character sprites from assets/characters/: char_0.png upward until the first
  * missing index (12 bundled, each 112×96). Null when char_0 is missing.
- * Each PNG has 3 direction rows (down, up, right) × 7 frames (16×32 each).
+ * Each PNG has 3 direction rows (down, up, right) × 7 frames (16×32 world px each, at 1x or 2x).
  */
 export async function loadCharacterSprites(
   assetsRoot: string,

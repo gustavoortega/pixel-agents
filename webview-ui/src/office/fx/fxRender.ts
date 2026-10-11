@@ -22,6 +22,7 @@ import {
   FX_STORM_CLOUD_SHADE,
   FX_WEATHER_RISE_PX,
 } from '../../constants.js';
+import { worldToDevice } from '../projection.js';
 import { seatedBubbleOffsetPx } from '../seatDraw.js';
 import type { Character } from '../types.js';
 import type { ActiveFx } from './fxEngine.js';
@@ -94,10 +95,11 @@ const HEART_CELLS: ReadonlyArray<[number, number]> = [
 
 function headAnchor(ch: Character, ox: number, oy: number, zoom: number): { x: number; y: number } {
   const sit = seatedBubbleOffsetPx(ch);
-  return {
-    x: Math.round(ox + ch.x * zoom),
-    y: Math.round(oy + (ch.y + sit - BUBBLE_VERTICAL_OFFSET_PX) * zoom),
-  };
+  return worldToDevice(
+    { offsetX: ox, offsetY: oy, zoom },
+    ch.x,
+    ch.y + sit - BUBBLE_VERTICAL_OFFSET_PX,
+  );
 }
 
 /** Sparkles, pillar, confetti, storm clouds and hearts. Drawn over the scene; the DOM text is in ToolOverlay. */
@@ -134,7 +136,7 @@ export function renderFx(
       }
     } else {
       if (age < FX_PILLAR_MS) {
-        const feetY = Math.round(oy + ch.y * zoom);
+        const feetY = worldToDevice({ offsetX: ox, offsetY: oy, zoom }, ch.x, ch.y).y;
         const sprite = pillarSprite(zoom);
         ctx.globalAlpha = envelope(age / FX_PILLAR_MS);
         ctx.globalCompositeOperation = 'screen';

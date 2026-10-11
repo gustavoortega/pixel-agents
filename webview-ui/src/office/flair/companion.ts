@@ -1,3 +1,4 @@
+import { spriteAtArtDensity } from '../../../../core/src/assets/artDensity.js';
 import {
   COMPANION_BOB_INTERVAL_SEC,
   COMPANION_HOVER_PX,
@@ -134,6 +135,8 @@ export function companionHoverOffsetPx(kind: CompanionKind, timeSec: number): nu
 // ── Sprites ─────────────────────────────────────────────────────
 
 interface CompanionJson {
+  /** Art px per world px of the frames; absent = legacy 1x. */
+  density?: number;
   facing: 'left' | 'right';
   palette: Record<string, string>;
   frames: { idle: string[][][]; move: string[][][] };
@@ -167,7 +170,11 @@ export function getCompanionSprite(
   const json = COMPANION_JSON[kind];
   const frames = json.frames[set];
   const pixels = frames[frame % frames.length];
-  let sprite = pixels.map((row) => row.map((k) => json.palette[k] ?? ''));
+  let sprite = spriteAtArtDensity(
+    pixels.map((row) => row.map((k) => json.palette[k] ?? '')),
+    json.density,
+    'companion sprite',
+  );
   if ((json.facing === 'right') !== facingRight) {
     sprite = sprite.map((row) => [...row].reverse());
   }
