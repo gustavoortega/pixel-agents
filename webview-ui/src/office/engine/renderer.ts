@@ -544,7 +544,7 @@ export function renderScene(
 
   // Characters
   for (const ch of characters) {
-    const sprites = getCharacterSprites(ch.palette, ch.hueShift);
+    const sprites = getCharacterSprites(ch.palette, ch.hueShift, ch.isSubagent);
     const spriteData = getCharacterSprite(ch, sprites);
     const cached = getCachedSprite(spriteData, zoom);
     // Anchor at bottom-center of character, shifted down while seated (sitting offset)
@@ -1155,12 +1155,17 @@ function renderBubbles(
   zoom: number,
   tripwires?: ReadonlyMap<number, { severity: TripwireSeverity }>,
   nowMs = 0,
+  /** World px each character's bubble stack rises, to clear its plate and tripwire chip. */
+  lifts?: ReadonlyMap<number, number>,
 ): void {
   for (const ch of characters) {
     // Character is anchored bottom-center at (ch.x, ch.y), sprite is 16x24.
     // Bubbles sit above the head with a small gap; follow sitting offset.
     const sittingOff = seatedBubbleOffsetPx(ch);
-    const headY = Math.round(offsetY + (ch.y + sittingOff - BUBBLE_VERTICAL_OFFSET_PX) * zoom);
+    const lift = lifts?.get(ch.id) ?? 0;
+    const headY = Math.round(
+      offsetY + (ch.y + sittingOff - BUBBLE_VERTICAL_OFFSET_PX - lift) * zoom,
+    );
     let topY = headY - 1 * zoom;
 
     // The green checkmark bubble only represents "done" (turn finished). The
@@ -1381,6 +1386,7 @@ export function renderFrame(
   lightingState?: LightingRenderState,
   fx?: FxRenderState,
   deskProps?: readonly DeskPropDraw[],
+  bubbleLifts?: ReadonlyMap<number, number>,
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -1452,7 +1458,7 @@ export function renderFrame(
   }
 
   // Speech bubbles (always on top of characters)
-  renderBubbles(ctx, characters, offsetX, offsetY, zoom, tripwires, look?.nowMs);
+  renderBubbles(ctx, characters, offsetX, offsetY, zoom, tripwires, look?.nowMs, bubbleLifts);
   // XP pops, level-ups and mood weather ride above the bubbles
   if (fx) renderFx(ctx, fx, characters, offsetX, offsetY, zoom);
   // Pet heart bubbles (same overlay pass)

@@ -1,5 +1,5 @@
 import type { ColorValue } from '../../components/ui/types.js';
-import { PALETTE_COUNT, SKIN_TONES } from '../../constants.js';
+import { HELPER_LOOK, PALETTE_COUNT, SKIN_TONES } from '../../constants.js';
 import { adjustSprite } from '../colorize.js';
 import type { Direction, SpriteData } from '../types.js';
 import { Direction as Dir } from '../types.js';
@@ -71,14 +71,11 @@ export interface CharacterSprites {
 
 const spriteCache = new Map<string, CharacterSprites>();
 
-/** Apply hue shift to every sprite in a CharacterSprites set. Skin pixels keep their color:
- *  only hair and outfit change, so a repeated palette never turns green-skinned. */
-export function hueShiftSprites(sprites: CharacterSprites, hueShift: number): CharacterSprites {
-  const color: ColorValue = { h: hueShift, s: 0, b: 0, c: 0 };
-  const shift = (s: SpriteData) => {
-    const shifted = adjustSprite(s, color);
-    return shifted.map((row, y) => row.map((px, x) => (SKIN_TONES.has(s[y][x]) ? s[y][x] : px)));
-  };
+/** Run a per-sprite transform over every frame of a CharacterSprites set. */
+function mapCharacterSprites(
+  sprites: CharacterSprites,
+  shift: (s: SpriteData) => SpriteData,
+): CharacterSprites {
   const shiftWalk = (
     arr: [SpriteData, SpriteData, SpriteData, SpriteData],
   ): [SpriteData, SpriteData, SpriteData, SpriteData] => [
@@ -119,6 +116,26 @@ export function hueShiftSprites(sprites: CharacterSprites, hueShift: number): Ch
   };
 }
 
+/** Adjust every pixel except skin: the face stays the parent's, only hair and outfit change. */
+function adjustSpritesKeepingSkin(sprites: CharacterSprites, color: ColorValue): CharacterSprites {
+  return mapCharacterSprites(sprites, (s) =>
+    adjustSprite(s, color).map((row, y) =>
+      row.map((px, x) => (SKIN_TONES.has(s[y][x]) ? s[y][x] : px)),
+    ),
+  );
+}
+
+/** Apply hue shift to every sprite in a CharacterSprites set. Skin pixels keep their color:
+ *  only hair and outfit change, so a repeated palette never turns green-skinned. */
+export function hueShiftSprites(sprites: CharacterSprites, hueShift: number): CharacterSprites {
+  return adjustSpritesKeepingSkin(sprites, { h: hueShift, s: 0, b: 0, c: 0 });
+}
+
+/** The helper look: the parent's sheet with hair and outfit washed out to gray. */
+export function helperSprites(sprites: CharacterSprites): CharacterSprites {
+  return adjustSpritesKeepingSkin(sprites, HELPER_LOOK);
+}
+
 /** Create a transparent placeholder sprite of given dimensions */
 function emptySprite(w: number, h: number): SpriteData {
   const rows: string[][] = [];
@@ -128,8 +145,16 @@ function emptySprite(w: number, h: number): SpriteData {
   return rows;
 }
 
-export function getCharacterSprites(paletteIndex: number, hueShift = 0): CharacterSprites {
-  const cacheKey = `${paletteIndex}:${hueShift}`;
+/**
+ * Sprites of a palette; `helper` gives the sub-agent look (the same sheet washed to gray, cached
+ * under its own key so the parent's sprites are never touched).
+ */
+export function getCharacterSprites(
+  paletteIndex: number,
+  hueShift = 0,
+  helper = false,
+): CharacterSprites {
+  const cacheKey = helper ? `${paletteIndex}:${hueShift}:helper` : `${paletteIndex}:${hueShift}`;
   const cached = spriteCache.get(cacheKey);
   if (cached) return cached;
 
@@ -196,6 +221,7 @@ export function getCharacterSprites(paletteIndex: number, hueShift = 0): Charact
   if (hueShift !== 0) {
     sprites = hueShiftSprites(sprites, hueShift);
   }
+  if (helper) sprites = helperSprites(sprites);
 
   spriteCache.set(cacheKey, sprites);
   return sprites;

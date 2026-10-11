@@ -349,3 +349,36 @@ test('updatePet handles FOLLOW with null followTargetId (defensive: never enter 
   updatePet(pet, 0.01, walkable, new Map(), tileMap, new Set());
   assert.equal(pet.state, PetState.IDLE, 'no target → exit FOLLOW');
 });
+
+// ── Home room ──────────────────────────────────────────────────
+
+test('a pet with a home room stays inside it for 500 ticks, wandering and following', () => {
+  // Two rooms side by side: columns 0-9 are room A, 10-19 room B. The pet lives in A, next to
+  // the wall, and a character stands in B within follow range the whole time.
+  const cols = 20;
+  const rows = 6;
+  const tileMap = buildOpenTileMap(cols, rows);
+  const walkable = buildWalkableTiles(cols, rows);
+  const roomAt = (col: number) => (col < 10 ? 'A' : 'B');
+  const pet = createPet('p1', 0, 8, 3);
+  pet.homeRoom = 'A';
+  const characters = new Map<number, Character>([
+    [1, makeChar(1, 11, 3)],
+    [2, makeChar(2, 4, 1)],
+  ]);
+
+  // Deterministic stream so every wander target and follow roll differs tick to tick.
+  let seed = 12345;
+  Math.random = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+
+  const seen = new Set<string>();
+  for (let tick = 0; tick < 500; tick++) {
+    updatePet(pet, 0.1, walkable, characters, tileMap, new Set(), roomAt);
+    assert.equal(roomAt(pet.tileCol), 'A', `tick ${tick}: pet at ${pet.tileCol},${pet.tileRow}`);
+    seen.add(`${pet.tileCol},${pet.tileRow}`);
+  }
+  assert.ok(seen.size > 5, 'the pet did move around its room');
+});

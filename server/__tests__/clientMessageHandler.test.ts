@@ -510,7 +510,55 @@ describe('clientMessageHandler: saveAgentSeats palette sync', () => {
 
     expect(store.get(1)?.palette).toBe(2);
     expect(store.get(1)?.hueShift).toBe(40);
-    expect(store.getAdapter()?.loadSeats()['1']).toEqual({ seatId: 'seat-a' });
+    expect(store.getAdapter()?.loadSeats()['s:sess-1']).toEqual({ seatId: 'seat-a' });
+  });
+
+  describe('seats across a restart', () => {
+    const existingAgentMeta = (restarted: AgentStateStore) => {
+      const out: Array<Record<string, unknown>> = [];
+      handleClientMessage({ type: 'webviewReady' }, (m) => out.push(m), {
+        store: restarted,
+        cache: null,
+      });
+      const existing = out.find((m) => m.type === 'existingAgents') as {
+        agentMeta: Record<number, { seatId?: string }>;
+      };
+      return existing.agentMeta;
+    };
+
+    it('each agent gets the seat of its session when the ids come back swapped', () => {
+      store.set(1, createTestAgent({ id: 1, sessionId: 'sess-A' }));
+      store.set(2, createTestAgent({ id: 2, sessionId: 'sess-B' }));
+      handleClientMessage(
+        {
+          type: 'saveAgentSeats',
+          seats: { '1': { seatId: 'seat-of-A' }, '2': { seatId: 'seat-of-B' } },
+        },
+        (m) => sent.push(m),
+        ctx,
+      );
+
+      const restarted = new AgentStateStore();
+      restarted.setAdapter(new FileStateAdapter({ namespace: 'standalone' }));
+      restarted.set(1, createTestAgent({ id: 1, sessionId: 'sess-B' }));
+      restarted.set(2, createTestAgent({ id: 2, sessionId: 'sess-A' }));
+      const meta = existingAgentMeta(restarted);
+      restarted.dispose();
+
+      expect(meta[1].seatId).toBe('seat-of-B');
+      expect(meta[2].seatId).toBe('seat-of-A');
+    });
+
+    it('a seat saved under an old numeric id is ignored, not given to whoever holds that id', () => {
+      store.getAdapter()?.saveSeats({ '1': { seatId: 'stale-seat' } });
+      const restarted = new AgentStateStore();
+      restarted.setAdapter(new FileStateAdapter({ namespace: 'standalone' }));
+      restarted.set(1, createTestAgent({ id: 1, sessionId: 'sess-new' }));
+      const meta = existingAgentMeta(restarted);
+      restarted.dispose();
+
+      expect(meta[1].seatId).toBeUndefined();
+    });
   });
 
   it('drops an out-of-range palette and keeps the existing value', () => {

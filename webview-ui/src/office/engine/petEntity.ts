@@ -54,11 +54,16 @@ function manhattanDistance(c1: number, r1: number, c2: number, r2: number): numb
  * Pick the closest non-sub-agent character within PET_FOLLOW_RADIUS_TILES
  * by Manhattan distance. Excludes despawning characters (matrixEffect === 'despawn').
  */
-function findNearbyCharacter(pet: Pet, characters: Map<number, Character>): Character | null {
+function findNearbyCharacter(
+  pet: Pet,
+  characters: Map<number, Character>,
+  inHome: (col: number, row: number) => boolean,
+): Character | null {
   let closest: Character | null = null;
   let closestDist = Number.POSITIVE_INFINITY;
   for (const ch of characters.values()) {
     if (ch.matrixEffect === 'despawn') continue;
+    if (!inHome(ch.tileCol, ch.tileRow)) continue;
     const d = manhattanDistance(pet.tileCol, pet.tileRow, ch.tileCol, ch.tileRow);
     if (d > PET_FOLLOW_RADIUS_TILES) continue;
     if (d < closestDist) {
@@ -77,6 +82,7 @@ function findAdjacentTile(
   ch: Character,
   tileMap: TileTypeVal[][],
   blockedTiles: Set<string>,
+  inHome: (col: number, row: number) => boolean,
 ): { col: number; row: number } | null {
   const candidates = [
     { col: ch.tileCol, row: ch.tileRow - 1 },
@@ -85,7 +91,7 @@ function findAdjacentTile(
     { col: ch.tileCol + 1, row: ch.tileRow },
   ];
   for (const t of candidates) {
-    if (isWalkable(t.col, t.row, tileMap, blockedTiles)) return t;
+    if (isWalkable(t.col, t.row, tileMap, blockedTiles) && inHome(t.col, t.row)) return t;
   }
   return null;
 }
@@ -173,7 +179,12 @@ export function updatePet(
   characters: Map<number, Character>,
   tileMap: TileTypeVal[][],
   blockedTiles: Set<string>,
+  /** Room label of a tile. With it, a pet with a `homeRoom` stays in that room: it only picks
+   *  targets there and only follows characters standing there. */
+  roomAt?: (col: number, row: number) => string,
 ): void {
+  const inHome = (col: number, row: number): boolean =>
+    pet.homeRoom === undefined || !roomAt || roomAt(col, row) === pet.homeRoom;
   switch (pet.state) {
     case PetState.IDLE: {
       updateIdleAnimation(pet, dt);
@@ -182,7 +193,7 @@ export function updatePet(
 
       // Roll for follow first
       if (Math.random() < PET_FOLLOW_CHANCE) {
-        const target = findNearbyCharacter(pet, characters);
+        const target = findNearbyCharacter(pet, characters, inHome);
         if (target) {
           pet.state = PetState.FOLLOW;
           pet.followTargetId = target.id;
@@ -202,7 +213,7 @@ export function updatePet(
       if (walkableTiles.length > 0) {
         // Filter out own tile to avoid zero-length paths
         const candidates = walkableTiles.filter(
-          (t) => t.col !== pet.tileCol || t.row !== pet.tileRow,
+          (t) => (t.col !== pet.tileCol || t.row !== pet.tileRow) && inHome(t.col, t.row),
         );
         if (candidates.length > 0) {
           const target = candidates[Math.floor(Math.random() * candidates.length)];
@@ -245,8 +256,8 @@ export function updatePet(
       pet.followDuration += dt;
       const target = pet.followTargetId !== null ? characters.get(pet.followTargetId) : undefined;
 
-      // Exit: target gone
-      if (!target) {
+      // Exit: target gone, or it left the pet's room
+      if (!target || !inHome(target.tileCol, target.tileRow)) {
         pet.state = PetState.IDLE;
         pet.followTargetId = null;
         pet.path = [];
@@ -289,7 +300,7 @@ export function updatePet(
       // Continue following: recompute path periodically
       pet.followRecalcTimer -= dt;
       if (pet.followRecalcTimer <= 0) {
-        const adj = findAdjacentTile(target, tileMap, blockedTiles);
+        const adj = findAdjacentTile(target, tileMap, blockedTiles, inHome);
         if (adj) {
           const path = findPath(pet.tileCol, pet.tileRow, adj.col, adj.row, tileMap, blockedTiles);
           if (path.length > 0) {
