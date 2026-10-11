@@ -95,8 +95,19 @@ function couchInstances(
   return out;
 }
 
-/** Convert placed furniture into renderable FurnitureInstance[] */
-export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): FurnitureInstance[] {
+/** How one placed item is drawn this frame, without touching the saved layout. */
+export interface FurnitureLook {
+  /** Swap the sprite (a dark screen, say); the result must be the same size. */
+  sprite?: (sprite: SpriteData) => SpriteData;
+  /** World px to push the drawing down; the sort depth stays where the item stands. */
+  dy?: number;
+}
+
+/** Convert placed furniture into renderable FurnitureInstance[]. `looks` is keyed by item uid. */
+export function layoutToFurnitureInstances(
+  furniture: PlacedFurniture[],
+  looks?: ReadonlyMap<string, FurnitureLook>,
+): FurnitureInstance[] {
   // Pre-compute desk zY per tile so surface items can sort in front of desks
   const deskZByTile = getDeskTiles(furniture);
 
@@ -139,6 +150,9 @@ export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): Furnit
     if (item.color) {
       sprite = getColorizedSprite(entry.sprite, item.color);
     }
+    const look = looks?.get(item.uid);
+    if (look?.sprite) sprite = look.sprite(sprite);
+    const drawY = y + (look?.dy ?? 0);
 
     // Determine if this instance should be mirrored (side asset used in "left" orientation)
     let mirrored = false;
@@ -163,7 +177,14 @@ export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): Furnit
       );
       continue;
     }
-    instances.push({ sprite, type: item.type, x, y, zY, ...(mirrored ? { mirrored: true } : {}) });
+    instances.push({
+      sprite,
+      type: item.type,
+      x,
+      y: drawY,
+      zY,
+      ...(mirrored ? { mirrored: true } : {}),
+    });
   }
   return instances;
 }

@@ -11,21 +11,23 @@
  *   - FOLLOW → IDLE when target reached (Manhattan distance ≤ 1)
  *   - Animation timer increments
  *   - Defensive: empty walkableTiles, etc.
+ *   - In an office: the sunniest cell by day, a sofa cushion at night when nobody works
  *
  * Run with: npm test
  */
 
 import assert from 'node:assert/strict';
 
-import { afterEach, beforeEach, test } from 'vitest';
+import { afterEach, beforeEach, test, vi } from 'vitest';
 
 import {
   PET_FOLLOW_DURATION_MAX_SEC,
   PET_WALK_FRAME_DURATION_SEC,
   PET_WANDER_PAUSE_MAX_SEC,
 } from '../src/constants.js';
+import { OfficeState } from '../src/office/engine/officeState.js';
 import { createPet, updatePet } from '../src/office/engine/petEntity.js';
-import type { Character, TileType as TileTypeVal } from '../src/office/types.js';
+import type { Character, OfficeLayout, Pet, TileType as TileTypeVal } from '../src/office/types.js';
 import {
   CharacterState,
   Direction,
@@ -34,6 +36,7 @@ import {
   TileType,
   WorkStatus,
 } from '../src/office/types.js';
+import { loadRealAssets } from './realAssets.js';
 
 // ── Helpers ────────────────────────────────────────────────────
 
@@ -117,6 +120,7 @@ beforeEach(() => {
 
 afterEach(() => {
   Math.random = realRandom;
+  vi.useRealTimers();
 });
 
 // ── createPet ──────────────────────────────────────────────────
@@ -381,4 +385,94 @@ test('a pet with a home room stays inside it for 500 ticks, wandering and follow
     seen.add(`${pet.tileCol},${pet.tileRow}`);
   }
   assert.ok(seen.size > 5, 'the pet did move around its room');
+});
+
+// ── In an office: sun by day, the sofa at night ────────────────
+
+/** Local wall clock for OfficeState (only Date is faked; the tick is driven by update(dt)). */
+function at(hour: number): void {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 0, 1, hour, 0));
+}
+
+function run(os: OfficeState, seconds: number): void {
+  for (let t = 0; t < seconds; t += 0.1) os.update(0.1);
+}
+
+function adopt(os: OfficeState, col: number, row: number, homeRoom: string): Pet {
+  const pet = createPet('cat', 0, col, row);
+  pet.homeRoom = homeRoom;
+  os.pets.push(pet);
+  return pet;
+}
+
+test('by day the cat settles on the sunniest cell of its room, where two shafts cross, and stays', () => {
+  loadRealAssets();
+  at(12);
+  // Two windows two tiles apart on the top wall: their 3-wide shafts overlap under the gap. The
+  // brightest cell (worked out by hand from the coverage of both parallelograms) is (4, 3); the
+  // first cell either shaft lists is (2, 2), on its own.
+  const cols = 12;
+  const rows = 10;
+  const tiles = new Array(cols * rows).fill(TileType.FLOOR_1);
+  const areaTiles = new Array<string | null>(cols * rows).fill('A');
+  for (let c = 0; c < cols; c++) {
+    tiles[c] = tiles[cols + c] = TileType.WALL;
+    areaTiles[c] = areaTiles[cols + c] = null;
+  }
+  const os = new OfficeState({
+    version: 1,
+    cols,
+    rows,
+    tiles,
+    areaTiles,
+    furniture: [
+      { uid: 'w1', type: 'WINDOW', col: 2, row: 0 },
+      { uid: 'w2', type: 'WINDOW', col: 4, row: 0 },
+    ],
+  } as OfficeLayout);
+  const cat = adopt(os, 9, 8, 'A');
+  run(os, 40);
+  assert.deepEqual([cat.tileCol, cat.tileRow], [4, 3]);
+  run(os, 30);
+  assert.deepEqual([cat.tileCol, cat.tileRow], [4, 3], 'it stays in the sun');
+});
+
+test('at night with nobody working the cat sleeps on a sofa cushion and stays; work wakes it', () => {
+  loadRealAssets();
+  at(22);
+  const cols = 12;
+  const rows = 10;
+  const os = new OfficeState({
+    version: 1,
+    cols,
+    rows,
+    tiles: new Array(cols * rows).fill(TileType.FLOOR_1),
+    furniture: [
+      { uid: 'desk', type: 'DESK_FRONT', col: 7, row: 2 },
+      { uid: 'chair', type: 'CUSHIONED_CHAIR_FRONT', col: 8, row: 2 },
+      { uid: 'sofa', type: 'SOFA_FRONT', col: 3, row: 5 },
+    ],
+  } as OfficeLayout);
+  // An idle agent does not keep the office awake.
+  os.addAgent(1, 0, 0, 'chair', true, undefined, undefined, false);
+  const cat = adopt(os, 9, 8, '');
+  const cushions = [...os.seats.values()]
+    .filter((seat) => seat.couch)
+    .map((seat) => `${seat.seatCol},${seat.seatRow}`);
+  run(os, 40);
+  assert.equal(cat.state, PetState.SLEEP);
+  assert.ok(
+    cushions.includes(`${cat.tileCol},${cat.tileRow}`),
+    `on a cushion, not ${cat.tileCol},${cat.tileRow}`,
+  );
+  const bed = `${cat.tileCol},${cat.tileRow}`;
+  run(os, 30);
+  assert.equal(cat.state, PetState.SLEEP, 'no wandering while asleep');
+  assert.equal(`${cat.tileCol},${cat.tileRow}`, bed);
+
+  os.setAgentActive(1, true);
+  run(os, 2);
+  assert.notEqual(cat.state, PetState.SLEEP);
+  assert.notEqual(`${cat.tileCol},${cat.tileRow}`, bed, 'it stepped off the sofa');
 });

@@ -1,6 +1,6 @@
 /**
  * The warm-light pass: time-of-day phases, where the monitor, lamp and window glows land, and
- * the glow sprite cache.
+ * the glow sprite cache, and the night lights (floor pools and fairy bulbs).
  *
  * Run with: npm test
  */
@@ -17,9 +17,11 @@ import {
   glowDraws,
   type GlowSource,
   isDaytime,
+  isNightPhase,
   lightFixtures,
   lightingFor,
   monitorSources,
+  nightLightDraws,
 } from '../src/office/lighting.js';
 import { CharacterState, Direction } from '../src/office/types.js';
 
@@ -80,7 +82,7 @@ const BASE = {
   offsetY: 20,
   cols: 10,
   rows: 8,
-  fixtures: { lamps: [] },
+  fixtures: { lamps: [], fairyLights: [] },
   enabled: true,
   lighting: lightingFor(12, 0),
 };
@@ -113,7 +115,7 @@ test('glowDraws: idle agents, a disabled setting and zero-strength kinds draw no
     glowDraws({ ...BASE, sources: [seat(3, 2, Direction.DOWN)], enabled: false }),
     [],
   );
-  const noon = { ...BASE, sources: [], fixtures: { lamps: [{ col: 5, row: 3 }] } };
+  const noon = { ...BASE, sources: [], fixtures: { lamps: [{ col: 5, row: 3 }], fairyLights: [] } };
   assert.deepEqual(glowDraws(noon), [], 'lamps are off in plain daylight');
 });
 
@@ -123,7 +125,7 @@ test('glowDraws: the lamp glow is anchored on the lamp head', () => {
     ...BASE,
     lighting: golden,
     sources: [],
-    fixtures: { lamps: [{ col: 5, row: 3 }] },
+    fixtures: { lamps: [{ col: 5, row: 3 }], fairyLights: [] },
   });
   const lamp = draws.find((d) => d.kind === 'lamp')!;
   // head centre (186, 20 + 96 + 12 = 128), radius 80
@@ -147,6 +149,7 @@ test('glowDraws: every rect is inside the map and monitor glows stay below their
         { col: 0, row: 0 },
         { col: 9, row: 6 },
       ],
+      fairyLights: [],
     },
   });
   assert.ok(draws.length > sources.length);
@@ -189,13 +192,101 @@ test('monitorSources: seated working agents light their screen, sub-agents and t
   assert.deepEqual(monitorSources([ch({ isSubagent: true }), ch({ seatId: null })], seats), []);
 });
 
-test('lightFixtures: finds floor lamps by furniture id', () => {
+test('lightFixtures: finds floor lamps and fairy lights by furniture id', () => {
   const found = lightFixtures([
     { type: 'WINDOW', col: 2, row: 0 },
     { type: 'FLOOR_LAMP', col: 5, row: 3 },
     { type: 'PLANT', col: 1, row: 1 },
+    { type: 'FAIRY_LIGHTS', col: 9, row: 1 },
   ]);
   assert.deepEqual(found, {
     lamps: [{ col: 5, row: 3 }],
+    fairyLights: [{ col: 9, row: 1 }],
   });
+});
+
+// ── Night lights ────────────────────────────────────────────────
+
+const NIGHT = {
+  zoom: 2,
+  offsetX: 10,
+  offsetY: 20,
+  cols: 10,
+  rows: 8,
+  enabled: true,
+  nowMs: 0,
+  monitors: [],
+  fixtures: { lamps: [], fairyLights: [] },
+};
+const center = (d: GlowDraw) => ({ x: d.x + d.w / 2, y: d.y + d.h / 2, r: d.w / 2 });
+
+test('nightLightDraws: a 3-tile pool on the lamp base and a 2-tile pool per lit monitor, in the night phase only (20:00 to 05:59)', () => {
+  const input = {
+    ...NIGHT,
+    fixtures: { lamps: [{ col: 5, row: 3 }], fairyLights: [] },
+    monitors: [{ col: 2, row: 2 }],
+  };
+  for (const [h, m, lit] of [
+    [19, 59, false],
+    [20, 0, true],
+    [5, 59, true],
+    [6, 0, false],
+  ] as const) {
+    const { pools } = nightLightDraws({ ...input, night: isNightPhase(h, m) });
+    assert.equal(pools.length, lit ? 2 : 0, `${h}:${m}`);
+  }
+  const { pools } = nightLightDraws({ ...input, night: true });
+  const [lamp, monitor] = pools;
+  // zoom 2: a tile is 32 device px. The lamp base is the middle of its second tile.
+  assert.equal(lamp.kind, 'lampPool');
+  assert.deepEqual(center(lamp), { x: 10 + 5.5 * 32, y: 20 + 4.5 * 32, r: 3 * 32 });
+  assert.equal(monitor.kind, 'monitorPool');
+  assert.deepEqual(center(monitor), { x: 10 + 2.5 * 32, y: 20 + 2.5 * 32, r: 2 * 32 });
+  assert.deepEqual(nightLightDraws({ ...input, night: true, enabled: false }), {
+    pools: [],
+    fairy: [],
+  });
+});
+
+test('nightLightDraws: fairy bulbs glow where the strand hangs, and each twinkles on its own 1.8 s beat', () => {
+  const at = (col: number, row: number, nowMs = 0) =>
+    nightLightDraws({
+      ...NIGHT,
+      night: true,
+      nowMs,
+      fixtures: { lamps: [], fairyLights: [{ col, row }] },
+    }).fairy;
+  const here = at(1, 1);
+  const moved = at(4, 5);
+  assert.equal(here.length, 8, 'one glow per bulb');
+  // Moving the strand moves every glow by the same tiles (32 device px each).
+  here.forEach((d, i) => {
+    assert.deepEqual(
+      { x: center(moved[i]).x - center(d).x, y: center(moved[i]).y - center(d).y },
+      { x: 3 * 32, y: 4 * 32 },
+    );
+  });
+  // Bulbs hang 8 world px apart.
+  for (let i = 1; i < here.length; i++) assert.equal(center(here[i]).x - center(here[i - 1]).x, 16);
+  // Same strength one period later, different strengths across bulbs at one instant.
+  const later = at(1, 1, 1800);
+  here.forEach((d, i) => assert.ok(Math.abs(d.alpha - later[i].alpha) < 1e-9));
+  for (const t of [0, 450, 900]) {
+    const alphas = at(1, 1, t).map((d) => d.alpha);
+    assert.ok(new Set(alphas.map((a) => a.toFixed(3))).size > 4, `bulbs out of step at ${t} ms`);
+    assert.ok(alphas.every((a) => a >= 0.35 - 1e-9 && a <= 1 + 1e-9));
+  }
+  const mid = at(1, 1, 900).map((d) => d.alpha);
+  assert.ok(
+    here.some((d, i) => Math.abs(d.alpha - mid[i]) > 0.1),
+    'the bulbs change within a beat',
+  );
+  assert.deepEqual(
+    nightLightDraws({
+      ...NIGHT,
+      night: false,
+      fixtures: { lamps: [], fairyLights: [{ col: 1, row: 1 }] },
+    }).fairy,
+    [],
+  );
 });

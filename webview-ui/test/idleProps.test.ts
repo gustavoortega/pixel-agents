@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { ART_DENSITY } from '../../core/src/assets/constants.js';
 import { IDLE_PROP_STEAM_FRAME_SEC, NAP_ZZ_PERIOD_MS } from '../src/constants.js';
 import {
   bookPlacement,
@@ -13,6 +14,7 @@ import {
   napZzPlacements,
   steamPlacement,
 } from '../src/office/flair/idleProps.js';
+import ANCHORS from '../src/office/sprites/flair/anchors.json';
 import idleProps from '../src/office/sprites/flair/idle-props.json';
 import zz from '../src/office/sprites/flair/zz.json';
 
@@ -55,5 +57,14 @@ describe('napping Zz', () => {
     expect(later.dy).toBeLessThan(zz.dy);
     expect(later.alpha).toBeLessThan(1);
     for (const t of [0, 300, 1200, 2399]) expect(napZzPlacements(t)).toHaveLength(2);
+  });
+
+  it('start above the head, not on the back of it, when the napper faces away', () => {
+    // From behind the head is upright: every glyph's bottom must clear the head top.
+    for (const t of [0, 600, 1200, 1800]) {
+      for (const g of napZzPlacements(t, false)) {
+        expect(g.dy + g.sprite.length / ART_DENSITY).toBeLessThanOrEqual(ANCHORS.up.headTopY);
+      }
+    }
   });
 });

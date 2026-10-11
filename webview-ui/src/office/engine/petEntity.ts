@@ -6,6 +6,7 @@ import {
   PET_FOLLOW_RECALC_INTERVAL_SEC,
   PET_IDLE_FRAME_DURATION_SEC,
   PET_IDLE_SEQUENCE,
+  PET_SLEEP_FRAME,
   PET_WALK_FRAME_DURATION_SEC,
   PET_WALK_SEQUENCE,
   PET_WALK_SPEED_PX_PER_SEC,
@@ -14,7 +15,7 @@ import {
 } from '../../constants.js';
 import { findPath, isWalkable } from '../layout/tileMap.js';
 import type { PetSpriteFrames } from '../sprites/petSpriteData.js';
-import type { Character, Pet, SpriteData, TileType as TileTypeVal } from '../types.js';
+import type { Character, Pet, PetBed, SpriteData, TileType as TileTypeVal } from '../types.js';
 import { Direction, PetState, TILE_SIZE } from '../types.js';
 
 /** Inclusive-min / exclusive-max random float */
@@ -141,6 +142,86 @@ function movePetAlongPath(pet: Pet, dt: number): void {
   }
 }
 
+/**
+ * What the office asks of a pet this tick. `sun`: by day its idle target is this cell (the
+ * sunniest one in its room). `bed`: the office is asleep, so it heads for this cushion and sleeps
+ * there without wandering (a null bed sleeps where it stands). Absent: it wanders as usual.
+ */
+export type PetGoal =
+  { kind: 'sun'; cell: { col: number; row: number } } | { kind: 'bed'; bed: PetBed | null };
+
+function resetToIdle(pet: Pet): void {
+  pet.state = PetState.IDLE;
+  pet.followTargetId = null;
+  pet.frame = 0;
+  pet.frameTimer = 0;
+  pet.wanderTimer = randomRange(PET_WANDER_PAUSE_MIN_SEC, PET_WANDER_PAUSE_MAX_SEC);
+}
+
+function fallAsleep(pet: Pet): void {
+  pet.state = PetState.SLEEP;
+  pet.path = [];
+  pet.followTargetId = null;
+  pet.dir = Direction.DOWN;
+  pet.frame = 0;
+  pet.frameTimer = 0;
+}
+
+/** Head for the bed: finish the step in progress, walk to the cell beside the cushion, step on. */
+function stepToBed(
+  pet: Pet,
+  bed: PetBed | null,
+  dt: number,
+  tileMap: TileTypeVal[][],
+  blockedTiles: Set<string>,
+): void {
+  if (pet.moveProgress > 0) {
+    updateWalkAnimation(pet, dt);
+    movePetAlongPath(pet, dt);
+    return;
+  }
+  const at = (t: { col: number; row: number }): boolean =>
+    pet.tileCol === t.col && pet.tileRow === t.row;
+  if (!bed || at(bed.cushion)) {
+    fallAsleep(pet);
+    return;
+  }
+  if (at(bed.approach)) {
+    // The cushion is a blocked cell: the last step onto it is taken by hand.
+    pet.path = [bed.cushion];
+  } else {
+    const path = findPath(
+      pet.tileCol,
+      pet.tileRow,
+      bed.approach.col,
+      bed.approach.row,
+      tileMap,
+      blockedTiles,
+    );
+    if (path.length === 0) {
+      fallAsleep(pet);
+      return;
+    }
+    pet.path = path;
+  }
+  pet.state = PetState.WALK;
+  pet.followTargetId = null;
+  updateWalkAnimation(pet, dt);
+  movePetAlongPath(pet, dt);
+}
+
+/** Morning, or someone started working: a sleeper steps off its cushion and goes back to idling. */
+function wake(pet: Pet): void {
+  const bed = pet.bed;
+  pet.bed = null;
+  resetToIdle(pet);
+  if (bed && pet.tileCol === bed.cushion.col && pet.tileRow === bed.cushion.row) {
+    pet.state = PetState.WALK;
+    pet.path = [bed.approach];
+    pet.moveProgress = 0;
+  }
+}
+
 /** Build a fresh pet at a tile with the IDLE FSM entry point. */
 export function createPet(id: string, petType: number, col: number, row: number): Pet {
   const center = tileCenter(col, row);
@@ -182,14 +263,42 @@ export function updatePet(
   /** Room label of a tile. With it, a pet with a `homeRoom` stays in that room: it only picks
    *  targets there and only follows characters standing there. */
   roomAt?: (col: number, row: number) => string,
+  goal?: PetGoal,
 ): void {
   const inHome = (col: number, row: number): boolean =>
     pet.homeRoom === undefined || !roomAt || roomAt(col, row) === pet.homeRoom;
+  if (goal?.kind === 'bed') {
+    stepToBed(pet, goal.bed, dt, tileMap, blockedTiles);
+    return;
+  }
+  if (pet.state === PetState.SLEEP) wake(pet);
   switch (pet.state) {
+    case PetState.SLEEP:
+      break;
     case PetState.IDLE: {
       updateIdleAnimation(pet, dt);
       pet.wanderTimer -= dt;
       if (pet.wanderTimer > 0) break;
+
+      // A sunny cell in its room is where it idles: it walks there, or stays when already on it.
+      if (goal?.kind === 'sun') {
+        const { cell } = goal;
+        const here = pet.tileCol === cell.col && pet.tileRow === cell.row;
+        const path = here
+          ? []
+          : findPath(pet.tileCol, pet.tileRow, cell.col, cell.row, tileMap, blockedTiles);
+        if (here || path.length > 0) {
+          if (path.length > 0) {
+            pet.state = PetState.WALK;
+            pet.path = path;
+            pet.moveProgress = 0;
+            pet.frame = 0;
+            pet.frameTimer = 0;
+          }
+          pet.wanderTimer = randomRange(PET_WANDER_PAUSE_MIN_SEC, PET_WANDER_PAUSE_MAX_SEC);
+          break;
+        }
+      }
 
       // Roll for follow first
       if (Math.random() < PET_FOLLOW_CHANCE) {
@@ -324,6 +433,9 @@ export function updatePet(
  */
 export function getPetSpriteData(pet: Pet, petSprites: PetSpriteFrames | null): SpriteData | null {
   if (!petSprites) return null;
+
+  // Asleep: the sitting pose with the eyes shut, held still.
+  if (pet.state === PetState.SLEEP) return petSprites.idleDown[PET_SLEEP_FRAME];
 
   if (pet.state === PetState.IDLE) {
     const frameIdx = PET_IDLE_SEQUENCE[pet.frame % PET_IDLE_SEQUENCE.length];

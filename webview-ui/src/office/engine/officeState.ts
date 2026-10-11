@@ -3,6 +3,7 @@ import { pickDiversePalette } from '../../../../core/src/paletteUtils.js';
 import type { ModelTier } from '../../../../core/src/provider.js';
 import {
   AUTO_ON_FACING_DEPTH,
+  CHAIR_TUCK_PX,
   CHARACTER_HIT_HALF_WIDTH,
   CHARACTER_HIT_HEIGHT,
   COFFEE_COOLDOWN_SEC,
@@ -38,6 +39,7 @@ import { MoodWeather } from '../fx/moodWeather.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
   createDefaultLayout,
+  type FurnitureLook,
   getBlockedTiles,
   getDeskTiles,
   getFurnitureTiles,
@@ -46,8 +48,9 @@ import {
   layoutToTileMap,
 } from '../layout/layoutSerializer.js';
 import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
-import { monitorLook, monitorTick } from '../monitor.js';
+import { darkScreenSprite, monitorLook, monitorTick } from '../monitor.js';
 import { seatedDrawOffsetPx } from '../seatDraw.js';
+import { brightestShaftCell, shaftsAt, shaftsOff } from '../shafts.js';
 import { getPetCount, getPetName } from '../sprites/petSpriteData.js';
 import { getLoadedCharacterCount } from '../sprites/spriteData.js';
 import type { AgentRosterInfo, RosterEventInfo, TripwireAlarm } from '../toolUtils.js';
@@ -56,6 +59,7 @@ import type {
   FurnitureInstance,
   OfficeLayout,
   Pet,
+  PetBed,
   PlacedFurniture,
   PlacedPet,
   Seat,
@@ -65,7 +69,7 @@ import { CharacterState, Direction, IdlePose, PetState, TILE_SIZE, WorkStatus } 
 import { createCharacter, updateCharacter } from './characters.js';
 import { stepPose } from './idleLife.js';
 import { advanceMatrixEffect, startMatrixEffect } from './matrixEffectState.js';
-import { createPet, updatePet } from './petEntity.js';
+import { createPet, type PetGoal, updatePet } from './petEntity.js';
 import { anchorTile, closestFreeSeat } from './seatPlacement.js';
 
 /** Internal helper: facing-tile coords for a seat. Returns null for invalid direction. */
@@ -121,6 +125,8 @@ export class OfficeState {
   private electronicsTiles: Set<string>;
   /** Seat uid -> uid of the PC it owns, and each electronics item's footprint; set per layout load. */
   private pcBySeat: Map<string, string> = new Map();
+  /** unusedSeatKey() at the last furniture rebuild. */
+  private lastUnusedSeatKey = '';
   private electronicsById: Map<string, Tile[]> = new Map();
   /** Coffee table tiles with their sort depth: where the companion of someone on a sofa rests. */
   private tableTiles: Map<string, number> = new Map();
@@ -990,35 +996,71 @@ export class OfficeState {
   }
 
   /**
-   * Uids of the PCs that are lit: the one PC each seat owns, while the agent seated there is
-   * working (status truth). A PC with nobody at it, or an idle agent, stays off.
+   * The PCs that are lit, each with the seat that owns it: the one PC each seat owns, while the
+   * agent seated there is working (status truth). A PC with nobody at it, or an idle agent, stays off.
    */
-  private litPcUids(): Set<string> {
-    const lit = new Set<string>();
+  private litPcs(): Map<string, Tile> {
+    const lit = new Map<string, Tile>();
     for (const ch of this.characters.values()) {
       if (ch.agentStatus !== WorkStatus.ACTIVE || !ch.seatId) continue;
       const seat = this.seats.get(ch.seatId);
       if (!seat || seat.seatCol !== ch.tileCol || seat.seatRow !== ch.tileRow) continue;
       const pc = this.pcBySeat.get(ch.seatId);
-      if (pc) lit.add(pc);
+      if (pc) lit.set(pc, { col: seat.seatCol, row: seat.seatRow });
     }
     return lit;
   }
 
-  /** Rebuild furniture instances with auto-state applied (active agents turn electronics ON) */
-  private rebuildFurnitureInstances(): void {
-    const litPcs = this.litPcUids();
-
-    if (litPcs.size === 0) {
-      this.furniture = layoutToFurnitureInstances(this.layout.furniture);
-      return;
+  /** Tile of every lit PC (the one nearest its seat): where an active monitor's night pool goes. */
+  litMonitorTiles(): Tile[] {
+    const out: Tile[] = [];
+    for (const [pc, seat] of this.litPcs()) {
+      const tile = nearestTile(seat, this.electronicsById.get(pc) ?? []);
+      if (tile) out.push(tile);
     }
+    return out;
+  }
+
+  /** Seats that own a PC and that nobody holds, as one string: a change means a rebuild. */
+  private unusedSeatKey(): string {
+    let key = '';
+    for (const uid of this.pcBySeat.keys()) {
+      if (!this.seats.get(uid)?.assigned) key += `${uid};`;
+    }
+    return key;
+  }
+
+  /**
+   * How the furniture of a seat nobody holds is drawn: its PC's screen goes dark (only a PC with a
+   * front screen has an ON frame to stand for, so the others are left alone) and a face-on chair
+   * is tucked under the desk edge.
+   */
+  private unusedSeatLooks(): Map<string, FurnitureLook> {
+    const looks = new Map<string, FurnitureLook>();
+    const byUid = new Map(this.layout.furniture.map((f) => [f.uid, f]));
+    for (const [seatUid, pcUid] of this.pcBySeat) {
+      if (this.seats.get(seatUid)?.assigned) continue;
+      const pc = byUid.get(pcUid);
+      if (pc && getOnStateType(pc.type) !== pc.type) looks.set(pcUid, { sprite: darkScreenSprite });
+      const chair = byUid.get(seatUid);
+      const entry = chair ? getCatalogEntry(chair.type) : undefined;
+      if (entry?.orientation === 'front' && entry.footprintW * entry.footprintH === 1) {
+        looks.set(seatUid, { dy: CHAIR_TUCK_PX });
+      }
+    }
+    return looks;
+  }
+
+  /** Rebuild furniture instances with auto-state applied: active agents turn their PC on, unused
+   *  seats go dark and tuck their chair. */
+  private rebuildFurnitureInstances(): void {
+    const litPcs = this.litPcs();
+    const looks = this.unusedSeatLooks();
+    this.lastUnusedSeatKey = this.unusedSeatKey();
 
     // Build modified furniture list with auto-state and animation applied
     const tick = monitorTick(this.furnitureAnimTimer * 1000);
     const modifiedFurniture: PlacedFurniture[] = this.layout.furniture.map((item) => {
-      const entry = getCatalogEntry(item.type);
-      if (!entry) return item;
       if (!litPcs.has(item.uid)) return item;
       const onType = getOnStateType(item.type);
       if (onType === item.type) return item;
@@ -1030,7 +1072,7 @@ export class OfficeState {
       return { ...item, type: onType };
     });
 
-    this.furniture = layoutToFurnitureInstances(modifiedFurniture);
+    this.furniture = layoutToFurnitureInstances(modifiedFurniture, looks);
   }
 
   setAgentTool(id: number, tool: string | null): void {
@@ -1089,6 +1131,87 @@ export class OfficeState {
   }
 
   // ── Pets ──────────────────────────────────────────────────────
+
+  /**
+   * What each pet is after this tick. By day: the sunniest shaft cell of its home room. At night
+   * with nobody working (status truth): a free sofa cushion in its home room, kept once chosen.
+   */
+  private petGoals(now: Date): Map<Pet, PetGoal> {
+    const goals = new Map<Pet, PetGoal>();
+    if (this.pets.length === 0) return goals;
+    const inHome = (pet: Pet, col: number, row: number): boolean =>
+      pet.homeRoom === undefined || this.roomOfTile(col, row) === pet.homeRoom;
+    if (!shaftsOff(now.getHours(), now.getMinutes())) {
+      const shafts = shaftsAt(this.layout, now);
+      for (const pet of this.pets) {
+        pet.bed = pet.state === PetState.SLEEP ? pet.bed : null;
+        const cell = brightestShaftCell(shafts, (c, r) => inHome(pet, c, r));
+        if (cell) goals.set(pet, { kind: 'sun', cell });
+      }
+      return goals;
+    }
+    const working = [...this.characters.values()].some((c) => c.agentStatus === WorkStatus.ACTIVE);
+    if (working) return goals;
+    const taken = new Set<string>();
+    for (const c of this.characters.values()) if (c.trip) taken.add(c.trip.sofaSeatId);
+    for (const pet of this.pets) {
+      const kept = pet.bed;
+      const valid =
+        kept && !taken.has(kept.seatId) && this.seats.get(kept.seatId)?.assigned === false;
+      pet.bed = valid ? kept : this.freeCushion(pet, taken, (c, r) => inHome(pet, c, r));
+      if (pet.bed) taken.add(pet.bed.seatId);
+      goals.set(pet, { kind: 'bed', bed: pet.bed });
+    }
+    return goals;
+  }
+
+  /** The nearest free couch cushion in the pet's room and the walkable cell it is entered from. */
+  private freeCushion(
+    pet: Pet,
+    taken: ReadonlySet<string>,
+    inHome: (col: number, row: number) => boolean,
+  ): PetBed | null {
+    let best: (PetBed & { len: number }) | null = null;
+    for (const [uid, seat] of this.seats) {
+      if (!seat.couch || seat.assigned || taken.has(uid)) continue;
+      if (!inHome(seat.seatCol, seat.seatRow)) continue;
+      const f = seatFacingOffset(seat.facingDir);
+      const around = [
+        { col: seat.seatCol + f.dCol, row: seat.seatRow + f.dRow },
+        { col: seat.seatCol + f.dRow, row: seat.seatRow + f.dCol },
+        { col: seat.seatCol - f.dRow, row: seat.seatRow - f.dCol },
+        { col: seat.seatCol - f.dCol, row: seat.seatRow - f.dRow },
+      ];
+      for (const cell of around) {
+        if (!isWalkable(cell.col, cell.row, this.tileMap, this.blockedTiles)) continue;
+        if (!inHome(cell.col, cell.row)) continue;
+        const here = pet.tileCol === cell.col && pet.tileRow === cell.row;
+        const onCushion = pet.tileCol === seat.seatCol && pet.tileRow === seat.seatRow;
+        const len =
+          here || onCushion
+            ? 0
+            : findPath(
+                pet.tileCol,
+                pet.tileRow,
+                cell.col,
+                cell.row,
+                this.tileMap,
+                this.blockedTiles,
+              ).length;
+        if (!here && !onCushion && len === 0) continue;
+        if (!best || len < best.len) {
+          best = {
+            seatId: uid,
+            cushion: { col: seat.seatCol, row: seat.seatRow },
+            approach: cell,
+            len,
+          };
+        }
+        break;
+      }
+    }
+    return best ? { seatId: best.seatId, cushion: best.cushion, approach: best.approach } : null;
+  }
 
   /**
    * Add a pet to the live runtime. Spawns at a uniformly-random walkable tile.
@@ -1294,7 +1417,7 @@ export class OfficeState {
     const prevFrame = monitorTick(this.furnitureAnimTimer * 1000);
     this.furnitureAnimTimer += dt;
     const newFrame = monitorTick(this.furnitureAnimTimer * 1000);
-    if (newFrame !== prevFrame) {
+    if (newFrame !== prevFrame || this.unusedSeatKey() !== this.lastUnusedSeatKey) {
       this.rebuildFurnitureInstances();
     }
 
@@ -1373,6 +1496,7 @@ export class OfficeState {
     this.weather.update(new Map([...this.rosters].map(([id, r]) => [id, r.mood])), now);
 
     // ── Pet FSM ────────────────────────────────────────────────
+    const goals = this.petGoals(new Date(now));
     for (const pet of this.pets) {
       updatePet(
         pet,
@@ -1382,6 +1506,7 @@ export class OfficeState {
         this.tileMap,
         this.blockedTiles,
         (c, r) => this.roomOfTile(c, r),
+        goals.get(pet),
       );
 
       // Tick heart bubble timer (mirrors character waiting-bubble pattern)
@@ -1414,6 +1539,7 @@ export class OfficeState {
     if (this.sofaOccupants() >= SOFA_MAX_OCCUPANTS) return null;
     const taken = new Set<string>();
     for (const c of this.characters.values()) if (c.trip) taken.add(c.trip.sofaSeatId);
+    for (const p of this.pets) if (p.bed) taken.add(p.bed.seatId);
     let best: { sofaSeatId: string; approach: { col: number; row: number }; len: number } | null =
       null;
     for (const [uid, seat] of this.seats) {

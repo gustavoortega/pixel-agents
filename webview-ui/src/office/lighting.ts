@@ -7,17 +7,27 @@
  * are canvas draws clipped to the map; both take their strength from `lightingFor`.
  */
 
+import { ART_DENSITY } from '../../../core/src/assets/constants.js';
+import { fairyBulbCenters } from '../../../core/src/assets/fairyLights.js';
 import {
+  FAIRY_GLOW_MIN,
+  FAIRY_GLOW_RADIUS_TILES,
+  FAIRY_PHASE_STEP,
+  FAIRY_TWINKLE_MS,
   GLOW_DOWN_OFFSET_TILES,
   GLOW_LAMP_RADIUS_TILES,
   GLOW_MONITOR_RADIUS_TILES,
   LAMP_HEAD_OFFSET_PX,
   LIGHT_DAWN_START_MIN,
   LIGHT_DAY_START_MIN,
+  LIGHT_FIXTURE_FAIRY,
   LIGHT_FIXTURE_LAMP,
   LIGHT_GOLDEN_START_MIN,
   LIGHT_NIGHT_START_MIN,
   LIGHT_PHASES,
+  POOL_LAMP_CENTER_ROWS,
+  POOL_LAMP_RADIUS_TILES,
+  POOL_MONITOR_RADIUS_TILES,
   TILE_SIZE,
 } from '../constants.js';
 import type { Direction } from './types.js';
@@ -50,6 +60,11 @@ export function lightingFor(hour: number, minute: number): Lighting {
   };
 }
 
+/** The night phase (the tint's): night windows, floor pools and fairy lights follow it. */
+export function isNightPhase(hour: number, minute: number): boolean {
+  return lightingFor(hour, minute).phase === 'night';
+}
+
 /** Sun glyph from dawn to the end of the golden hour, moon otherwise. */
 export function isDaytime(hour: number, minute: number): boolean {
   return lightingFor(hour, minute).phase !== 'night';
@@ -61,7 +76,7 @@ export function clockLabel(hour: number, minute: number): string {
 
 // ── Glow placement ──────────────────────────────────────────────
 
-export type GlowKind = 'monitor' | 'lamp';
+export type GlowKind = 'monitor' | 'lamp' | 'lampPool' | 'monitorPool' | 'fairy';
 
 /** A seated agent's monitor: the seat tile, the way it faces, and whether it is working. */
 export interface GlowSource {
@@ -78,6 +93,8 @@ export interface FixturePoint {
 
 export interface GlowFixtures {
   lamps: readonly FixturePoint[];
+  /** Top-left tile of each fairy-light strand. */
+  fairyLights: readonly FixturePoint[];
 }
 
 /** One glow to paint: the destination rect in device px, already clipped to the map, and the
@@ -100,10 +117,17 @@ const FACING_STEP: Record<Direction, { dc: number; dr: number }> = {
   [Dir.UP]: { dc: 0, dr: -1 },
 };
 
+const RADIUS_TILES: Record<GlowKind, number> = {
+  monitor: GLOW_MONITOR_RADIUS_TILES,
+  lamp: GLOW_LAMP_RADIUS_TILES,
+  lampPool: POOL_LAMP_RADIUS_TILES,
+  monitorPool: POOL_MONITOR_RADIUS_TILES,
+  fairy: FAIRY_GLOW_RADIUS_TILES,
+};
+
 /** Size of the cached sprite for a glow kind, in device px. */
 export function glowSize(kind: GlowKind, zoom: number): { w: number; h: number } {
-  const s = TILE_SIZE * zoom;
-  const radius = (kind === 'lamp' ? GLOW_LAMP_RADIUS_TILES : GLOW_MONITOR_RADIUS_TILES) * s;
+  const radius = RADIUS_TILES[kind] * TILE_SIZE * zoom;
   return { w: 2 * radius, h: 2 * radius };
 }
 
@@ -185,15 +209,82 @@ export function glowDraws(input: {
   return out;
 }
 
-/** Light-emitting furniture in a layout. */
+/** Light-emitting furniture in a layout, wherever it was placed. */
 export function lightFixtures(
   furniture: ReadonlyArray<{ type: string; col: number; row: number }>,
 ): GlowFixtures {
   const lamps: FixturePoint[] = [];
+  const fairyLights: FixturePoint[] = [];
   for (const f of furniture) {
     if (f.type === LIGHT_FIXTURE_LAMP) lamps.push({ col: f.col, row: f.row });
+    if (f.type === LIGHT_FIXTURE_FAIRY) fairyLights.push({ col: f.col, row: f.row });
   }
-  return { lamps };
+  return { lamps, fairyLights };
+}
+
+/** Fairy-bulb centers in world px from a strand's top-left, read off the shared art geometry. */
+const FAIRY_BULBS = fairyBulbCenters().map((b) => ({ x: b.x / ART_DENSITY, y: b.y / ART_DENSITY }));
+
+/** Twinkle strength of bulb `i` at `nowMs`: the same FAIRY_TWINKLE_MS wave, shifted per bulb. */
+function twinkle(i: number, nowMs: number): number {
+  const phase = nowMs / FAIRY_TWINKLE_MS + i * FAIRY_PHASE_STEP;
+  return FAIRY_GLOW_MIN + (1 - FAIRY_GLOW_MIN) * (0.5 + 0.5 * Math.sin(2 * Math.PI * phase));
+}
+
+/**
+ * The night lights, only while `night` holds (isNightPhase) and the setting is on:
+ * floor pools under every floor lamp and every active monitor (`pools`, painted on the floor under
+ * the furniture), and a twinkling glow on each fairy-light bulb (`fairy`, painted over the scene).
+ * `monitors` is the tile of each lit PC, the same set that shows the ON frames.
+ */
+export function nightLightDraws(input: {
+  enabled: boolean;
+  night: boolean;
+  fixtures: GlowFixtures;
+  monitors: readonly FixturePoint[];
+  nowMs: number;
+  zoom: number;
+  offsetX: number;
+  offsetY: number;
+  cols: number;
+  rows: number;
+}): { pools: GlowDraw[]; fairy: GlowDraw[] } {
+  const { enabled, night, fixtures, monitors, nowMs, zoom, offsetX, offsetY, cols, rows } = input;
+  const pools: GlowDraw[] = [];
+  const fairy: GlowDraw[] = [];
+  if (!enabled || !night) return { pools, fairy };
+  const s = TILE_SIZE * zoom;
+  const map: PxRect = { x: offsetX, y: offsetY, w: cols * s, h: rows * s };
+  const at = (out: GlowDraw[], kind: GlowKind, cx: number, cy: number, alpha: number): void => {
+    const { w, h } = glowSize(kind, zoom);
+    const clipped = clipRect({ x: cx - w / 2, y: cy - h / 2, w, h }, map);
+    if (clipped) out.push({ kind, ...clipped, alpha });
+  };
+
+  for (const lamp of fixtures.lamps) {
+    at(
+      pools,
+      'lampPool',
+      offsetX + (lamp.col + 0.5) * s,
+      offsetY + (lamp.row + POOL_LAMP_CENTER_ROWS) * s,
+      1,
+    );
+  }
+  for (const m of monitors) {
+    at(pools, 'monitorPool', offsetX + (m.col + 0.5) * s, offsetY + (m.row + 0.5) * s, 1);
+  }
+  for (const strand of fixtures.fairyLights) {
+    FAIRY_BULBS.forEach((b, i) => {
+      at(
+        fairy,
+        'fairy',
+        offsetX + (strand.col * TILE_SIZE + b.x) * zoom,
+        offsetY + (strand.row * TILE_SIZE + b.y) * zoom,
+        twinkle(i, nowMs),
+      );
+    });
+  }
+  return { pools, fairy };
 }
 
 /** Seated agents whose status is active: the ones whose monitor is lit. The pose does not

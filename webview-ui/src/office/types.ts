@@ -310,8 +310,15 @@ export interface Character {
   maxContextTokens: number;
 }
 
-export const PetState = { IDLE: 'idle', WALK: 'walk', FOLLOW: 'follow' } as const;
+export const PetState = { IDLE: 'idle', WALK: 'walk', FOLLOW: 'follow', SLEEP: 'sleep' } as const;
 export type PetState = (typeof PetState)[keyof typeof PetState];
+
+/** A sofa cushion a pet sleeps on: its seat, its tile, and the walkable cell beside it. */
+export interface PetBed {
+  seatId: string;
+  cushion: { col: number; row: number };
+  approach: { col: number; row: number };
+}
 
 /** Runtime pet (mutated by FSM tick). */
 export interface Pet {
@@ -348,6 +355,8 @@ export interface Pet {
   followDurationLimit: number;
   /** Room (Area label, '' for the lobby) the pet lives in; it never leaves it. Absent: roams the map. */
   homeRoom?: string;
+  /** The sofa cushion the pet sleeps on at night and the cell it steps on from; null when awake. */
+  bed?: PetBed | null;
   /** Pet's heart-bubble overlay (set on click), or null. */
   bubbleType: 'heart' | null;
   /** Countdown timer for the heart bubble (mirrors character waiting bubble). */
