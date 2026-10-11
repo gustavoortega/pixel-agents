@@ -26,6 +26,8 @@ export type ServerMessage =
   | AgentTeamInfo
   | AgentContextUsage
   | AgentSessionTitle
+  | AgentTripwire
+  | AgentTripwireClear
   | LayoutLoaded
   | FurnitureAssetsLoaded
   | CharacterSpritesLoaded
@@ -63,7 +65,8 @@ export type ClientMessage =
   | RemoveExternalAssetDirectory
   | SaveAreaMappings
   | SetShowAreas
-  | RequestDiagnostics;
+  | RequestDiagnostics
+  | AckTripwire;
 
 export interface ProviderCapabilities {
   type: 'providerCapabilities';
@@ -193,6 +196,22 @@ export interface AgentSessionTitle {
   type: 'agentSessionTitle';
   id: number;
   title?: string;
+}
+
+export interface AgentTripwire {
+  type: 'agentTripwire';
+  id: number;
+  ruleId: string;
+  ruleName: string;
+  severity: TripwireSeverity;
+  count: number;
+}
+
+export type TripwireSeverity = 'high' | 'medium' | 'low';
+
+export interface AgentTripwireClear {
+  type: 'agentTripwireClear';
+  id: number;
 }
 
 export interface LayoutLoaded {
@@ -435,4 +454,10 @@ export interface SetShowAreas {
 
 export interface RequestDiagnostics {
   type: 'requestDiagnostics';
+}
+
+export interface AckTripwire {
+  type: 'ackTripwire';
+  id: number;
+  count: number;
 }

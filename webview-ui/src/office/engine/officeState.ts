@@ -27,6 +27,7 @@ import {
 import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
 import { getPetCount, getPetName } from '../sprites/petSpriteData.js';
 import { getLoadedCharacterCount } from '../sprites/spriteData.js';
+import type { TripwireAlarm } from '../toolUtils.js';
 import type {
   Character,
   FurnitureInstance,
@@ -62,6 +63,9 @@ export class OfficeState {
   /** Session titles by agent id. Keyed by id rather than stored on the character
    *  because a title can arrive before the (buffered) agentCreated does. */
   sessionTitles: Map<number, string> = new Map();
+  /** Tripwire alarms by agent id. Keyed by id for the same reason as sessionTitles:
+   *  an alarm can arrive before the (buffered) agentCreated does. */
+  tripwires: Map<number, TripwireAlarm> = new Map();
   pets: Pet[] = [];
   /** Accumulated time for furniture animation frame cycling */
   furnitureAnimTimer = 0;
@@ -555,6 +559,7 @@ export class OfficeState {
 
   removeAgent(id: number): void {
     this.sessionTitles.delete(id);
+    this.tripwires.delete(id);
     const ch = this.characters.get(id);
     if (!ch) return;
     if (ch.matrixEffect === 'despawn') return; // already despawning
@@ -1094,6 +1099,12 @@ export class OfficeState {
   setSessionTitle(id: number, title: string | undefined): void {
     if (title) this.sessionTitles.set(id, title);
     else this.sessionTitles.delete(id);
+  }
+
+  /** Undefined clears the alarm. */
+  setTripwire(id: number, alarm: TripwireAlarm | undefined): void {
+    if (alarm) this.tripwires.set(id, alarm);
+    else this.tripwires.delete(id);
   }
 
   update(dt: number): void {

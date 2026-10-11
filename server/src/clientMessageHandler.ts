@@ -17,6 +17,7 @@ import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
+import { ackTripwire } from './tripwires.js';
 
 type WsSend = (message: Record<string, unknown>) => void;
 
@@ -102,6 +103,16 @@ export function handleClientMessage(
         runtime.dismissalTracker.dismiss(agent.jsonlFile);
         runtime.removeAgent(id);
       }
+      break;
+    }
+
+    case 'ackTripwire': {
+      // Broadcast to every client, not just the sender: all open tabs share the alarm.
+      if (typeof msg.id !== 'number' || typeof msg.count !== 'number') break;
+      const agent = store.get(msg.id);
+      if (!agent) break;
+      const reply = ackTripwire(agent, msg.count);
+      if (reply) store.broadcast(reply);
       break;
     }
 

@@ -102,6 +102,9 @@ components:
         - $ref: '#/components/schemas/AgentContextUsage'
         # Session title
         - $ref: '#/components/schemas/AgentSessionTitle'
+        # Tripwires
+        - $ref: '#/components/schemas/AgentTripwire'
+        - $ref: '#/components/schemas/AgentTripwireClear'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -146,6 +149,7 @@ components:
         - $ref: '#/components/schemas/SaveAreaMappings'
         - $ref: '#/components/schemas/SetShowAreas'
         - $ref: '#/components/schemas/RequestDiagnostics'
+        - $ref: '#/components/schemas/AckTripwire'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
@@ -464,6 +468,51 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+
+    TripwireSeverity:
+      description: How loud a tripwire alarm is.
+      type: string
+      enum: [high, medium, low]
+
+    AgentTripwire:
+      description: |
+        A detection rule fired on this agent's tool calls. `count` is every hit
+        since the last `ackTripwire`; the rule shown is the highest severity seen
+        since then. Carries only the rule's id and validated label, never the
+        tool input that matched. Resent on reconnect while the alarm is set.
+      type: object
+      additionalProperties: false
+      required: [type, id, ruleId, ruleName, severity, count]
+      properties:
+        type:
+          const: agentTripwire
+        id:
+          type: integer
+        ruleId:
+          type: string
+          maxLength: 64
+        ruleName:
+          type: string
+          maxLength: 80
+        severity:
+          $ref: '#/components/schemas/TripwireSeverity'
+        count:
+          type: integer
+          minimum: 1
+
+    AgentTripwireClear:
+      description: |
+        The agent's alarm was acknowledged. Sent to every client, and on
+        reconnect for every agent without an alarm so a missed ack does not
+        leave a stale one.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: agentTripwireClear
+        id:
+          type: integer
 
     LayoutLoaded:
       description: |
@@ -855,6 +904,23 @@ components:
           const: closeAgent
         id:
           type: integer
+
+    AckTripwire:
+      description: |
+        Acknowledge the alarm on an agent. `count` is the hit count the client
+        displayed; the server clears the alarm only if no newer hit arrived
+        (otherwise it re-sends the current state).
+      type: object
+      additionalProperties: false
+      required: [type, id, count]
+      properties:
+        type:
+          const: ackTripwire
+        id:
+          type: integer
+        count:
+          type: integer
+          minimum: 1
 
     SaveAgentSeats:
       description: Persist seat assignments for current agents.

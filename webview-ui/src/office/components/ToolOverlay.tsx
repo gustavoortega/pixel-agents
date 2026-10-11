@@ -20,7 +20,7 @@ import {
 import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../engine/officeState.js';
 import { overlayProjection } from '../projection.js';
-import { agentLabel } from '../toolUtils.js';
+import { agentLabel, tripwireColor, tripwireLabel } from '../toolUtils.js';
 import type { ToolActivity } from '../types.js';
 import { CharacterState } from '../types.js';
 
@@ -40,6 +40,7 @@ interface ToolOverlayProps {
   zoom: number;
   panRef: React.RefObject<{ x: number; y: number }>;
   onCloseAgent: (id: number) => void;
+  onAckTripwire: (id: number, count: number) => void;
   alwaysShowOverlay: boolean;
 }
 
@@ -92,6 +93,7 @@ export function ToolOverlay({
   zoom,
   panRef,
   onCloseAgent,
+  onAckTripwire,
   alwaysShowOverlay,
 }: ToolOverlayProps) {
   const [, setTick] = useState(0);
@@ -144,9 +146,10 @@ export function ToolOverlay({
         // (the panel would cover the bubble). Render an empty positioned marker
         // so overlay counts stay stable and hover/select can still bring the
         // panel back. When always-show is off, the early return above already
-        // keeps the panel hidden for idle agents.
+        // keeps the panel hidden for idle agents. An agent with a tripwire alarm keeps
+        // its panel: the alarm line is the only place to acknowledge it.
         const isDone = ch.bubbleType === 'waiting' && !ch.waitingAwaitingInput;
-        if (isDone && !isSelected && !isHovered) {
+        if (isDone && !isSelected && !isHovered && !officeState.tripwires.has(id)) {
           return (
             <div
               key={id}
@@ -205,7 +208,8 @@ export function ToolOverlay({
         // Team info
         const teamRoleLabel = ch.isTeamLead ? 'LEAD' : ch.agentName || null;
         const label = agentLabel(officeState.sessionTitles.get(id), ch.folderName);
-        const hasExtraLines = !!(label || teamRoleLabel);
+        const tripwire = officeState.tripwires.get(id);
+        const hasExtraLines = !!(label || teamRoleLabel || tripwire);
 
         // Context gauge. Every agent gets one — lead, teammate, adopted,
         // headless — as soon as it has taken a turn. Sub-agents never do: they
@@ -256,6 +260,26 @@ export function ToolOverlay({
                 >
                   {activityText}
                 </span>
+                {tripwire && (
+                  <span
+                    className="overflow-hidden text-ellipsis block leading-none cursor-pointer"
+                    // The panel ignores pointer events unless selected; the alarm line opts
+                    // back in so one click acknowledges it.
+                    style={{
+                      fontSize: '18px',
+                      color: tripwireColor(tripwire.severity),
+                      pointerEvents: 'auto',
+                    }}
+                    title="Click to acknowledge"
+                    data-testid="tripwire-alarm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAckTripwire(id, tripwire.count);
+                    }}
+                  >
+                    {tripwireLabel(tripwire.ruleName, tripwire.count)}
+                  </span>
+                )}
                 {label && (
                   <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
                     {label}

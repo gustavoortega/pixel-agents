@@ -41,6 +41,8 @@ import {
   SELECTED_OUTLINE_ALPHA,
   SELECTION_DASH_PATTERN,
   SELECTION_HIGHLIGHT_COLOR,
+  TRIPWIRE_BEACON_RADIUS_PX,
+  TRIPWIRE_FLASH_PERIOD_MS,
   VOID_TILE_DASH_PATTERN,
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
@@ -59,6 +61,7 @@ import {
   BUBBLE_WAITING_SPRITE,
   getCharacterSprites,
 } from '../sprites/spriteData.js';
+import { tripwireColor, type TripwireSeverity } from '../toolUtils.js';
 import type {
   AreaDefinition,
   CarpetTile,
@@ -765,43 +768,79 @@ function renderRotateButton(
 
 // ── Speech bubbles ──────────────────────────────────────────────
 
+/**
+ * Flashing alarm dot above a character's head. Stacks above any speech bubble
+ * and flashes off the wall clock, so it keeps pulsing while the character idles.
+ */
+function renderTripwireBeacon(
+  ctx: CanvasRenderingContext2D,
+  centerX: number,
+  bottomY: number,
+  zoom: number,
+  severity: TripwireSeverity,
+): void {
+  const radius = TRIPWIRE_BEACON_RADIUS_PX * zoom;
+  const phase = (performance.now() % TRIPWIRE_FLASH_PERIOD_MS) / TRIPWIRE_FLASH_PERIOD_MS;
+  ctx.save();
+  ctx.globalAlpha = 0.35 + 0.65 * (0.5 + 0.5 * Math.cos(phase * Math.PI * 2));
+  ctx.fillStyle = tripwireColor(severity);
+  ctx.beginPath();
+  ctx.arc(Math.round(centerX), Math.round(bottomY - radius), radius, 0, Math.PI * 2);
+  ctx.fill();
+  // White exclamation mark
+  ctx.fillStyle = BUTTON_ICON_COLOR;
+  const mark = Math.max(1, Math.round(zoom * 0.5));
+  const cx = Math.round(centerX) - mark / 2;
+  const cy = Math.round(bottomY - radius);
+  ctx.fillRect(cx, Math.round(cy - radius * 0.55), mark, Math.round(radius * 0.7));
+  ctx.fillRect(cx, Math.round(cy + radius * 0.3), mark, mark);
+  ctx.restore();
+}
+
 function renderBubbles(
   ctx: CanvasRenderingContext2D,
   characters: Character[],
   offsetX: number,
   offsetY: number,
   zoom: number,
+  tripwires?: ReadonlyMap<number, { severity: TripwireSeverity }>,
 ): void {
   for (const ch of characters) {
-    if (!ch.bubbleType) continue;
+    // Character is anchored bottom-center at (ch.x, ch.y), sprite is 16x24.
+    // Bubbles sit above the head with a small gap; follow sitting offset.
+    const sittingOff = ch.state === CharacterState.TYPE ? BUBBLE_SITTING_OFFSET_PX : 0;
+    const headY = Math.round(offsetY + (ch.y + sittingOff - BUBBLE_VERTICAL_OFFSET_PX) * zoom);
+    let topY = headY - 1 * zoom;
+
     // The green checkmark bubble only represents "done" (turn finished). The
     // idle "Waiting for input" state communicates via its overlay label, not a
     // bubble, so skip the bubble for it.
-    if (ch.bubbleType === 'waiting' && ch.waitingAwaitingInput) continue;
+    const hasBubble = ch.bubbleType && !(ch.bubbleType === 'waiting' && ch.waitingAwaitingInput);
+    if (hasBubble) {
+      const sprite =
+        ch.bubbleType === 'permission' ? BUBBLE_PERMISSION_SPRITE : BUBBLE_WAITING_SPRITE;
 
-    const sprite =
-      ch.bubbleType === 'permission' ? BUBBLE_PERMISSION_SPRITE : BUBBLE_WAITING_SPRITE;
+      // Compute opacity: permission = full, waiting = fade in last 0.5s
+      let alpha = 1.0;
+      if (ch.bubbleType === 'waiting' && ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC) {
+        alpha = ch.bubbleTimer / BUBBLE_FADE_DURATION_SEC;
+      }
 
-    // Compute opacity: permission = full, waiting = fade in last 0.5s
-    let alpha = 1.0;
-    if (ch.bubbleType === 'waiting' && ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC) {
-      alpha = ch.bubbleTimer / BUBBLE_FADE_DURATION_SEC;
+      const cached = getCachedSprite(sprite, zoom);
+      const bubbleX = Math.round(offsetX + ch.x * zoom - cached.width / 2);
+      const bubbleY = headY - cached.height - 1 * zoom;
+
+      ctx.save();
+      if (alpha < 1.0) ctx.globalAlpha = alpha;
+      ctx.drawImage(cached, bubbleX, bubbleY);
+      ctx.restore();
+      topY = bubbleY - 1 * zoom;
     }
 
-    const cached = getCachedSprite(sprite, zoom);
-    // Position: centered above the character's head
-    // Character is anchored bottom-center at (ch.x, ch.y), sprite is 16x24
-    // Place bubble above head with a small gap; follow sitting offset
-    const sittingOff = ch.state === CharacterState.TYPE ? BUBBLE_SITTING_OFFSET_PX : 0;
-    const bubbleX = Math.round(offsetX + ch.x * zoom - cached.width / 2);
-    const bubbleY = Math.round(
-      offsetY + (ch.y + sittingOff - BUBBLE_VERTICAL_OFFSET_PX) * zoom - cached.height - 1 * zoom,
-    );
-
-    ctx.save();
-    if (alpha < 1.0) ctx.globalAlpha = alpha;
-    ctx.drawImage(cached, bubbleX, bubbleY);
-    ctx.restore();
+    const tripwire = tripwires?.get(ch.id);
+    if (tripwire) {
+      renderTripwireBeacon(ctx, offsetX + ch.x * zoom, topY, zoom, tripwire.severity);
+    }
   }
 }
 
@@ -903,6 +942,7 @@ export function renderFrame(
   showAreas?: boolean,
   activeAreaLabel?: string | null,
   pets?: Pet[],
+  tripwires?: ReadonlyMap<number, { severity: TripwireSeverity }>,
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -962,7 +1002,7 @@ export function renderFrame(
   );
 
   // Speech bubbles (always on top of characters)
-  renderBubbles(ctx, characters, offsetX, offsetY, zoom);
+  renderBubbles(ctx, characters, offsetX, offsetY, zoom, tripwires);
   // Pet heart bubbles (same overlay pass)
   if (pets && pets.length > 0) {
     renderPetBubbles(ctx, pets, offsetX, offsetY, zoom);

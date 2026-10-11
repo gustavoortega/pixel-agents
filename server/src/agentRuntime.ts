@@ -47,6 +47,7 @@ import {
   setHookProvider,
   setTeamSwitchCallback,
 } from './transcriptParser.js';
+import type { TripwireRule } from './tripwires.js';
 import type { AgentState } from './types.js';
 
 /** Callbacks that adapters register for platform-specific behavior. */
@@ -88,6 +89,8 @@ export class AgentRuntime {
   constructor(
     private readonly store: AgentStateStore,
     provider: HookProvider,
+    /** Detection rules for tool calls. Callers load them once at startup; tests get the defaults. */
+    tripwireRules?: readonly TripwireRule[],
   ) {
     // Wire module-level dependencies
     setDismissalTracker(this.dismissalTracker);
@@ -149,6 +152,7 @@ export class AgentRuntime {
       provider,
       new SessionRouter(),
       this.watchAllSessions,
+      tripwireRules,
     );
 
     // Wire hook lifecycle callbacks to shared agent operations

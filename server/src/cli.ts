@@ -29,6 +29,7 @@ import { MAX_PORT, MIN_PORT } from './constants.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
+import { loadTripwireRules } from './tripwireConfig.js';
 
 // ── Argument parsing ──────────────────────────────────────────
 
@@ -144,7 +145,7 @@ async function main(): Promise<void> {
 
   try {
     // Create runtime first (before server.start, so we can pass it in)
-    const runtime = new AgentRuntime(store, claudeProvider);
+    const runtime = new AgentRuntime(store, claudeProvider, loadTripwireRules());
 
     // Wire hook events: HTTP POST -> runtime -> hookEventHandler -> agents
     server.onHookEvent((providerId, event) => {

@@ -37,6 +37,9 @@ server/                              Lifecycle runtime + Fastify HTTP/WS server
     agentRuntime.ts                  Lifecycle core: timers, scanners, HookEventHandler, SessionRouter, DismissalTracker
     agentStateStore.ts               EventEmitter-backed single source of truth (typed mutations + events)
     sessionRouter.ts                 session_id → agent_id mapping, event buffering, pending external sessions
+    tripwires.ts                     Tripwire engine (pure): evaluateTripwires, applyTripwireHit, ackTripwire
+    tripwireDefaults.ts              Built-in tripwire rule pack (14 rules)
+    tripwireConfig.ts                Loads ~/.pixel-agents/tripwires.json over the defaults (validated, once at startup)
     dismissalTracker.ts              Unified dismissal state (replaces four legacy globals)
     hookEventHandler.ts              Dispatches normalized AgentEvent into runtime
     httpServer.ts                    Fastify: POST /api/hooks/:providerId, GET /api/health, GET /ws, SPA (standalone)
@@ -196,8 +199,8 @@ Adding a new CLI integration is one subdirectory under `server/src/providers/hoo
 
 `core/asyncapi.yaml` is the contract. Pinned to **3.0.0** because `@asyncapi/modelina@5.10.1` declares `supportedVersions: ['3.0.0']` only; bumping to 3.1.0 produces `export type Root = any`. Revisit when Modelina ships 3.1.0 support.
 
-- **28 ServerMessage variants** (server → client): agent lifecycle, agent activity, sub-agent activity, team + context usage + session title, assets, settings + workspace, diagnostics.
-- **18 ClientMessage variants** (client → server): lifecycle (`webviewReady`, `launchAgent`, `focusAgent`, `closeAgent`), layout (`saveAgentSeats`, `saveLayout`, `exportLayout`, `importLayout`), settings (`setSoundEnabled`, `setHooksEnabled`, `setWatchAllSessions`, `setAlwaysShowLabels`, `setHooksInfoShown`, `setLastSeenVersion`), discovery + assets, diagnostics.
+- **30 ServerMessage variants** (server → client): agent lifecycle, agent activity, sub-agent activity, team + context usage + session title + tripwire (`agentTripwire`, `agentTripwireClear`), assets, settings + workspace, diagnostics.
+- **19 ClientMessage variants** (client → server): tripwire ack (`ackTripwire`), lifecycle (`webviewReady`, `launchAgent`, `focusAgent`, `closeAgent`), layout (`saveAgentSeats`, `saveLayout`, `exportLayout`, `importLayout`), settings (`setSoundEnabled`, `setHooksEnabled`, `setWatchAllSessions`, `setAlwaysShowLabels`, `setHooksInfoShown`, `setLastSeenVersion`), discovery + assets, diagnostics.
 
 Both unions use `oneOf` with `discriminator: type`. Every concrete message sets `additionalProperties: false`.
 
@@ -381,6 +384,17 @@ The character label shows the session title instead of the folder when one is kn
 - **`seedSessionTitle` runs in `startFileWatching`**, next to `seedContextUsage`, for agents that start at end-of-file. It also drops titles read from a different `jsonlFile` (switch, `/clear`) and broadcasts the clear. At `fileOffset === 0` it leaves the titles to the live replay. A restore with a mid-file offset may briefly show an older title while replay catches up.
 - `resendAgentActivity` sends the message for every agent on reconnect, with `title` omitted for untitled ones, so a client that missed a clear does not keep a stale title.
 - Titles come from user prompts: never log their text.
+
+### Tripwires (server/src/tripwires.ts)
+
+Detection rules over each agent's tool calls, evaluated in `HookEventHandler.handleEvent` for every normalized `toolStart` of a tracked agent, before the display skips (Task/Agent, inline teammates). Alert-only: the hook script ignores the response, so there is nothing to deny with. User guide: `docs/tripwires.md`.
+
+- **Provider-agnostic**: rules see `normEvent.toolName` + `normEvent.input`; no Claude field names outside `claude.ts`.
+- **A rule hits when `tool` matches and `input` matches ANY string leaf** (depth 6, `ignoreKeys` skipped at any depth, no truncation). Exclusions are negative lookaheads inside `input`, never an "unless", so one benign token cannot mask a malicious one in the same call.
+- **Privacy**: matched text and tool input never leave the server. The wire carries rule id, validated rule name, severity and count; the log line is `Tripwire <ruleId> agent <id>` only.
+- **State** is `AgentState.tripwire` (not persisted): `count` is every hit since the last ack, the shown rule is the highest severity seen since then. `ackTripwire` clears only when the client's count covers the current one, otherwise it re-sends the state. VS Code and standalone both call the shared `ackTripwire` and broadcast the reply.
+- `resendAgentActivity` sends `agentTripwire` or `agentTripwireClear` for every agent on reconnect.
+- **Regex idioms are load-bearing** (see `tripwireDefaults.ts`): atomic first-occurrence prefix for "keyword, then X on the same line", bounded `{0,6}` option skipping. The backtracking budget test guards them.
 
 ## Office UI
 

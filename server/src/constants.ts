@@ -96,6 +96,7 @@ export const LAYOUT_FILE_NAME = 'layout.json';
 export const LAYOUT_FILE_POLL_INTERVAL_MS = 2000;
 export const LAYOUT_REVISION_KEY = 'layoutRevision';
 export const CONFIG_FILE_NAME = 'config.json';
+export const TRIPWIRES_FILE_NAME = 'tripwires.json';
 
 // ── Avatar Customization ────────────────────────────────────
 /** Number of pre-colored bundled character palettes (char_0.png–char_5.png).

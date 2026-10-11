@@ -232,6 +232,10 @@ function App() {
     transport.send({ type: 'closeAgent', id });
   }, []);
 
+  const handleAckTripwire = useCallback((id: number, count: number) => {
+    transport.send({ type: 'ackTripwire', id, count });
+  }, []);
+
   const handleClick = useCallback((agentId: number) => {
     // If clicked agent is a sub-agent, focus the parent's terminal instead
     const os = getOfficeState();
@@ -435,6 +439,7 @@ function App() {
             zoom={editor.zoom}
             panRef={editor.panRef}
             onCloseAgent={handleCloseAgent}
+            onAckTripwire={handleAckTripwire}
             alwaysShowOverlay={alwaysShowOverlay}
           />
         </>

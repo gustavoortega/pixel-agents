@@ -89,6 +89,17 @@ export interface AgentState {
    *  created, never persisted. */
   teammateSpawnToolIds?: Set<string>;
 
+  // -- Tripwires (server/src/tripwires.ts) --
+  /** Alarm raised by a detection rule over this agent's tool calls. `count` is every
+   *  hit since the last ack; the rule shown is the highest severity seen since then.
+   *  Holds ids and labels only, never the matched text. Transient, not persisted. */
+  tripwire?: {
+    ruleId: string;
+    ruleName: string;
+    severity: 'high' | 'medium' | 'low';
+    count: number;
+  };
+
   // -- Avatar customization --
   /** Preferred character palette (0-5). If undefined, auto-assigned for diversity. */
   palette?: number;
