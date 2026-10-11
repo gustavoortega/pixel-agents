@@ -28,7 +28,7 @@ import type {
 } from '../engine/renderer.js';
 import { isCozyLightingEnabled, renderFrame } from '../engine/renderer.js';
 import { getCatalogEntry, isRotatable } from '../layout/furnitureCatalog.js';
-import { isNightPhase, lightFixtures, lightingFor, monitorSources } from '../lighting.js';
+import { lightFixtures, lightingFor, monitorSources, nightDarkness } from '../lighting.js';
 import { furnitureForHour, shaftsAt } from '../shafts.js';
 import { EditTool, TILE_SIZE } from '../types.js';
 import { computeNormalModeCursor } from './officeCanvasCursor.js';
@@ -343,7 +343,7 @@ export function OfficeCanvas({
 
         const layout = officeState.getLayout();
         const now = new Date();
-        const night = isNightPhase(now.getHours(), now.getMinutes());
+        const darkness = nightDarkness(now.getHours(), now.getMinutes());
         const { offsetX, offsetY } = renderFrame(
           ctx,
           w,
@@ -380,8 +380,8 @@ export function OfficeCanvas({
             sources: monitorSources(officeState.characters.values(), officeState.seats),
             fixtures: lightFixtures(layout.furniture),
             shafts: shaftsAt(layout, now),
-            night,
-            monitors: night ? officeState.litMonitorTiles() : [],
+            darkness,
+            monitors: darkness > 0 ? officeState.litMonitorTiles() : [],
             nowMs: now.getTime(),
           },
           {

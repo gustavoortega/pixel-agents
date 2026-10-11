@@ -13,6 +13,8 @@ import { afterAll, beforeAll, test, vi } from 'vitest';
 import { ART_DENSITY } from '../../core/src/assets/constants.js';
 import {
   AREA_SIGN_PLATE_COLOR,
+  NIGHT_DARKEN_ALPHA,
+  NIGHT_DARKEN_COLOR,
   SHADOW_SIZE_PX,
   SHADOW_SMALL_SIZE_PX,
   TILE_SIZE,
@@ -21,6 +23,7 @@ import { createCharacter } from '../src/office/engine/characters.js';
 import { renderFrame, renderScene, shouldDrawAreaOverlay } from '../src/office/engine/renderer.js';
 
 type Ctx2D = Parameters<typeof renderScene>[0];
+import { lightingFor } from '../src/office/lighting.js';
 import { characterLayerZ, shadowSprite } from '../src/office/shadow.js';
 import { TileType } from '../src/office/types.js';
 
@@ -36,21 +39,44 @@ interface Recorder {
   fills: FillCall[];
   /** Width of each canvas passed to drawImage, in call order. */
   drawnWidths: number[];
+  /** Every fillRect and drawImage in call order, with the blend and alpha it was painted under. */
+  ops: Array<{ op: 'fill' | 'image'; comp: unknown; alpha: unknown; style: string; w: number }>;
 }
 
 /** A 2D context that records fillRect and drawImage and swallows everything else. */
 function recorder(): Recorder {
   const fills: FillCall[] = [];
   const drawnWidths: number[] = [];
+  const ops: Recorder['ops'] = [];
   const state: Record<string, unknown> = {};
   const ctx = new Proxy(state, {
     get(target, prop: string) {
       if (prop === 'fillRect') {
-        return (x: number, y: number, w: number, h: number) =>
+        return (x: number, y: number, w: number, h: number) => {
           fills.push({ x, y, w, h, fillStyle: String(target.fillStyle) });
+          ops.push({
+            op: 'fill',
+            comp: target.globalCompositeOperation,
+            alpha: target.globalAlpha,
+            style: String(target.fillStyle),
+            w,
+          });
+        };
       }
       if (prop === 'drawImage') {
-        return (img: { width: number }) => drawnWidths.push(img.width);
+        return (img: { width: number }) => {
+          drawnWidths.push(img.width);
+          ops.push({
+            op: 'image',
+            comp: target.globalCompositeOperation,
+            alpha: target.globalAlpha,
+            style: '',
+            w: img.width,
+          });
+        };
+      }
+      if (prop === 'createRadialGradient' || prop === 'createLinearGradient') {
+        return () => ({ addColorStop: () => undefined });
       }
       if (prop === 'measureText') return () => ({ width: 10 });
       if (prop === 'createImageData') {
@@ -64,7 +90,7 @@ function recorder(): Recorder {
       return true;
     },
   }) as unknown as Ctx2D;
-  return { ctx, fills, drawnWidths };
+  return { ctx, fills, drawnWidths, ops };
 }
 
 beforeAll(() => {
@@ -188,4 +214,80 @@ test('shadowSprite: an oval, smaller for sub-agents and companions', () => {
   assert.equal(big[0][0], '', 'corners are clear');
   assert.notEqual(big[D][(SHADOW_SIZE_PX.w / 2) * D], '', 'the middle is filled');
   assert.equal(shadowSprite(false), big, 'built once, so the per-zoom canvas cache can key on it');
+});
+
+// ── Night darkening: one multiply over the scene, then the pools light it back up ──
+
+/** A 16x16 map (nothing is clipped) with one floor lamp at (8,6) and one lit monitor at (2,2). */
+function nightFrame(rec: Recorder, darkness: number) {
+  const map = Array.from({ length: 16 }, () => Array.from({ length: 16 }, () => TileType.VOID));
+  renderFrame(
+    rec.ctx,
+    1024,
+    1024,
+    map,
+    [],
+    [],
+    2,
+    0,
+    0,
+    undefined,
+    undefined,
+    undefined,
+    16,
+    16,
+    undefined,
+    [],
+    [],
+    false,
+    null,
+    [],
+    undefined,
+    undefined,
+    undefined,
+    false,
+    {
+      lighting: lightingFor(22, 0),
+      sources: [],
+      fixtures: { lamps: [{ col: 8, row: 6 }], fairyLights: [] },
+      shafts: [],
+      darkness,
+      monitors: [{ col: 2, row: 2 }],
+      nowMs: 0,
+    },
+  );
+}
+// zoom 2 (32 px a tile): a lamp pool is 8 tiles across, a monitor pool 5.
+const LAMP_POOL_W = 8 * 32;
+const MONITOR_POOL_W = 5 * 32;
+
+test('renderFrame: at night the map is multiplied once, and the pools are screened on after it', () => {
+  const rec = recorder();
+  nightFrame(rec, NIGHT_DARKEN_ALPHA);
+  const multiply = rec.ops.findIndex((o) => o.op === 'fill' && o.comp === 'multiply');
+  assert.ok(multiply >= 0, 'a multiply fill is drawn');
+  assert.equal(rec.ops.filter((o) => o.comp === 'multiply').length, 1, 'one darkening source');
+  assert.equal(rec.ops[multiply].style, NIGHT_DARKEN_COLOR);
+  assert.equal(rec.ops[multiply].alpha, NIGHT_DARKEN_ALPHA);
+  assert.equal(rec.ops[multiply].w, 16 * 32, 'covers the whole map');
+  for (const w of [LAMP_POOL_W, MONITOR_POOL_W]) {
+    const pool = rec.ops.findIndex((o) => o.op === 'image' && o.w === w);
+    assert.ok(pool > multiply, `pool ${w}px is drawn after the multiply, not under it`);
+    assert.equal(rec.ops[pool].comp, 'screen');
+  }
+});
+
+test('renderFrame: by day there is no darkening and no pool', () => {
+  const rec = recorder();
+  nightFrame(rec, 0);
+  assert.equal(rec.ops.filter((o) => o.comp === 'multiply').length, 0);
+  assert.equal(rec.ops.filter((o) => o.op === 'image' && o.w === LAMP_POOL_W).length, 0);
+});
+
+test('renderFrame: half way up the dusk ramp the darkening and the pools are half strength', () => {
+  const rec = recorder();
+  nightFrame(rec, NIGHT_DARKEN_ALPHA / 2);
+  const multiply = rec.ops.find((o) => o.comp === 'multiply');
+  assert.equal(multiply?.alpha, NIGHT_DARKEN_ALPHA / 2);
+  assert.equal(rec.ops.find((o) => o.op === 'image' && o.w === LAMP_POOL_W)?.alpha, 0.5);
 });

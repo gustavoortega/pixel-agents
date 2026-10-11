@@ -21,6 +21,7 @@ import {
   lightFixtures,
   lightingFor,
   monitorSources,
+  nightDarkness,
   nightLightDraws,
 } from '../src/office/lighting.js';
 import { CharacterState, Direction } from '../src/office/types.js';
@@ -43,14 +44,44 @@ test('lightingFor: phase boundaries and the tints', () => {
     assert.equal(lightingFor(h, m).phase, phase, `${h}:${String(m).padStart(2, '0')}`);
   }
   assert.deepEqual(lightingFor(17, 0).tint, LIGHT_PHASES.golden.tint);
-  assert.deepEqual(lightingFor(22, 0).tint, LIGHT_PHASES.night.tint);
+  // Night has no DOM tint: the canvas darkening is the only darkening (no double dark).
+  assert.equal(lightingFor(22, 0).tint, null);
+  assert.equal(lightingFor(3, 0).tint, null);
   assert.deepEqual(lightingFor(6, 30).tint, LIGHT_PHASES.dawn.tint);
   assert.equal(lightingFor(12, 0).tint, null);
-  // alphas from the spec: golden 0.28, night 0.24, dawn 0.15
+  // alphas from the spec: golden 0.28, dawn 0.15
   assert.deepEqual(
-    [17, 22, 6].map((h) => lightingFor(h, 30).tint?.alpha),
-    [0.28, 0.24, 0.15],
+    [17, 6].map((h) => lightingFor(h, 30).tint?.alpha),
+    [0.28, 0.15],
   );
+});
+
+test('nightDarkness: 0 by day, 0.42 in the night phase, linear over the 60 min on each side', () => {
+  const at = (h: number, m: number) => nightDarkness(h, m);
+  const near = (a: number, b: number, msg: string) =>
+    assert.ok(Math.abs(a - b) < 1e-9, `${msg}: ${a} vs ${b}`);
+  near(at(12, 0), 0, 'noon');
+  near(at(19, 0), 0, 'dusk ramp starts');
+  near(at(19, 30), 0.21, 'dusk midpoint');
+  near(at(20, 0), 0.42, 'night phase starts at full darkness');
+  near(at(23, 0), 0.42, 'deep night');
+  near(at(5, 59), 0.42, 'last minute of the night phase');
+  near(at(6, 0), 0.42, 'dawn ramp starts from full darkness');
+  near(at(6, 30), 0.21, 'dawn midpoint');
+  near(at(7, 0), 0, 'dawn ramp ends');
+  // Never snaps: no minute-to-minute step bigger than one ramp minute, around the clock.
+  let prev = at(23, 59);
+  for (let t = 0; t < 24 * 60; t++) {
+    const cur = at(Math.floor(t / 60), t % 60);
+    assert.ok(Math.abs(cur - prev) <= 0.42 / 60 + 1e-9, `snap at minute ${t}`);
+    prev = cur;
+  }
+  // Full darkness throughout lightingFor's night phase, none between the ramps.
+  for (let t = 0; t < 24 * 60; t++) {
+    const [h, m] = [Math.floor(t / 60), t % 60];
+    if (isNightPhase(h, m)) assert.equal(at(h, m), 0.42, `${h}:${m}`);
+    else if (t >= 7 * 60 && t <= 19 * 60) assert.equal(at(h, m), 0, `${h}:${m}`);
+  }
 });
 
 test('lightingFor: lamps only when there is a tint', () => {
@@ -215,44 +246,50 @@ const NIGHT = {
   rows: 8,
   enabled: true,
   nowMs: 0,
+  strength: 1,
   monitors: [],
   fixtures: { lamps: [], fairyLights: [] },
 };
 const center = (d: GlowDraw) => ({ x: d.x + d.w / 2, y: d.y + d.h / 2, r: d.w / 2 });
 
-test('nightLightDraws: a 3-tile pool on the lamp base and a 2-tile pool per lit monitor, in the night phase only (20:00 to 05:59)', () => {
+test('nightLightDraws: lamp pool r4, a pool r2.5 one tile below each lit monitor, a 1.5-tile band under each fairy strand', () => {
   const input = {
     ...NIGHT,
-    fixtures: { lamps: [{ col: 5, row: 3 }], fairyLights: [] },
+    cols: 16,
+    rows: 16, // roomy enough that no pool is clipped
+    fixtures: { lamps: [{ col: 8, row: 6 }], fairyLights: [{ col: 1, row: 1 }] },
     monitors: [{ col: 2, row: 2 }],
   };
-  for (const [h, m, lit] of [
-    [19, 59, false],
-    [20, 0, true],
-    [5, 59, true],
-    [6, 0, false],
-  ] as const) {
-    const { pools } = nightLightDraws({ ...input, night: isNightPhase(h, m) });
-    assert.equal(pools.length, lit ? 2 : 0, `${h}:${m}`);
-  }
-  const { pools } = nightLightDraws({ ...input, night: true });
-  const [lamp, monitor] = pools;
+  const { pools } = nightLightDraws(input);
+  const [lamp, monitor, band] = pools;
+  assert.equal(pools.length, 3);
   // zoom 2: a tile is 32 device px. The lamp base is the middle of its second tile.
   assert.equal(lamp.kind, 'lampPool');
-  assert.deepEqual(center(lamp), { x: 10 + 5.5 * 32, y: 20 + 4.5 * 32, r: 3 * 32 });
+  assert.deepEqual(center(lamp), { x: 10 + 8.5 * 32, y: 20 + 7.5 * 32, r: 4 * 32 });
   assert.equal(monitor.kind, 'monitorPool');
-  assert.deepEqual(center(monitor), { x: 10 + 2.5 * 32, y: 20 + 2.5 * 32, r: 2 * 32 });
-  assert.deepEqual(nightLightDraws({ ...input, night: true, enabled: false }), {
-    pools: [],
-    fairy: [],
-  });
+  assert.deepEqual(center(monitor), { x: 10 + 2.5 * 32, y: 20 + 3.5 * 32, r: 2.5 * 32 });
+  assert.equal(band.kind, 'fairyBand');
+  assert.deepEqual({ x: band.x, w: band.w, h: band.h }, { x: 10 + 1 * 32, w: 4 * 32, h: 1.5 * 32 });
+  assert.equal(band.y, 20 + 1.5 * 32, 'starts half a tile under the strand top');
+  assert.deepEqual(nightLightDraws({ ...input, enabled: false }), { pools: [], fairy: [] });
+});
+
+test('nightLightDraws: a monitor that is not lit gets no pool, and the pools fade with the darkening strength', () => {
+  const fixtures = { lamps: [{ col: 5, row: 3 }], fairyLights: [] };
+  const none = nightLightDraws({ ...NIGHT, fixtures, monitors: [] }).pools;
+  assert.deepEqual(
+    none.map((d) => d.kind),
+    ['lampPool'],
+  );
+  const half = nightLightDraws({ ...NIGHT, fixtures, strength: 0.5 }).pools;
+  assert.equal(half[0].alpha, 0.5);
+  assert.deepEqual(nightLightDraws({ ...NIGHT, fixtures, strength: 0 }), { pools: [], fairy: [] });
 });
 
 test('nightLightDraws: fairy bulbs glow where the strand hangs, and each twinkles on its own 1.8 s beat', () => {
   const at = (col: number, row: number, nowMs = 0) =>
     nightLightDraws({
       ...NIGHT,
-      night: true,
       nowMs,
       fixtures: { lamps: [], fairyLights: [{ col, row }] },
     }).fairy;
@@ -284,7 +321,7 @@ test('nightLightDraws: fairy bulbs glow where the strand hangs, and each twinkle
   assert.deepEqual(
     nightLightDraws({
       ...NIGHT,
-      night: false,
+      strength: 0,
       fixtures: { lamps: [], fairyLights: [{ col: 1, row: 1 }] },
     }).fairy,
     [],
