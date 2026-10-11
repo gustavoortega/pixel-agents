@@ -1,79 +1,31 @@
-import { useEffect, useRef, useState } from 'react';
-
-import {
-  ZOOM_LEVEL_FADE_DELAY_MS,
-  ZOOM_LEVEL_FADE_DURATION_SEC,
-  ZOOM_LEVEL_HIDE_DELAY_MS,
-  ZOOM_MAX,
-  ZOOM_MIN,
-} from '../constants.js';
+import { ZOOM_MAX, ZOOM_MIN } from '../constants.js';
 import { Button } from './ui/Button.js';
 
 interface ZoomControlsProps {
   zoom: number;
   onZoomChange: (zoom: number) => void;
-  /** Auto-fit is following the occupied seats. */
+  /** Auto-fit is following the rooms where agents work. */
   fitActive: boolean;
-  /** Frame the occupied seats again and keep following them. */
+  /** Frame the working rooms again and keep following them. */
   onFit: () => void;
 }
 
 export function ZoomControls({ zoom, onZoomChange, fitActive, onFit }: ZoomControlsProps) {
-  const [showLevel, setShowLevel] = useState(false);
-  const [fadeOut, setFadeOut] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevZoomRef = useRef(zoom);
-
   const minDisabled = zoom <= ZOOM_MIN;
   const maxDisabled = zoom >= ZOOM_MAX;
 
-  // Show zoom level briefly when zoom changes
-  useEffect(() => {
-    if (zoom === prevZoomRef.current) return;
-    prevZoomRef.current = zoom;
-
-    // Clear existing timers
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
-
-    setShowLevel(true);
-    setFadeOut(false);
-
-    // Start fade after delay
-    fadeTimerRef.current = setTimeout(() => {
-      setFadeOut(true);
-    }, ZOOM_LEVEL_FADE_DELAY_MS);
-
-    // Hide completely after delay
-    timerRef.current = setTimeout(() => {
-      setShowLevel(false);
-      setFadeOut(false);
-    }, ZOOM_LEVEL_HIDE_DELAY_MS);
-
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
-    };
-  }, [zoom]);
-
   return (
     <>
-      {/* Zoom level indicator at top-center */}
-      {showLevel && (
+      {/* Vertically stacked buttons, top-left under the HUD clock. The zoom level is part of the
+          cluster, not a badge floating over the map. */}
+      <div className="absolute top-76 left-8 z-10 flex flex-col gap-6">
         <div
-          className="absolute top-10 left-1/2 -translate-x-1/2 z-10 brand-panel pb-4 px-16 text-lg select-none pointer-events-none"
-          style={{
-            opacity: fadeOut ? 0 : 1,
-            transition: `opacity ${ZOOM_LEVEL_FADE_DURATION_SEC}s ease-out`,
-          }}
+          className="brand-panel w-40 flex items-center justify-center text-sm select-none pointer-events-none"
+          title="Zoom level"
+          data-testid="zoom-level"
         >
           {zoom}x
         </div>
-      )}
-
-      {/* Vertically stacked buttons, top-left under the HUD clock */}
-      <div className="absolute top-76 left-8 z-10 flex flex-col gap-6">
         <Button
           size="icon_lg"
           variant="brand"
@@ -125,7 +77,7 @@ export function ZoomControls({ zoom, onZoomChange, fitActive, onFit }: ZoomContr
           size="icon_lg"
           variant={fitActive ? 'brandActive' : 'brand'}
           onClick={onFit}
-          title="Fit the view to the seats in use"
+          title="Fit the view to the rooms in use"
           className="text-sm"
         >
           Fit

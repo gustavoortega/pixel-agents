@@ -41,6 +41,36 @@ export const Direction = {
 } as const;
 export type Direction = (typeof Direction)[keyof typeof Direction];
 
+/** What the server says an agent is doing (`agentStatus`), reduced to what the pose cares about. */
+export const WorkStatus = { ACTIVE: 'active', WAITING: 'waiting', IDLE: 'idle' } as const;
+export type WorkStatus = (typeof WorkStatus)[keyof typeof WorkStatus];
+
+/** What a seated agent is doing with its time. Decided in engine/idleLife.ts. */
+export const IdlePose = {
+  /** Working: the typing (or reading-tool) animation. */
+  TYPING: 'typing',
+  /** Turn finished, waiting on the user: seated, hands still, the bubble above. */
+  WAIT_BUBBLE: 'waitBubble',
+  /** Idle: seated with a book, turning pages. */
+  READING: 'reading',
+  /** Idle for long: head down on the desk, Zz rising. */
+  NAPPING: 'napping',
+  /** Idle: on a sofa with a mug. */
+  COFFEE: 'coffee',
+} as const;
+export type IdlePose = (typeof IdlePose)[keyof typeof IdlePose];
+
+/** An idle coffee trip: out to a sofa, sitting there. (The way back is a plain walk to the desk.) */
+export interface CoffeeTrip {
+  stage: 'out' | 'sat';
+  /** Sofa seat (uid in `OfficeState.seats`) this agent is using; no one else takes it. */
+  sofaSeatId: string;
+  /** Walkable tile beside the sofa seat the walk ends on; the sit is one more step. */
+  approach: { col: number; row: number };
+  /** Seconds on the sofa. */
+  staySec: number;
+}
+
 /** 2D array of hex color strings: '' = transparent, '#RRGGBB' = opaque, '#RRGGBBAA' = semi-transparent. [row][col] */
 export type SpriteData = string[][];
 
@@ -54,6 +84,10 @@ export interface Seat {
   /** Direction character faces when sitting (toward adjacent desk) */
   facingDir: Direction;
   assigned: boolean;
+  /** A multi-seat couch cushion: a place for coffee, not a desk (agents are only assigned one when no desk is free). */
+  couch?: boolean;
+  /** Extra px a seated sprite sinks so the desk in front of it hides DESK_SEAT_COVER_PX of it. Derived from the desk art. */
+  sink?: number;
 }
 
 export interface FurnitureInstance {
@@ -198,6 +232,26 @@ export interface Character {
   wanderLimit: number;
   /** Whether the agent is actively working */
   isActive: boolean;
+  /** Server status as the pose sees it; `isActive` is `agentStatus === 'active'`. */
+  agentStatus: WorkStatus;
+  /** What the seated agent is doing; see engine/idleLife.ts. */
+  pose: IdlePose;
+  /** Status the pose was last decided for. */
+  poseStatus: WorkStatus;
+  /** Seconds since the agent last worked (waiting counts as not working). */
+  idleSec: number;
+  /** How long the current non-active status has held. */
+  poseSettleSec: number;
+  /** Seconds to the next scheduled pose evaluation. */
+  poseTickSec: number;
+  /** Seconds in the current pose: drives the page turn and the Zz. */
+  poseClockSec: number;
+  /** Seconds before this agent may go for coffee again. */
+  coffeeCooldownSec: number;
+  /** Extra sink, px, of the seat the agent is sitting in (0 when standing). */
+  drawSink: number;
+  /** The coffee trip in progress, or null. */
+  trip: CoffeeTrip | null;
   /** Assigned seat uid, or null if no seat */
   seatId: string | null;
   /** Active speech bubble type, or null if none showing */

@@ -506,7 +506,7 @@ export async function loadCharacterSprites(
     }
 
     console.log(
-      `[AssetLoader] ✅ Loaded ${characters.length} character sprites (${CHAR_FRAMES_PER_ROW} frames × 3 directions each)`,
+      `[AssetLoader] ✅ Loaded ${characters.length} character sprites (${CHAR_FRAMES_PER_ROW} frames × 3 directions + idle row each)`,
     );
     return { characters };
   } catch (err) {

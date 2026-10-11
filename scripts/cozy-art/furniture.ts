@@ -293,18 +293,20 @@ const ARMCHAIR_PAL: Palette = {
   C: '#c0563f',
 };
 
+// The arm rests reach columns 0 and 15: a seated agent's arms fill columns 1..14, and the chair
+// has to show beside them or it vanishes behind the agent (the seat court checks for it).
 const CUSHION_FRONT = [
   '...OOOOOOOOOO...',
   '..ORRRRRRRRRRO..',
   '..ORrrrrrrrrRO..',
   '..ORRRRRRRRRRO..',
-  '.OORRRRRRRRRROO.',
-  '.ORORRRRRRRRORO.',
-  '.ORORRRRRRRRORO.',
-  '.ORORrrrrrrRORO.',
-  '.ORORRRRRRRRORO.',
-  '.ORORRRRRRRRORO.',
-  '.ORNNNNNNNNNNRO.',
+  'OOORRRRRRRRRROOO',
+  'OORORRRRRRRROROO',
+  'OORORRRRRRRROROO',
+  'OORORrrrrrrROROO',
+  'OORORRRRRRRROROO',
+  'OORORRRRRRRROROO',
+  'OORNNNNNNNNNNROO',
   '.OOOOOOOOOOOOOO.',
   '..OXO......OXO..',
   '..OXO......OXO..',

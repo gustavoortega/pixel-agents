@@ -46,16 +46,17 @@ describe('cozy art pack', () => {
     }
   });
 
-  it('writes char_0..11 as 112x96 sheets whose 21 frames all decode non-empty', () => {
+  it('writes char_0..11 as 112x128 sheets whose 25 frames (21 + the 4-frame idle row) all decode non-empty', () => {
     for (let i = 0; i < 12; i++) {
       const buf = fs.readFileSync(
         path.join(runA, `webview-ui/public/assets/characters/char_${i}.png`),
       );
       const png = PNG.sync.read(buf);
-      expect([png.width, png.height], `char_${i} size`).toEqual([112, 96]);
+      expect([png.width, png.height], `char_${i} size`).toEqual([112, 128]);
       const sheet = decodeCharacterPng(buf);
       for (const dir of ['down', 'up', 'right'] as const) {
-        expect(sheet[dir]).toHaveLength(7);
+        // The idle row is decoded as frames 7..10 of `down`.
+        expect(sheet[dir]).toHaveLength(dir === 'down' ? 11 : 7);
         sheet[dir].forEach((frame, f) => {
           expect(frame).toHaveLength(32);
           expect(frame[0]).toHaveLength(16);
@@ -131,13 +132,17 @@ describe('cozy art pack', () => {
   it('anchors.json head rows match the generated frames', () => {
     const anchors = JSON.parse(
       fs.readFileSync(path.join(runA, 'webview-ui/src/office/sprites/flair/anchors.json'), 'utf8'),
-    ) as Record<string, { headTopY: number; shoulderY: number; bob: number[] }>;
+    ) as Record<
+      string,
+      { headTopY: number; shoulderY: number; bob: number[]; shoulderBob: number[] }
+    >;
     const sheet = decodeCharacterPng(
       fs.readFileSync(path.join(runA, 'webview-ui/public/assets/characters/char_0.png')),
     );
     for (const dir of ['down', 'up', 'right'] as const) {
       const a = anchors[dir];
-      expect(a.bob).toHaveLength(7);
+      expect(a.bob).toHaveLength(sheet[dir].length);
+      expect(a.shoulderBob).toHaveLength(sheet[dir].length);
       sheet[dir].forEach((frame, f) => {
         const top = frame.findIndex((row) => row.some((px) => px !== ''));
         expect(top, `${dir} frame ${f}`).toBe(a.headTopY + a.bob[f]);

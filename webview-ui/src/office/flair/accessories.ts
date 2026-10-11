@@ -3,17 +3,17 @@ import {
   ACCESSORY_FRONT_Z_OFFSET,
   CAPE_BEHIND_Z_OFFSET,
   CAPE_OVER_Z_OFFSET,
-  CHARACTER_SITTING_OFFSET_PX,
   SPARKLE_MIN_ALPHA,
   SPARKLE_PERIOD_MS,
 } from '../../constants.js';
+import { seatedDrawOffsetPx } from '../seatDraw.js';
 import anchorsData from '../sprites/flair/anchors.json';
 import capeData from '../sprites/flair/cape.json';
 import crownData from '../sprites/flair/crown.json';
 import headphonesData from '../sprites/flair/headphones.json';
 import sparkleData from '../sprites/flair/sparkle.json';
-import type { SpriteData } from '../types.js';
-import { CharacterState, Direction } from '../types.js';
+import type { CharacterState, SpriteData } from '../types.js';
+import { Direction } from '../types.js';
 import { AccessoryKind } from './modelFlair.js';
 
 /**
@@ -49,8 +49,10 @@ interface AnchorsJson {
 interface AnchorSet {
   headTopY: number;
   shoulderY: number;
-  /** Vertical offset of each of the 7 sheet frames relative to the anchors. */
+  /** Vertical offset of each sheet frame's head relative to the anchors (`down` also covers the idle row, frames 7..10). */
   bob: number[];
+  /** Same for the shoulder line: the head can move alone (nap), the shoulders cannot. */
+  shoulderBob: number[];
 }
 
 const ACCESSORIES: Record<AccessoryKind, AccessoryJson> = {
@@ -119,7 +121,7 @@ export function accessoryPlacement(
   const key = facingKey(dir);
   const anchors = ANCHORS[key];
   const anchorY = json.anchor === 'head' ? anchors.headTopY : anchors.shoulderY;
-  const bob = anchors.bob[sheetFrame] ?? 0;
+  const bob = (json.anchor === 'head' ? anchors.bob : anchors.shoulderBob)[sheetFrame] ?? 0;
   return {
     sprite: getAccessorySprite(kind, dir, tier),
     dy: anchorY + bob - json.directions[key].row,
@@ -144,14 +146,14 @@ export function accessoryZ(kind: AccessoryKind, dir: Direction, charZY: number):
  * Equipment is placed relative to this, so it follows the sitting offset.
  */
 export function characterDrawOrigin(
-  ch: { x: number; y: number; state: CharacterState },
+  ch: { x: number; y: number; state: CharacterState; drawSink?: number },
   spriteWidthPx: number,
   spriteHeightPx: number,
   offsetX: number,
   offsetY: number,
   zoom: number,
 ): { drawX: number; drawY: number } {
-  const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
+  const sittingOffset = seatedDrawOffsetPx(ch);
   return {
     drawX: Math.round(offsetX + ch.x * zoom - spriteWidthPx / 2),
     drawY: Math.round(offsetY + (ch.y + sittingOffset) * zoom - spriteHeightPx),

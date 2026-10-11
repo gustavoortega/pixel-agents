@@ -18,6 +18,27 @@ export const WANDER_MOVES_BEFORE_REST_MAX = 6;
 export const SEAT_REST_MIN_SEC = 120.0;
 export const SEAT_REST_MAX_SEC = 240.0;
 
+// ── Idle life (iteration 3a) ─────────────────────────────────
+/** A pose is re-evaluated this often even when the status did not change. */
+export const POSE_TICK_SEC = 60;
+/** A status other than active must hold this long before the pose follows it: a status that
+ *  flips every couple of seconds never moves the pose (going active is always immediate). */
+export const POSE_SETTLE_SEC = 4;
+/** Reading turns to napping after this long idle, and never goes back within the idle span. */
+export const NAP_AFTER_IDLE_SEC = 600;
+/** One in this many agents (by seed) is a coffee drinker. */
+export const COFFEE_SEED_MODULUS = 3;
+export const COFFEE_MIN_IDLE_SEC = 120;
+export const COFFEE_MIN_STAY_SEC = 60;
+export const COFFEE_COOLDOWN_SEC = 600;
+export const SOFA_MAX_OCCUPANTS = 2;
+/** Seconds one page of the book stays up before the page-turn frame swaps. */
+export const READING_PAGE_TURN_SEC = 2.5;
+/** Rising "Zz" of a napping agent: one cycle, and how many glyph rows it climbs (cells at zoom 1). */
+export const NAP_ZZ_PERIOD_MS = 2400;
+export const NAP_ZZ_RISE_CELLS = 5;
+export const NAP_ZZ_CELL_PX = 1;
+
 // ── Matrix Effect ────────────────────────────────────────────
 export const MATRIX_EFFECT_DURATION_SEC = 0.3;
 export const MATRIX_TRAIL_LENGTH = 6;
@@ -37,6 +58,11 @@ export const MATRIX_TRAIL_DIM_THRESHOLD = 0.66;
 
 // ── Rendering ────────────────────────────────────────────────
 export const CHARACTER_SITTING_OFFSET_PX = 6;
+/** A face-on desk seat sinks its sprite until the desk top hides this many px of the sprite's bottom
+ *  (the desk sorts in front of a seated agent; the sink only makes the cover real). */
+export const DESK_SEAT_COVER_PX = 12;
+/** A couch's front part hides this many px of the sprite's bottom: the cut row is derived from it. */
+export const SOFA_FRONT_COVER_PX = 10;
 export const CHARACTER_Z_SORT_OFFSET = 0.5;
 export const OUTLINE_Z_SORT_OFFSET = 0.001;
 export const SELECTED_OUTLINE_ALPHA = 1.0;
@@ -93,11 +119,7 @@ export const CAMERA_FOLLOW_SNAP_THRESHOLD = 0.5;
 export const ZOOM_MIN = 1;
 export const ZOOM_MAX = 10;
 export const ZOOM_DEFAULT_DPR_FACTOR = 2;
-export const ZOOM_LEVEL_FADE_DELAY_MS = 1500;
-export const ZOOM_LEVEL_HIDE_DELAY_MS = 2000;
-export const ZOOM_LEVEL_FADE_DURATION_SEC = 0.5;
 export const ZOOM_SCROLL_THRESHOLD = 50;
-export const PAN_MARGIN_FRACTION = 0.25;
 
 // ── Editor ───────────────────────────────────────────────────
 export const UNDO_STACK_MAX_SIZE = 50;
@@ -247,9 +269,18 @@ export const COMPACT_LABEL_MIN_WIDTH_PX = 90;
 export const COMPACT_LABEL_LINE_HEIGHT_PX = 18;
 /** Clear space between the character's feet and a plate placed below them, CSS px. */
 export const COMPACT_LABEL_FEET_GAP_PX = 2;
-/** World px between the head top and a plate placed above it: room for the bubble, the idle
- *  glyph and the tripwire beacon, which are drawn on the canvas right above the head. */
-export const NAMEPLATE_HEAD_CLEARANCE_PX = 16;
+/** World px between the head top and a plate placed above it. */
+export const NAMEPLATE_HEAD_GAP_PX = 2;
+/** Extra world px the plate rises when something else owns the slot right above the head: a speech
+ *  bubble, the idle glyph, the napping Zz or the tripwire beacon, all drawn on the canvas. */
+export const NAMEPLATE_SLOT_CLEARANCE_PX = 16;
+/** Height of a character sprite frame, px: its head top row is measured from its top edge. */
+export const CHARACTER_SPRITE_HEIGHT_PX = 32;
+/** Plates scale with the zoom relative to the zoom at which the whole map fits, between these. */
+export const PLATE_SCALE_MIN = 0.6;
+export const PLATE_SCALE_MAX = 1.5;
+/** Below this scale the plate drops its title (second) line and keeps `Lv N  Name`. */
+export const PLATE_TITLE_MIN_SCALE = 1;
 /** Nameplate box, CSS px. Line 1 is the badge + member name, line 2 the session label. */
 export const NAMEPLATE_LINE1_PX = 20;
 export const NAMEPLATE_LINE2_PX = 16;
@@ -499,11 +530,10 @@ export const LAMP_HEAD_OFFSET_PX = 6;
 export const HUD_CLOCK_REFRESH_MS = 15_000;
 
 // ── Cozy look: camera fit ───────────────────────────────────────
-/** Margin around the occupied seats, in tiles, that auto-fit keeps in view. */
-export const FIT_MARGIN_TILES = 3;
-/** Auto-fit never zooms below this unless the whole map needs less. */
-export const FIT_MIN_ZOOM = 4;
-/** Extra tiles above the framed area: a nameplate is about one tile tall and sits over the top row. */
-export const FIT_TOP_PAD_TILES = 1;
-/** Centre moves ease over this long; the integer zoom never animates. */
+/** Margin around the framed rooms, in tiles. The rooms' own floor is the frame: plates are clamped inside it. */
+export const FIT_MARGIN_TILES = 1;
+/** Furniture type that marks the lounge: the Area holding it is the lounge room. */
+export const LOUNGE_FURNITURE_TYPE = 'COFFEE_TABLE';
+/** The fit frames at least this many rooms (or the whole map when it has fewer). */
+export const FIT_MIN_ROOMS = 2;
 export const FIT_CENTER_EASE_MS = 300;

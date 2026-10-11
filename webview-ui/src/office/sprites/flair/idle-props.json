@@ -1,0 +1,42 @@
+{
+  "name": "idle-props",
+  "description": "Palette-free overlays an idle agent holds: the book (cover, then the page-turn frame with a page corner showing) and the mug. Drawn over the sprite at fixed offsets from its top-left.",
+  "palette": {
+    ".": "",
+    "o": "#2a1a12",
+    "k": "#8a4b2a",
+    "W": "#fff4dc",
+    "C": "#f4e6c6",
+    "c": "#8a5a3a",
+    "w": "#ffffffaa"
+  },
+  "book": {
+    "dx": 4,
+    "dy": 15,
+    "a": [
+      ["o","o","o","o","o","o","o","o"],
+      ["o","k","k","k","k","k","k","o"],
+      ["o","k","k","k","k","k","k","o"],
+      ["o","k","k","k","k","k","k","o"],
+      ["o","o","o","o","o","o","o","o"]
+    ],
+    "b": [
+      ["o","o","o","o","o","o","o","o"],
+      ["o","k","k","k","k","k","k","o"],
+      ["o","k","k","k","k","k","k","o"],
+      ["o","k","k","k","k","W","k","o"],
+      ["o","o","o","o","o","o","o","o"]
+    ]
+  },
+  "mug": {
+    "dx": 9,
+    "dy": 16,
+    "pixels": [
+      [".","w",".",".","."],
+      [".","o","o","o","."],
+      ["o","C","c","C","o"],
+      [".","C","C","C","o"],
+      [".","o","o","o","."]
+    ]
+  }
+}

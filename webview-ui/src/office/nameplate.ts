@@ -4,20 +4,27 @@
  */
 
 import {
+  CHARACTER_SPRITE_HEIGHT_PX,
   NAMEPLATE_BADGE_GOLD,
   NAMEPLATE_BADGE_INK,
   NAMEPLATE_BG,
   NAMEPLATE_BORDER_COLOR,
   NAMEPLATE_BORDER_PX,
+  NAMEPLATE_HEAD_GAP_PX,
   NAMEPLATE_LINE1_PX,
   NAMEPLATE_LINE2_PX,
   NAMEPLATE_PAD_Y_PX,
   NAMEPLATE_PILL_GAP_PX,
   NAMEPLATE_PILL_HEIGHT_PX,
   NAMEPLATE_SHADOW_PX,
+  NAMEPLATE_SLOT_CLEARANCE_PX,
   NAMEPLATE_SUB_BG,
   NAMEPLATE_TEXT_COLOR,
+  PLATE_SCALE_MAX,
+  PLATE_SCALE_MIN,
+  PLATE_TITLE_MIN_SCALE,
 } from '../constants.js';
+import { ANCHORS } from './flair/accessories.js';
 import type { Rarity } from './flair/modelFlair.js';
 import { rarityColor } from './flair/modelFlair.js';
 import type { NameplateContent } from './toolUtils.js';
@@ -25,6 +32,35 @@ import type { Direction } from './types.js';
 import { Direction as Dir } from './types.js';
 
 export type PlateSide = 'above' | 'below';
+
+/**
+ * Scale of the plates: the zoom relative to the zoom at which the whole map fits, so a plate keeps
+ * the same share of the screen however big the map is. Clamped: past the bounds a plate is either
+ * unreadable or a billboard.
+ */
+export function plateScale(zoom: number, fitZoomWholeMap: number): number {
+  return Math.max(PLATE_SCALE_MIN, Math.min(PLATE_SCALE_MAX, zoom / Math.max(1, fitZoomWholeMap)));
+}
+
+/** The title line (`sub`) only shows at full size; below it the plate is `Lv N  Name`. */
+export function plateShowsTitle(scale: number): boolean {
+  return scale >= PLATE_TITLE_MIN_SCALE;
+}
+
+/**
+ * World y of the line a plate above the head hangs from: 2 px over the sprite's head, or higher
+ * by the slot clearance when a bubble, glyph or beacon is drawn there. `y` is the character's (or
+ * its tile's) centre and `sit` how far below it the sprite is drawn.
+ */
+export function plateAnchorAboveY(
+  y: number,
+  sit: number,
+  slotTaken: boolean,
+  headBobPx = 0,
+): number {
+  const headTop = y + sit - CHARACTER_SPRITE_HEIGHT_PX + ANCHORS.down.headTopY + headBobPx;
+  return headTop - NAMEPLATE_HEAD_GAP_PX - (slotTaken ? NAMEPLATE_SLOT_CLEARANCE_PX : 0);
+}
 
 /**
  * A character facing the camera (DOWN) keeps its face visible, so the plate goes above the head,

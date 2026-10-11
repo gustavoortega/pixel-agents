@@ -5,24 +5,29 @@ import {
   AUTO_ON_SIDE_DEPTH,
   CHARACTER_HIT_HALF_WIDTH,
   CHARACTER_HIT_HEIGHT,
-  CHARACTER_SITTING_OFFSET_PX,
+  COFFEE_COOLDOWN_SEC,
+  COFFEE_MIN_STAY_SEC,
   DISMISS_BUBBLE_FAST_FADE_SEC,
   FURNITURE_ANIM_INTERVAL_SEC,
   GREETER_ID,
   GREETER_TILE_MARGIN,
   INACTIVE_SEAT_TIMER_MIN_SEC,
   INACTIVE_SEAT_TIMER_RANGE_SEC,
+  LOUNGE_FURNITURE_TYPE,
   MAX_PET_ID_LENGTH,
   PET_HIT_HALF_WIDTH,
   PET_HIT_HEIGHT,
+  SOFA_MAX_OCCUPANTS,
   WAITING_BUBBLE_DURATION_SEC,
 } from '../../constants.js';
+import { type FitAgent, LOBBY_ROOM } from '../camera.js';
 import type { Companion, Tile } from '../flair/companion.js';
 import {
   advanceTrail,
   companionTile,
   createCompanion,
   deskCompanionTile,
+  tableCompanionTile,
   updateCompanion,
 } from '../flair/companion.js';
 import { type HeroCandidate, heroPerRoom } from '../flair/hero.js';
@@ -38,6 +43,7 @@ import {
   layoutToTileMap,
 } from '../layout/layoutSerializer.js';
 import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
+import { seatedDrawOffsetPx } from '../seatDraw.js';
 import { getPetCount, getPetName } from '../sprites/petSpriteData.js';
 import { getLoadedCharacterCount } from '../sprites/spriteData.js';
 import type { AgentRosterInfo, RosterEventInfo, TripwireAlarm } from '../toolUtils.js';
@@ -51,8 +57,9 @@ import type {
   Seat,
   TileType as TileTypeVal,
 } from '../types.js';
-import { CharacterState, Direction, PetState, TILE_SIZE } from '../types.js';
+import { CharacterState, Direction, IdlePose, PetState, TILE_SIZE, WorkStatus } from '../types.js';
 import { createCharacter, updateCharacter } from './characters.js';
+import { stepPose } from './idleLife.js';
 import { advanceMatrixEffect, startMatrixEffect } from './matrixEffectState.js';
 import { createPet, updatePet } from './petEntity.js';
 import { anchorTile, closestFreeSeat } from './seatPlacement.js';
@@ -69,6 +76,8 @@ export class OfficeState {
   layout: OfficeLayout;
   tileMap: TileTypeVal[][];
   seats: Map<string, Seat>;
+  /** Seat by "col,row": what a sitting character's draw offset is read from. */
+  private seatByTile: Map<string, Seat> = new Map();
   blockedTiles: Set<string>;
   furniture: FurnitureInstance[];
   walkableTiles: Array<{ col: number; row: number }>;
@@ -96,6 +105,8 @@ export class OfficeState {
   /** Desk tiles with their desk's sort depth, and the electronics tiles: where a hero's companion sits. */
   private deskTiles: Map<string, number>;
   private electronicsTiles: Set<string>;
+  /** Coffee table tiles with their sort depth: where the companion of someone on a sofa rests. */
+  private tableTiles: Map<string, number> = new Map();
   pets: Pet[] = [];
   /** Accumulated time for furniture animation frame cycling */
   furnitureAnimTimer = 0;
@@ -150,10 +161,12 @@ export class OfficeState {
     this.layout = layout || createDefaultLayout();
     this.tileMap = layoutToTileMap(this.layout);
     this.seats = layoutToSeats(this.layout.furniture);
+    this.indexSeats();
     this.blockedTiles = getBlockedTiles(this.layout.furniture);
     this.furnitureTiles = getFurnitureTiles(this.layout.furniture);
     this.deskTiles = getDeskTiles(this.layout.furniture);
     this.electronicsTiles = this.buildElectronicsTileSet();
+    this.tableTiles = this.buildTableTiles(this.layout);
     this.furniture = layoutToFurnitureInstances(this.layout.furniture);
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
     // Pets are built last because they need walkableTiles populated for spawn.
@@ -166,10 +179,12 @@ export class OfficeState {
     this.layout = layout;
     this.tileMap = layoutToTileMap(layout);
     this.seats = layoutToSeats(layout.furniture);
+    this.indexSeats();
     this.blockedTiles = getBlockedTiles(layout.furniture);
     this.furnitureTiles = getFurnitureTiles(layout.furniture);
     this.deskTiles = getDeskTiles(layout.furniture);
     this.electronicsTiles = this.buildElectronicsTileSet();
+    this.tableTiles = this.buildTableTiles(layout);
     this.rebuildFurnitureInstances();
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
 
@@ -202,6 +217,8 @@ export class OfficeState {
     for (const seat of this.seats.values()) {
       seat.assigned = false;
     }
+    // Seat ids and tiles may all be new: a coffee trip's sofa seat means nothing now.
+    for (const ch of this.characters.values()) ch.trip = null;
 
     // First pass: try to keep characters at their existing seats
     for (const ch of this.characters.values()) {
@@ -297,6 +314,13 @@ export class OfficeState {
     return this.layout;
   }
 
+  private indexSeats(): void {
+    this.seatByTile = new Map();
+    for (const seat of this.seats.values()) {
+      this.seatByTile.set(`${seat.seatCol},${seat.seatRow}`, seat);
+    }
+  }
+
   /** Get the blocked-tile key for a character's own seat, or null */
   private ownSeatKey(ch: Character): string | null {
     if (!ch.seatId) return null;
@@ -312,6 +336,22 @@ export class OfficeState {
     const result = fn();
     if (key) this.blockedTiles.add(key);
     return result;
+  }
+
+  /** The coffee table's tiles, mapped to the sort depth of its bottom edge. */
+  private buildTableTiles(layout: OfficeLayout): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const item of layout.furniture) {
+      if (item.type !== LOUNGE_FURNITURE_TYPE) continue;
+      const entry = getCatalogEntry(item.type);
+      if (!entry) continue;
+      const zY = item.row * TILE_SIZE + entry.sprite.length;
+      for (let dr = 0; dr < entry.footprintH; dr++) {
+        for (let dc = 0; dc < entry.footprintW; dc++)
+          out.set(`${item.col + dc},${item.row + dr}`, zY);
+      }
+    }
+    return out;
   }
 
   /** Collect every tile occupied by electronics furniture (PCs, monitors, etc.). */
@@ -407,9 +447,13 @@ export class OfficeState {
   private findFreeSeat(folderName?: string): string | null {
     const electronicsTiles = this.buildElectronicsTileSet();
     const freeSeats: string[] = [];
+    const freeCouchSeats: string[] = [];
     for (const [uid, seat] of this.seats) {
-      if (!seat.assigned) freeSeats.push(uid);
+      if (seat.assigned) continue;
+      (seat.couch ? freeCouchSeats : freeSeats).push(uid);
     }
+    // Couch cushions are for coffee: an agent only gets one when every desk seat is taken.
+    if (freeSeats.length === 0) freeSeats.push(...freeCouchSeats);
     if (freeSeats.length === 0) return null;
 
     const areaLabels = folderName ? this.areaMappings[folderName] : undefined;
@@ -848,6 +892,9 @@ export class OfficeState {
     const ch = this.characters.get(id);
     if (ch) {
       ch.isActive = active;
+      // Not working reads as idle until a waiting status says otherwise (applyAgentStatus sends
+      // showWaitingBubble right after): the pose is decided from the settled status, not this hop.
+      ch.agentStatus = active ? WorkStatus.ACTIVE : WorkStatus.IDLE;
       if (!active) {
         // Sentinel -1: signals turn just ended, skip next seat rest timer.
         // Prevents the WALK handler from setting a 2-4 min rest on arrival.
@@ -953,6 +1000,7 @@ export class OfficeState {
   showWaitingBubble(id: number, awaitingInput = false): void {
     const ch = this.characters.get(id);
     if (ch) {
+      ch.agentStatus = WorkStatus.WAITING;
       ch.bubbleType = 'waiting';
       ch.waitingAwaitingInput = awaitingInput;
       ch.bubbleTimer = WAITING_BUBBLE_DURATION_SEC;
@@ -1200,19 +1248,38 @@ export class OfficeState {
         continue; // skip normal FSM while the effect is (or just was) active
       }
 
-      // Temporarily unblock own seat so character can pathfind to it
-      this.withOwnSeatUnblocked(ch, () =>
-        updateCharacter(
-          ch,
-          dt,
-          this.walkableTiles,
-          this.seats,
-          this.tileMap,
-          this.blockedTiles,
-          this.layout.areaTiles,
-          this.layout.cols,
-        ),
-      );
+      // Idle life: decide the pose, then let a coffee trip hold the character on its sofa.
+      let held = false;
+      if (!ch.isSubagent) {
+        stepPose(ch, dt, {
+          coffeeActive: () => ch.trip !== null,
+          sofaFree: () => this.freeSofaSlot(ch) !== null,
+          startCoffee: () => this.startCoffeeTrip(ch),
+        });
+        held = this.stepCoffeeTrip(ch, dt);
+      }
+
+      if (!held) {
+        // Temporarily unblock own seat so character can pathfind to it
+        this.withOwnSeatUnblocked(ch, () =>
+          updateCharacter(
+            ch,
+            dt,
+            this.walkableTiles,
+            this.seats,
+            this.tileMap,
+            this.blockedTiles,
+            this.layout.areaTiles,
+            this.layout.cols,
+          ),
+        );
+        if (!ch.isSubagent) this.arriveAtSofa(ch);
+      }
+      // A sitting character is drawn as low as its seat asks; standing resets it, so nothing sticks.
+      ch.drawSink =
+        ch.state === CharacterState.TYPE
+          ? (this.seatByTile.get(`${ch.tileCol},${ch.tileRow}`)?.sink ?? 0)
+          : 0;
 
       // Tick bubble timer for waiting bubbles
       if (ch.bubbleType === 'waiting') {
@@ -1243,6 +1310,193 @@ export class OfficeState {
         }
       }
     }
+  }
+
+  // ── Coffee trips ──────────────────────────────────────────────
+  // An idle coffee drinker walks to a sofa, sits with a mug, and walks back when work resumes.
+  // Cushions and chairs stay collision cells: the agent paths to the cell beside its seat and
+  // the sit is one more step onto the cushion.
+
+  /** Characters currently on a coffee trip: the sofas' occupants. */
+  private sofaOccupants(): number {
+    let n = 0;
+    for (const c of this.characters.values()) if (c.trip) n++;
+    return n;
+  }
+
+  /** The best free couch seat for `ch` and the cell it is entered from, or null when the sofas are full or unreachable. */
+  private freeSofaSlot(
+    ch: Character,
+  ): { sofaSeatId: string; approach: { col: number; row: number } } | null {
+    if (this.sofaOccupants() >= SOFA_MAX_OCCUPANTS) return null;
+    const taken = new Set<string>();
+    for (const c of this.characters.values()) if (c.trip) taken.add(c.trip.sofaSeatId);
+    let best: { sofaSeatId: string; approach: { col: number; row: number }; len: number } | null =
+      null;
+    for (const [uid, seat] of this.seats) {
+      if (!seat.couch || seat.assigned || taken.has(uid)) continue;
+      // In front of the seat first (where the table is), then the sides, then behind.
+      const f = seatFacingOffset(seat.facingDir);
+      const around = [
+        { col: seat.seatCol + f.dCol, row: seat.seatRow + f.dRow },
+        { col: seat.seatCol + f.dRow, row: seat.seatRow + f.dCol },
+        { col: seat.seatCol - f.dRow, row: seat.seatRow - f.dCol },
+        { col: seat.seatCol - f.dCol, row: seat.seatRow - f.dRow },
+      ];
+      for (const cell of around) {
+        if (!isWalkable(cell.col, cell.row, this.tileMap, this.blockedTiles)) continue;
+        const atCell = ch.tileCol === cell.col && ch.tileRow === cell.row;
+        const path = atCell
+          ? []
+          : this.withOwnSeatUnblocked(ch, () =>
+              findPath(ch.tileCol, ch.tileRow, cell.col, cell.row, this.tileMap, this.blockedTiles),
+            );
+        if (!atCell && path.length === 0) continue;
+        if (!best || path.length < best.len) {
+          best = { sofaSeatId: uid, approach: cell, len: path.length };
+        }
+        break;
+      }
+    }
+    return best ? { sofaSeatId: best.sofaSeatId, approach: best.approach } : null;
+  }
+
+  /** Send `ch` out for coffee. False when no sofa slot is reachable. */
+  private startCoffeeTrip(ch: Character): boolean {
+    const slot = this.freeSofaSlot(ch);
+    if (!slot) return false;
+    const path = this.withOwnSeatUnblocked(ch, () =>
+      findPath(
+        ch.tileCol,
+        ch.tileRow,
+        slot.approach.col,
+        slot.approach.row,
+        this.tileMap,
+        this.blockedTiles,
+      ),
+    );
+    ch.trip = { stage: 'out', sofaSeatId: slot.sofaSeatId, approach: slot.approach, staySec: 0 };
+    ch.path = path;
+    ch.moveProgress = 0;
+    ch.state = path.length > 0 ? CharacterState.WALK : CharacterState.IDLE;
+    ch.frame = 0;
+    ch.frameTimer = 0;
+    ch.pose = IdlePose.COFFEE;
+    ch.poseClockSec = 0;
+    return true;
+  }
+
+  /** The pose an agent falls back to when a trip ends, from its status alone. */
+  private poseForStatus(ch: Character): IdlePose {
+    if (ch.agentStatus === WorkStatus.ACTIVE) return IdlePose.TYPING;
+    return ch.agentStatus === WorkStatus.WAITING ? IdlePose.WAIT_BUBBLE : IdlePose.READING;
+  }
+
+  /**
+   * Walk `ch` from wherever it is back to its own desk seat. A walker caught between two tiles
+   * turns around where it stands: its tile becomes the one it was heading to and the first step is
+   * back to the one it left, so the sprite never jumps.
+   */
+  private sendBackToDesk(ch: Character): void {
+    const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
+    if (!seat) return;
+    const turning = ch.state === CharacterState.WALK && ch.path.length > 0 && ch.moveProgress > 0;
+    const from = { col: ch.tileCol, row: ch.tileRow };
+    if (turning) {
+      const heading = ch.path[0];
+      ch.tileCol = heading.col;
+      ch.tileRow = heading.row;
+    }
+    const start = turning ? from : { col: ch.tileCol, row: ch.tileRow };
+    const rest = this.withOwnSeatUnblocked(ch, () =>
+      findPath(start.col, start.row, seat.seatCol, seat.seatRow, this.tileMap, this.blockedTiles),
+    );
+    const path = turning ? [start, ...rest] : rest;
+    if (path.length === 0) {
+      // Already there, or boxed in: put it back rather than strand it on the sofa.
+      ch.tileCol = seat.seatCol;
+      ch.tileRow = seat.seatRow;
+      ch.x = seat.seatCol * TILE_SIZE + TILE_SIZE / 2;
+      ch.y = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
+      ch.state = CharacterState.TYPE;
+      ch.dir = seat.facingDir;
+      ch.path = [];
+      return;
+    }
+    ch.path = path;
+    ch.moveProgress = turning ? 1 - ch.moveProgress : 0;
+    ch.state = CharacterState.WALK;
+    ch.frame = 0;
+    ch.frameTimer = 0;
+  }
+
+  /** End a trip (the way back is a plain walk to the desk) and start the cooldown. */
+  private endCoffeeTrip(ch: Character): void {
+    ch.trip = null;
+    ch.coffeeCooldownSec = COFFEE_COOLDOWN_SEC;
+    ch.pose = this.poseForStatus(ch);
+    ch.poseClockSec = 0;
+    ch.poseStatus = ch.agentStatus;
+    this.sendBackToDesk(ch);
+  }
+
+  /**
+   * Before the walk/sit FSM: work resuming (or the turn ending) mid-walk turns the agent around
+   * where it stands, and a sitter leaves once it has stayed COFFEE_MIN_STAY_SEC. True while the
+   * character sits on the sofa, so the FSM leaves it there.
+   */
+  private stepCoffeeTrip(ch: Character, dt: number): boolean {
+    const trip = ch.trip;
+    if (!trip) return false;
+    if (trip.stage === 'out') {
+      if (ch.agentStatus !== WorkStatus.IDLE) this.endCoffeeTrip(ch);
+      return false;
+    }
+    trip.staySec += dt;
+    if (ch.agentStatus !== WorkStatus.IDLE && trip.staySec >= COFFEE_MIN_STAY_SEC) {
+      this.endCoffeeTrip(ch);
+      return false;
+    }
+    return true;
+  }
+
+  /** After the FSM: a walker that reached the cell beside its sofa seat takes the one step onto it. */
+  private arriveAtSofa(ch: Character): void {
+    const trip = ch.trip;
+    if (!trip || trip.stage !== 'out') return;
+    if (ch.state === CharacterState.WALK || ch.path.length > 0) return;
+    if (ch.tileCol !== trip.approach.col || ch.tileRow !== trip.approach.row) return;
+    const seat = this.seats.get(trip.sofaSeatId);
+    if (!seat) {
+      this.endCoffeeTrip(ch);
+      return;
+    }
+    ch.tileCol = seat.seatCol;
+    ch.tileRow = seat.seatRow;
+    ch.x = seat.seatCol * TILE_SIZE + TILE_SIZE / 2;
+    ch.y = seat.seatRow * TILE_SIZE + TILE_SIZE / 2;
+    ch.dir = seat.facingDir;
+    ch.state = CharacterState.TYPE;
+    ch.frame = 0;
+    ch.frameTimer = 0;
+    ch.poseClockSec = 0;
+    trip.stage = 'sat';
+  }
+
+  /** What the camera fit sees: who is working where, and where everyone stands. */
+  fitAgents(): FitAgent[] {
+    const tiles = this.layout.areaTiles;
+    const out: FitAgent[] = [];
+    for (const ch of this.characters.values()) {
+      if (ch.isSubagent || ch.matrixEffect === 'despawn') continue;
+      const tileRoom = tiles?.[ch.tileRow * this.layout.cols + ch.tileCol] ?? LOBBY_ROOM;
+      out.push({
+        working: ch.agentStatus !== WorkStatus.IDLE,
+        room: this.roomOf(ch) ?? LOBBY_ROOM,
+        tileRoom,
+      });
+    }
+    return out;
   }
 
   /** Area label of the room an agent sits in (its seat, else the tile it stands on); null outside every area. */
@@ -1311,7 +1565,20 @@ export class OfficeState {
       const atSeat = !!seat && seat.seatCol === agentTile.col && seat.seatRow === agentTile.row;
       let target: Tile | null = null;
       c.deskZY = null;
-      if (seat && atSeat) {
+      // The lounge's hero on a sofa keeps its companion on the coffee table in front of it.
+      const sofa =
+        !moving && ch.trip?.stage === 'sat' ? this.seats.get(ch.trip.sofaSeatId) : undefined;
+      if (sofa) {
+        const { dCol, dRow } = seatFacingOffset(sofa.facingDir);
+        target = tableCompanionTile({
+          seat: { col: sofa.seatCol, row: sofa.seatRow },
+          facing: { col: dCol, row: dRow },
+          depth: AUTO_ON_FACING_DEPTH,
+          tableTiles: this.tableTiles,
+          isTaken: (t) => taken.has(`${t.col},${t.row}`),
+        });
+        if (target) c.deskZY = this.tableTiles.get(`${target.col},${target.row}`) ?? null;
+      } else if (seat && atSeat) {
         const { dCol, dRow } = seatFacingOffset(seat.facingDir);
         target = deskCompanionTile({
           seat: agentTile,
@@ -1368,8 +1635,7 @@ export class OfficeState {
       if (ch.matrixEffect === 'despawn') continue;
       // Character sprite is 16x24, anchored bottom-center
       // Apply sitting offset to match visual position
-      const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
-      const anchorY = ch.y + sittingOffset;
+      const anchorY = ch.y + seatedDrawOffsetPx(ch);
       const left = ch.x - CHARACTER_HIT_HALF_WIDTH;
       const right = ch.x + CHARACTER_HIT_HALF_WIDTH;
       const top = anchorY - CHARACTER_HIT_HEIGHT;

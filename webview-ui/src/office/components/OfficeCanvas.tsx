@@ -1,16 +1,21 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 
 import {
   CAMERA_FOLLOW_LERP,
   CAMERA_FOLLOW_SNAP_THRESHOLD,
-  PAN_MARGIN_FRACTION,
   ZOOM_MAX,
   ZOOM_MIN,
   ZOOM_SCROLL_THRESHOLD,
 } from '../../constants.js';
 import { unlockAudio } from '../../notificationSound.js';
 import { transport } from '../../transport/index.js';
-import { AutoFit, occupiedTileBox } from '../camera.js';
+import {
+  AutoFit,
+  clampPan as clampPanToView,
+  fitTarget,
+  panAfterZoom,
+  roomsOf,
+} from '../camera.js';
 import { getColorizedSprite } from '../colorize.js';
 import { canPlaceFurniture, getWallPlacementRow } from '../editor/editorActions.js';
 import type { EditorState } from '../editor/editorState.js';
@@ -91,26 +96,47 @@ export function OfficeCanvas({
   const zoomAccumulatorRef = useRef(0);
   // Auto-fit pan computed for a zoom the canvas has not reached yet; applied once it does.
   const pendingFitRef = useRef<{ pan: { x: number; y: number }; panZoom: number } | null>(null);
+  // Zoom the canvas last drew at, and where a wheel zoom was aimed (device px; null = viewport centre).
+  const prevZoomRef = useRef(zoom);
+  const zoomAnchorRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Clamp pan so the map edge can't go past a margin inside the viewport
+  // Legal pan for the current zoom: a small map stays centred, a big one never shows void.
   const clampPan = useCallback(
     (px: number, py: number): { x: number; y: number } => {
       const canvas = canvasRef.current;
       if (!canvas) return { x: px, y: py };
       const layout = officeState.getLayout();
-      const mapW = layout.cols * TILE_SIZE * zoom;
-      const mapH = layout.rows * TILE_SIZE * zoom;
-      const marginX = canvas.width * PAN_MARGIN_FRACTION;
-      const marginY = canvas.height * PAN_MARGIN_FRACTION;
-      const maxPanX = mapW / 2 + canvas.width / 2 - marginX;
-      const maxPanY = mapH / 2 + canvas.height / 2 - marginY;
-      return {
-        x: Math.max(-maxPanX, Math.min(maxPanX, px)),
-        y: Math.max(-maxPanY, Math.min(maxPanY, py)),
-      };
+      return clampPanToView(
+        { x: px, y: py },
+        { width: canvas.width, height: canvas.height },
+        { cols: layout.cols, rows: layout.rows },
+        zoom,
+      );
     },
     [officeState, zoom],
   );
+
+  // A zoom change keeps the world point under its anchor still: the viewport centre for the
+  // buttons, the cursor for the wheel. An auto-fit zoom brings its own pan, which wins.
+  // A layout effect, so the overlays never see the new zoom with the old pan for a paint.
+  useLayoutEffect(() => {
+    const prev = prevZoomRef.current;
+    prevZoomRef.current = zoom;
+    const canvas = canvasRef.current;
+    if (prev === zoom || !canvas) return;
+    const layout = officeState.getLayout();
+    const map = { cols: layout.cols, rows: layout.rows };
+    const view = { width: canvas.width, height: canvas.height };
+    const pending = pendingFitRef.current;
+    if (pending && pending.panZoom === zoom) {
+      panRef.current = clampPanToView(pending.pan, view, map, zoom);
+      pendingFitRef.current = null;
+    } else {
+      const anchor = zoomAnchorRef.current ?? { x: view.width / 2, y: view.height / 2 };
+      panRef.current = panAfterZoom(anchor, panRef.current, prev, zoom, view, map);
+    }
+    zoomAnchorRef.current = null;
+  }, [zoom, officeState, panRef]);
 
   // Resize canvas backing store to device pixels (no DPR transform on ctx)
   const resizeCanvas = useCallback(() => {
@@ -246,7 +272,7 @@ export function OfficeCanvas({
           }
         }
 
-        // Fit to activity: frame the occupied seats; any manual camera move switched it off.
+        // Fit to activity: frame the rooms where agents work; any manual camera move switched it off.
         {
           const layoutForFit = officeState.getLayout();
           const dprFit = window.devicePixelRatio || 1;
@@ -256,7 +282,7 @@ export function OfficeCanvas({
             pendingFitRef.current = null;
           }
           const cmd = autoFit.step({
-            occupied: occupiedTileBox([...officeState.seats.values()].filter((s) => s.assigned)),
+            target: fitTarget(roomsOf(layoutForFit), officeState.fitAgents()),
             map: { cols: layoutForFit.cols, rows: layoutForFit.rows },
             canvas: { width: w / dprFit, height: h / dprFit },
             dpr: dprFit,
@@ -290,16 +316,23 @@ export function OfficeCanvas({
           const targetY = mapH / 2 - cameraFocus.y * zoom;
           const dx = targetX - panRef.current.x;
           const dy = targetY - panRef.current.y;
+          const legal = (x: number, y: number) =>
+            clampPanToView(
+              { x, y },
+              { width: w, height: h },
+              { cols: layout.cols, rows: layout.rows },
+              zoom,
+            );
           if (
             Math.abs(dx) < CAMERA_FOLLOW_SNAP_THRESHOLD &&
             Math.abs(dy) < CAMERA_FOLLOW_SNAP_THRESHOLD
           ) {
-            panRef.current = { x: targetX, y: targetY };
+            panRef.current = legal(targetX, targetY);
           } else {
-            panRef.current = {
-              x: panRef.current.x + dx * CAMERA_FOLLOW_LERP,
-              y: panRef.current.y + dy * CAMERA_FOLLOW_LERP,
-            };
+            panRef.current = legal(
+              panRef.current.x + dx * CAMERA_FOLLOW_LERP,
+              panRef.current.y + dy * CAMERA_FOLLOW_LERP,
+            );
           }
         }
 
@@ -899,6 +932,12 @@ export function OfficeCanvas({
           zoomAccumulatorRef.current = 0;
           const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom + delta));
           if (newZoom !== zoom) {
+            // The wheel zooms toward the cursor: the world point under it stays under it.
+            const rect = canvasRef.current?.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            zoomAnchorRef.current = rect
+              ? { x: (e.clientX - rect.left) * dpr, y: (e.clientY - rect.top) * dpr }
+              : null;
             onZoomChange(newZoom);
           }
         }

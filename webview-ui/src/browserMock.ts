@@ -13,6 +13,8 @@ import {
   CHAR_FRAME_H,
   CHAR_FRAME_W,
   CHAR_FRAMES_PER_ROW,
+  CHAR_IDLE_FRAMES,
+  CHAR_IDLE_ROW,
   CHARACTER_DIRECTIONS,
   FLOOR_TILE_SIZE,
   WALL_BITMASK_COUNT,
@@ -129,6 +131,20 @@ async function decodeCharactersFromPng(
         frames.push(readSprite(png, CHAR_FRAME_W, CHAR_FRAME_H, frame * CHAR_FRAME_W, rowOffsetY));
       }
       byDir[dir] = frames;
+    }
+    // The idle row (front view) follows the seven `down` frames, as decodeCharacterPng does.
+    if (png.height >= (CHAR_IDLE_ROW + 1) * CHAR_FRAME_H) {
+      for (let frame = 0; frame < CHAR_IDLE_FRAMES; frame++) {
+        byDir.down.push(
+          readSprite(
+            png,
+            CHAR_FRAME_W,
+            CHAR_FRAME_H,
+            frame * CHAR_FRAME_W,
+            CHAR_IDLE_ROW * CHAR_FRAME_H,
+          ),
+        );
+      }
     }
 
     sprites.push(byDir);

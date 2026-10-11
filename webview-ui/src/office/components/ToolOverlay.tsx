@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react';
 
 import { Button } from '../../components/ui/Button.js';
 import {
-  BUBBLE_VERTICAL_OFFSET_PX,
-  CHARACTER_SITTING_OFFSET_PX,
   COMPACT_LABEL_FEET_GAP_PX,
   CONTEXT_CRITICAL_THRESHOLD,
   CONTEXT_DANGER_THRESHOLD,
@@ -16,7 +14,6 @@ import {
   CONTEXT_GAUGE_WIDTH_PX,
   CONTEXT_WARN_THRESHOLD,
   LABEL_LAYOUT_DIM_OPACITY,
-  NAMEPLATE_HEAD_CLEARANCE_PX,
   NAMEPLATE_LINE1_PX,
   NAMEPLATE_LINE2_PX,
   NAMEPLATE_NAME_FONT_PX,
@@ -31,8 +28,11 @@ import {
   TOOL_OVERLAY_VERTICAL_OFFSET,
 } from '../../constants.js';
 import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js';
+import { fitZoomWholeMap } from '../camera.js';
+import { sheetFrameIndex } from '../engine/characters.js';
 import type { OfficeState } from '../engine/officeState.js';
 import { isShowModelFlairEnabled } from '../engine/renderer.js';
+import { ANCHORS } from '../flair/accessories.js';
 import { characterFlair, Rarity } from '../flair/modelFlair.js';
 import {
   areaSignRect,
@@ -42,8 +42,17 @@ import {
   type Rect,
   roomFloorRect,
 } from '../labelLayout.js';
-import { nameplateHeight, nameplateStyle, type PlateSide, plateSide } from '../nameplate.js';
+import {
+  nameplateHeight,
+  nameplateStyle,
+  plateAnchorAboveY,
+  plateScale,
+  plateShowsTitle,
+  type PlateSide,
+  plateSide,
+} from '../nameplate.js';
 import { overlayProjection } from '../projection.js';
+import { seatedDrawOffsetPx } from '../seatDraw.js';
 import {
   agentLabel,
   agentStatus,
@@ -52,12 +61,13 @@ import {
   type OverlayContent,
   overlayContent,
   showOverlay,
+  statusGlyph,
   tripwireColor,
   tripwireLabel,
   type TripwireSeverity,
 } from '../toolUtils.js';
-import type { ToolActivity } from '../types.js';
-import { CharacterState } from '../types.js';
+import type { Character, ToolActivity } from '../types.js';
+import { CharacterState,Direction, IdlePose } from '../types.js';
 
 // Both turn-end states show the green checkmark bubble. A finished turn (Stop)
 // shows ONLY the checkmark (the label falls through to its normal idle text);
@@ -129,6 +139,7 @@ function CompactLabel({
   left,
   top,
   side,
+  scale,
   dx,
   dy,
   dim,
@@ -144,6 +155,8 @@ function CompactLabel({
   /** Anchor edge: the plate's top for `below`, its bottom for `above`. */
   top: number;
   side: PlateSide;
+  /** Plate scale (see `plateScale`): the box is authored at 1 and scaled about its anchor edge. */
+  scale: number;
   /** Sideways shift that keeps the plate inside its room. */
   dx: number;
   dy: number;
@@ -160,7 +173,8 @@ function CompactLabel({
         left,
         top,
         maxWidth,
-        transform: `translate(calc(-50% + ${dx}px), ${side === 'above' ? `calc(-100% + ${dy}px)` : `${dy}px`})`,
+        transform: `translate(calc(-50% + ${dx}px), ${side === 'above' ? `calc(-100% + ${dy}px)` : `${dy}px`}) scale(${scale})`,
+        transformOrigin: side === 'above' ? 'bottom center' : 'top center',
         transition: 'transform 120ms',
         opacity: dim ? LABEL_LAYOUT_DIM_OPACITY : 1,
         pointerEvents: 'none',
@@ -251,6 +265,19 @@ function CompactLabel({
   );
 }
 
+/** Something already owns the slot right above the head (bubble, idle glyph, Zz, beacon). */
+function headSlotTaken(ch: Character, hasTripwire: boolean): boolean {
+  const bubble = ch.bubbleType && !(ch.bubbleType === 'waiting' && ch.waitingAwaitingInput);
+  return !!bubble || hasTripwire || statusGlyph(ch, hasTripwire) !== null;
+}
+
+/** A napping agent's head is lowered onto the desk: the plate follows it down. Walkers and typists do not bob it. */
+function napHeadBobPx(ch: Character): number {
+  const napping =
+    ch.pose === IdlePose.NAPPING && ch.state === CharacterState.TYPE && ch.dir === Direction.DOWN;
+  return napping ? (ANCHORS.down.bob[sheetFrameIndex(ch)] ?? 0) : 0;
+}
+
 export function ToolOverlay({
   officeState,
   agents,
@@ -276,13 +303,25 @@ export function ToolOverlay({
 
   const el = containerRef.current;
   if (!el) return null;
+  const dpr = window.devicePixelRatio || 1;
+  const containerRect = el.getBoundingClientRect();
   const project = overlayProjection(
     officeState.getLayout(),
-    el.getBoundingClientRect(),
+    containerRect,
     zoom,
     panRef.current,
-    window.devicePixelRatio || 1,
+    dpr,
   );
+  // Plates keep their share of the screen: scaled against the zoom at which the whole map fits.
+  const scale = plateScale(
+    zoom,
+    fitZoomWholeMap(
+      { cols: officeState.getLayout().cols, rows: officeState.getLayout().rows },
+      containerRect,
+      dpr,
+    ),
+  );
+  const showTitle = plateShowsTitle(scale);
 
   const selectedId = officeState.selectedAgentId;
   const hoveredId = officeState.hoveredAgentId;
@@ -293,7 +332,6 @@ export function ToolOverlay({
   // Pass 1: decide what each character gets. Compact labels are then laid out
   // together so they can avoid each other and the room signs; full boxes are
   // not part of that pass.
-  const dpr = window.devicePixelRatio || 1;
   const maxWidth = compactLabelMaxWidth(zoom, dpr);
   const plans = new Map<
     number,
@@ -328,13 +366,18 @@ export function ToolOverlay({
         maxWidth,
       });
       if (content.mode === 'full') continue;
-      plans.set(id, { kind: 'compact', content });
-      if (content.mode === 'compact' && content.plate) {
+      // Small plates lose their title line: `Lv N  Name` is what still reads at that size.
+      const shown: typeof content =
+        content.mode === 'compact' && content.plate && !showTitle
+          ? { mode: 'compact', plate: { ...content.plate, sub: null } }
+          : content;
+      plans.set(id, { kind: 'compact', content: shown });
+      if (shown.mode === 'compact' && shown.plate) {
         // Anchor on the tile centre, not the sprite, so plates do not reshuffle while agents walk.
-        const sit = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
-        const h = nameplateHeight(content.plate);
+        const sit = seatedDrawOffsetPx(ch);
+        const h = nameplateHeight(shown.plate) * scale;
         const side = plateSide(ch.dir);
-        const tileMidY = (ch.tileRow + 0.5) * TILE_SIZE + sit;
+        const tileMidY = (ch.tileRow + 0.5) * TILE_SIZE;
         labelItems.push({
           id,
           col: ch.tileCol,
@@ -342,9 +385,14 @@ export function ToolOverlay({
           x: project.toScreenX((ch.tileCol + 0.5) * TILE_SIZE),
           y:
             side === 'below'
-              ? project.toScreenY(tileMidY) + COMPACT_LABEL_FEET_GAP_PX
+              ? project.toScreenY(tileMidY + sit) + COMPACT_LABEL_FEET_GAP_PX
               : project.toScreenY(
-                  tileMidY - BUBBLE_VERTICAL_OFFSET_PX - NAMEPLATE_HEAD_CLEARANCE_PX,
+                  plateAnchorAboveY(
+                    tileMidY,
+                    sit,
+                    headSlotTaken(ch, officeState.tripwires.has(id)),
+                    napHeadBobPx(ch),
+                  ),
                 ) - h,
           w: maxWidth,
           h,
@@ -402,7 +450,7 @@ export function ToolOverlay({
         const status = agentStatus(ch);
 
         if (plan.kind === 'compact') {
-          const sit = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
+          const sit = seatedDrawOffsetPx(ch);
           const placement = placements.get(id);
           const side = plateSide(ch.dir);
           return (
@@ -411,16 +459,22 @@ export function ToolOverlay({
               id={id}
               status={status}
               plate={plan.content.mode === 'compact' ? plan.content.plate : null}
-              maxWidth={maxWidth}
+              maxWidth={maxWidth / scale}
               left={project.toScreenX(ch.x)}
               top={
                 side === 'below'
                   ? project.toScreenY(ch.y + sit) + COMPACT_LABEL_FEET_GAP_PX
                   : project.toScreenY(
-                      ch.y + sit - BUBBLE_VERTICAL_OFFSET_PX - NAMEPLATE_HEAD_CLEARANCE_PX,
+                      plateAnchorAboveY(
+                        ch.y,
+                        sit,
+                        headSlotTaken(ch, officeState.tripwires.has(id)),
+                        napHeadBobPx(ch),
+                      ),
                     )
               }
               side={side}
+              scale={scale}
               dx={clamps.get(id)?.dx ?? 0}
               dy={(placement?.dy ?? 0) + (clamps.get(id)?.dy ?? 0)}
               dim={placement?.dim ?? false}
@@ -431,7 +485,7 @@ export function ToolOverlay({
         }
 
         // Position above character
-        const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
+        const sittingOffset = seatedDrawOffsetPx(ch);
         const screenX = project.toScreenX(ch.x);
         const screenY = project.toScreenY(ch.y + sittingOffset - TOOL_OVERLAY_VERTICAL_OFFSET);
 
