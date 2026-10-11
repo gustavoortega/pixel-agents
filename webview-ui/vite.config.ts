@@ -108,6 +108,8 @@ function browserMockAssetsPlugin(): Plugin {
     // Build output includes lightweight metadata consumed by browser runtime.
     closeBundle() {
       fs.mkdirSync(distAssetsDir, { recursive: true });
+      // Dev-only hero scene data (?scene=hero) is not part of any shipped build.
+      fs.rmSync(path.join(distAssetsDir, 'scenes'), { recursive: true, force: true });
 
       const catalog = buildFurnitureCatalog(assetsDir);
       fs.writeFileSync(path.join(distAssetsDir, 'furniture-catalog.json'), JSON.stringify(catalog));

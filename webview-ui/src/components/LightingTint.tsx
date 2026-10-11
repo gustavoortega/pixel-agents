@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { VIGNETTE_BACKGROUND } from '../constants.js';
+import { officeNow } from '../office/clock.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import { lightingFor } from '../office/lighting.js';
 import { mapRectCss, overlayProjection } from '../office/projection.js';
@@ -32,7 +33,7 @@ export function LightingTint({ officeState, containerRef, zoom, panRef }: Lighti
 
   const el = containerRef.current;
   if (!el) return null;
-  const now = new Date();
+  const now = officeNow();
   const { tint } = lightingFor(now.getHours(), now.getMinutes());
   const layout = officeState.getLayout();
   const project = overlayProjection(

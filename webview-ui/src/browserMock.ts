@@ -13,13 +13,25 @@ import {
   decodeCharacterSheet,
   decodeFloorTile,
   decodeFurnitureImage,
+  decodePetSheet,
   decodeWallSet,
 } from '../../core/src/assets/artDensity.ts';
 import type {
   AssetIndex,
   CatalogEntry,
   CharacterDirectionSprites,
+  PetSpriteFrames,
 } from '../../core/src/assets/types.ts';
+import {
+  HERO_LAYOUT_PATH,
+  heroMessages,
+  type HeroOffice,
+  type HeroSceneOptions,
+  heroZoomFor,
+  parseHeroScene,
+  seatHeroAgents,
+  startHeroStage,
+} from './heroScene.ts';
 
 interface MockPayload {
   characters: CharacterDirectionSprites[];
@@ -29,11 +41,14 @@ interface MockPayload {
   furnitureCatalog: CatalogEntry[];
   furnitureSprites: Record<string, string[][]>;
   layout: unknown;
+  /** Set only for `?scene=hero`. */
+  hero: { options: HeroSceneOptions; pets: PetSpriteFrames[]; petNames: string[] } | null;
 }
 
 // ── Module-level state ─────────────────────────────────────────────────────────
 
 let mockPayload: MockPayload | null = null;
+let heroStaged = false;
 
 // ── PNG decode helpers (browser fallback) ───────────────────────────────────
 // Slicing and density detection are the core decoders the server uses, so a 1x and a 2x asset
@@ -120,6 +135,23 @@ async function decodeFurnitureFromPng(
   return sprites;
 }
 
+const HERO_PET_DIRS = ['claudio', 'gitcat'];
+
+async function decodeHeroPets(
+  base: string,
+): Promise<{ pets: PetSpriteFrames[]; petNames: string[] }> {
+  const pets: PetSpriteFrames[] = [];
+  const petNames: string[] = [];
+  for (const dir of HERO_PET_DIRS) {
+    const manifest = (await fetch(`${base}assets/pets/${dir}/manifest.json`).then((r) =>
+      r.json(),
+    )) as { name: string };
+    pets.push(decodePetSheet(await decodePng(`${base}assets/pets/${dir}/pet.png`)));
+    petNames.push(manifest.name);
+  }
+  return { pets, petNames };
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 /**
@@ -166,9 +198,13 @@ export async function initBrowserMock(): Promise<void> {
         decodeFurnitureFromPng(base, catalog),
       ]);
 
-  const layout = assetIndex.defaultLayout
-    ? await fetch(`${base}assets/${assetIndex.defaultLayout}`).then((r) => r.json())
+  const heroOptions = parseHeroScene(window.location.search);
+  const layoutPath = heroOptions ? HERO_LAYOUT_PATH : assetIndex.defaultLayout;
+  const layout = layoutPath
+    ? await fetch(`${base}assets/${layoutPath}`).then((r) => r.json())
     : null;
+  // The dev mock sends no pets; the scene's cat needs its sprites.
+  const heroPets = heroOptions ? await decodeHeroPets(base) : null;
 
   // Carpets only have a decoded-JSON endpoint (no PNG fallback / asset-index
   // entry); empty array is fine — the carpet tab just won't render variants.
@@ -185,6 +221,7 @@ export async function initBrowserMock(): Promise<void> {
     furnitureCatalog: catalog,
     furnitureSprites,
     layout,
+    hero: heroOptions && heroPets ? { options: heroOptions, ...heroPets } : null,
   };
 
   console.log(
@@ -199,7 +236,11 @@ export async function initBrowserMock(): Promise<void> {
  * Only used in Vite dev mode (npm run dev). In standalone server mode and
  * VS Code mode, the server/extension sends all state over the transport.
  */
-export function dispatchMockMessages(): void {
+export function dispatchMockMessages(host?: {
+  office: HeroOffice;
+  /** Fix the camera at this zoom (fit-to-activity stops). */
+  setZoom: (zoom: number) => void;
+}): void {
   if (!mockPayload) return;
 
   const {
@@ -210,6 +251,7 @@ export function dispatchMockMessages(): void {
     furnitureCatalog,
     furnitureSprites,
     layout,
+    hero,
   } = mockPayload;
 
   function dispatch(data: unknown): void {
@@ -220,6 +262,7 @@ export function dispatchMockMessages(): void {
   // characterSpritesLoaded -> floorTilesLoaded -> wallTilesLoaded -> carpetTilesLoaded
   //   -> furnitureAssetsLoaded -> layoutLoaded
   dispatch({ type: 'characterSpritesLoaded', characters });
+  if (hero) dispatch({ type: 'petSpritesLoaded', pets: hero.pets, petNames: hero.petNames });
   dispatch({ type: 'floorTilesLoaded', sprites: floorSprites });
   dispatch({ type: 'wallTilesLoaded', sets: wallSets });
   dispatch({ type: 'carpetTilesLoaded', sets: carpetSets });
@@ -229,8 +272,40 @@ export function dispatchMockMessages(): void {
     type: 'settingsLoaded',
     soundEnabled: false,
     extensionVersion: '1.3.0',
-    lastSeenVersion: '1.2',
+    // The scene gets no "what's new" toast.
+    lastSeenVersion: hero ? '1.3' : '1.2',
   });
 
+  // StrictMode runs the mount effect twice in dev; the scene stages once.
+  if (hero && host && !heroStaged) {
+    heroStaged = true;
+    seatHeroAgents(host.office);
+    for (const msg of heroMessages()) dispatch(msg);
+    startHeroStage(host.office, dispatch);
+    const fit = (): void =>
+      host.setZoom(
+        heroZoomFor(
+          host.office.getLayout(),
+          { width: window.innerWidth, height: window.innerHeight },
+          window.devicePixelRatio || 1,
+        ),
+      );
+    fit();
+    window.addEventListener('resize', fit);
+    if (!hero.options.hud) hideHud();
+  }
+
   console.log('[BrowserMock] Messages dispatched');
+}
+
+/** `&hud=0`: the scene is a screenshot, so the HUD card, toolbar and status badge stay out of it. */
+function hideHud(): void {
+  const style = document.createElement('style');
+  style.textContent =
+    [
+      '[data-testid="hud-card"]',
+      '.absolute.top-8.pixel-panel',
+      '.absolute.bottom-10.left-10.brand-panel',
+    ].join(', ') + ' { display: none !important; }';
+  document.head.appendChild(style);
 }

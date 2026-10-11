@@ -22,6 +22,7 @@ import {
   WAITING_BUBBLE_DURATION_SEC,
 } from '../../constants.js';
 import { type FitAgent, LOBBY_ROOM } from '../camera.js';
+import { officeNow } from '../clock.js';
 import type { Companion, Tile } from '../flair/companion.js';
 import {
   advanceTrail,
@@ -1566,7 +1567,7 @@ export class OfficeState {
     this.weather.update(new Map([...this.rosters].map(([id, r]) => [id, r.mood])), now);
 
     // ── Pet FSM ────────────────────────────────────────────────
-    const goals = this.petGoals(new Date(now));
+    const goals = this.petGoals(officeNow());
     for (const pet of this.pets) {
       updatePet(
         pet,

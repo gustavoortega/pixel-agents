@@ -86,7 +86,7 @@ export function BottomToolbar({
   };
 
   return (
-    <div className="absolute bottom-10 left-10 z-20 flex items-center gap-6 brand-panel p-4">
+    <div data-testid="bottom-toolbar" className="absolute bottom-10 left-10 z-20 flex items-center gap-6 brand-panel p-4">
       {/* Hide + Agent in standalone browser mode (no terminal to interact with) */}
       {!isBrowserRuntime && (
         <div
