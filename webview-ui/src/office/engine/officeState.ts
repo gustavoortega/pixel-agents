@@ -100,6 +100,9 @@ export class OfficeState {
   /** World px each agent's bubble/beacon/glyph rises above its default slot so it clears the plate
    *  and tripwire chip below it. Written by the overlay stack every frame, read by the renderer. */
   bubbleLift: Map<number, number> = new Map();
+  /** World y each agent's mood weather hangs from: the top of its overlay stack, or just above the
+   *  head. Written by the overlay stack every frame, read by the renderer. */
+  weatherAnchor: Map<number, number> = new Map();
   /** Roster member data by agent id. Same reason as sessionTitles: it is sent at claim time,
    *  before the (buffered) agentCreated. */
   rosters: Map<number, AgentRosterInfo> = new Map();

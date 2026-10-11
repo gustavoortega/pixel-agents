@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Rect } from '../src/office/labelLayout.js';
 import { withTopWallFace } from '../src/office/labelLayout.js';
-import { stackAbove } from '../src/office/overlayStack.js';
+import { stackAbove, weatherAnchorY } from '../src/office/overlayStack.js';
 
 const overlaps = (a: Rect, b: Rect): boolean =>
   a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
@@ -119,5 +119,55 @@ describe('overlay stack', () => {
     it('does not extend sideways, down, or above the map top', () => {
       expect(withTopWallFace({ x: 5, y: 8, w: 40, h: 30 })).toEqual({ x: 5, y: 0, w: 40, h: 38 });
     });
+  });
+
+  it('FX text sits above the plate and chip, below the bubble, and clear of the head', () => {
+    const fx = { w: 80, h: 22 };
+    const s = stackAbove({ x: 200, headTop: HEAD_TOP, plate, chip, fx, bubble });
+    expect(s.plate!.y + s.plate!.h).toBeLessThanOrEqual(HEAD_TOP);
+    expect(s.chip!.y + s.chip!.h).toBeLessThanOrEqual(s.plate!.y);
+    expect(s.fx!.y + s.fx!.h).toBeLessThanOrEqual(s.chip!.y);
+    expect(s.bubble!.y + s.bubble!.h).toBeLessThanOrEqual(s.fx!.y);
+    expect(overlaps(s.fx!, head)).toBe(false);
+  });
+
+  it('FX text with only a plate still stands over the plate, not over the face', () => {
+    const s = stackAbove({
+      x: 200,
+      headTop: HEAD_TOP,
+      plate,
+      chip: null,
+      fx: { w: 80, h: 22 },
+      bubble: null,
+    });
+    expect(s.fx!.y + s.fx!.h).toBeLessThanOrEqual(s.plate!.y);
+  });
+
+  it('a close wall flips plate and FX text below the feet together, still in order', () => {
+    const s = stackAbove({
+      x: 200,
+      headTop: HEAD_TOP,
+      plate,
+      chip: null,
+      fx: { w: 80, h: 22 },
+      bubble: null,
+      floor: { x: 0, y: 290, w: 400, h: 200 },
+      head,
+      feetY: FEET,
+    });
+    expect(s.plate!.y).toBeGreaterThanOrEqual(FEET);
+    expect(s.fx!.y).toBeGreaterThanOrEqual(s.plate!.y + s.plate!.h);
+    expect(overlaps(s.fx!, head)).toBe(false);
+  });
+});
+
+describe('weatherAnchorY', () => {
+  it('hangs from the stack top when the stack stands above the head', () => {
+    expect(weatherAnchorY(250, 300)).toBe(250);
+  });
+
+  it('falls back to the head top when the stack is below the feet (back view, wall flip)', () => {
+    expect(weatherAnchorY(340, 300)).toBe(300);
+    expect(weatherAnchorY(null, 300)).toBe(300);
   });
 });

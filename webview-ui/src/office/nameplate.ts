@@ -54,6 +54,11 @@ export function plateIsCompact(zoom: number): boolean {
   return zoom / ART_DENSITY <= PLATE_COMPACT_MAX_LEVEL;
 }
 
+/** World y of the top of the sprite's head: `y` is the tile centre, `sit` the draw offset. */
+export function spriteHeadTopY(y: number, sit: number, headBobPx = 0): number {
+  return y + sit - CHARACTER_SPRITE_HEIGHT_PX + ANCHORS.down.headTopY + headBobPx;
+}
+
 /**
  * World y of the line a plate above the head hangs from: 2 px over the sprite's head, or higher
  * by the slot clearance when a bubble, glyph or beacon is drawn there. `y` is the character's (or
@@ -65,7 +70,7 @@ export function plateAnchorAboveY(
   slotTaken: boolean,
   headBobPx = 0,
 ): number {
-  const headTop = y + sit - CHARACTER_SPRITE_HEIGHT_PX + ANCHORS.down.headTopY + headBobPx;
+  const headTop = spriteHeadTopY(y, sit, headBobPx);
   return headTop - NAMEPLATE_HEAD_GAP_PX - (slotTaken ? NAMEPLATE_SLOT_CLEARANCE_PX : 0);
 }
 

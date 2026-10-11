@@ -29,6 +29,7 @@ import {
   NAMEPLATE_PILL_GAP_PX,
   NAMEPLATE_PILL_HEIGHT_PX,
   NAMEPLATE_SUB_FONT_PX,
+  OVERLAY_STACK_GAP_PX,
   RARITY_SHIMMER_SEC,
   TEAM_LEAD_COLOR,
   TEAM_ROLE_COLOR,
@@ -43,6 +44,7 @@ import { isShowModelFlairEnabled } from '../engine/renderer.js';
 import { ANCHORS } from '../flair/accessories.js';
 import { characterFlair, Rarity } from '../flair/modelFlair.js';
 import { fullBoxRows } from '../fullBox.js';
+import { fxTextBox } from '../fx/fxTextBox.js';
 import {
   areaSignRect,
   clampPlate,
@@ -62,8 +64,9 @@ import {
   plateScale,
   type PlateSide,
   plateSide,
+  spriteHeadTopY,
 } from '../nameplate.js';
-import { stackAbove } from '../overlayStack.js';
+import { stackAbove, weatherAnchorY } from '../overlayStack.js';
 import { overlayProjection } from '../projection.js';
 import { seatedBubbleOffsetPx, seatedDrawOffsetPx } from '../seatDraw.js';
 import { BUBBLE_WAITING_SPRITE } from '../sprites/spriteData.js';
@@ -501,6 +504,18 @@ export function ToolOverlay({
   // wall wins over the nicest spot, and as a group so the order survives the clamp.
   const clamps = new Map<number, { dx: number; dy: number }>();
   officeState.bubbleLift.clear();
+  // Weather defaults to just above the head; the stack loop below raises it to the stack's top.
+  officeState.weatherAnchor.clear();
+  for (const ch of officeState.characters.values()) {
+    officeState.weatherAnchor.set(ch.id, spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch)));
+  }
+  const fxSlots = new Map<number, Rect>();
+  const fxBoxes = new Map<number, { w: number; h: number }>();
+  for (const e of officeState.fx.active) {
+    const box = fxTextBox(e, fitScale);
+    const prev = fxBoxes.get(e.agentId);
+    if (!prev || box.h > prev.h) fxBoxes.set(e.agentId, box);
+  }
   const zoomPx = 1 / project.toWorldLength(1);
   const bubbleBox = {
     w: spriteWorldWidth(BUBBLE_WAITING_SPRITE) * (1 / project.toWorldLength(1)),
@@ -528,6 +543,7 @@ export function ToolOverlay({
         headTop: it.y + it.h,
         plate: (it.plateH ?? 0) > 0 ? { w: it.w, h: it.plateH ?? 0 } : null,
         chip: (it.chipH ?? 0) > 0 ? { w: it.w, h: it.chipH ?? 0 } : null,
+        fx: fxBoxes.get(it.id) ?? null,
         bubble: hasCanvasItem ? bubbleBox : null,
         dy: pdy,
         floor,
@@ -541,6 +557,21 @@ export function ToolOverlay({
         noFlip: ch.seatId !== null && ch.state === CharacterState.TYPE && ch.dir === Direction.DOWN,
       });
       clamps.set(it.id, { dx: stack.shift.dx, dy: stack.shift.dy - pdy });
+      if (stack.fx) fxSlots.set(it.id, stack.fx);
+      const stackTop = Math.min(
+        ...[stack.plate, stack.chip, stack.fx, stack.bubble]
+          .filter((r): r is Rect => r !== null)
+          .map((r) => r.y),
+      );
+      officeState.weatherAnchor.set(
+        it.id,
+        weatherAnchorY(
+          Number.isFinite(stackTop)
+            ? project.toWorldLength(stackTop - project.toScreenY(0))
+            : null,
+          spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch)),
+        ),
+      );
       if (stack.bubble) {
         // World y of the bubble's bottom edge, against where the renderer draws it by default.
         const bottomWorld = project.toWorldLength(
@@ -551,6 +582,18 @@ export function ToolOverlay({
         officeState.bubbleLift.set(it.id, defaultBottom - bottomWorld);
       }
       continue;
+    }
+    // Plate below the feet (back view): the FX text stands just above the head, the weather
+    // already hangs from there.
+    const fxBox = fxBoxes.get(it.id);
+    if (fxBox) {
+      const headTopY = project.toScreenY(spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch)));
+      fxSlots.set(it.id, {
+        x: project.toScreenX(ch.x) - fxBox.w / 2,
+        y: headTopY - OVERLAY_STACK_GAP_PX - fxBox.h,
+        w: fxBox.w,
+        h: fxBox.h,
+      });
     }
     const plate: Rect = { x: it.x - it.w / 2, y: it.y + pdy, w: it.w, h: it.h };
     const fitted = clampPlate(plate, floor);
@@ -564,6 +607,7 @@ export function ToolOverlay({
         scale={fitScale}
         toScreenX={project.toScreenX}
         toScreenY={project.toScreenY}
+        slots={fxSlots}
       />
       {allIds.map((id) => {
         const ch = officeState.characters.get(id);
