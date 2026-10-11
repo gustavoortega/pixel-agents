@@ -1148,7 +1148,7 @@ function renderNapZz(
     zoom,
   );
   ctx.save();
-  for (const glyph of napZzPlacements(nowMs, ch.dir === Direction.DOWN)) {
+  for (const glyph of napZzPlacements(nowMs)) {
     ctx.globalAlpha = glyph.alpha;
     ctx.drawImage(
       getCachedSprite(glyph.sprite, zoom),

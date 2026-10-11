@@ -8,7 +8,7 @@
     "paths": {
       "pngjs": ["./node_modules/@types/pngjs/index.d.ts"]
     },
-    "types": ["node"],
+    "types": ["node", "vite/client"],
     "skipLibCheck": true,
     "jsx": "react-jsx",
 
@@ -28,5 +28,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["vite.config.ts", "../core/src/assets/**/*.ts", "test/**/*.ts"]
+  "include": ["vite.config.ts", "../core/src/assets/**/*.ts", "src/testHooks.ts", "test/**/*.ts"]
 }

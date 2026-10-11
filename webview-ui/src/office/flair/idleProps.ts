@@ -1,7 +1,6 @@
 import { spriteAtArtDensity } from '../../../../core/src/assets/artDensity.js';
 import {
   IDLE_PROP_STEAM_FRAME_SEC,
-  NAP_ZZ_BACK_LIFT_PX,
   NAP_ZZ_DRIFT_PX,
   NAP_ZZ_PERIOD_MS,
   NAP_ZZ_RISE_PX,
@@ -132,17 +131,11 @@ export interface ZzPlacement extends PropPlacement {
 }
 
 /**
- * The napping Zz at `nowMs`: a small and a large glyph half a cycle apart, each spawned over the
- * bowed head, rising NAP_ZZ_RISE_PX and drifting NAP_ZZ_DRIFT_PX over one cycle while it fades.
- * Never more than two per agent.
+ * The napping Zz at `nowMs`: a small and a large glyph half a cycle apart, each spawned above and
+ * right of the head (the same point from every side, clear of the head top), rising NAP_ZZ_RISE_PX
+ * and drifting NAP_ZZ_DRIFT_PX over one cycle while it fades. Never more than two per agent.
  */
-/**
- * The spawn point sits over the bowed head of the front-view nap frame. Seen from behind or the side
- * the head stays upright, so the glyphs start NAP_ZZ_BACK_LIFT_PX higher, above the head instead of
- * on the back of it.
- */
-export function napZzPlacements(nowMs: number, facesViewer = true): ZzPlacement[] {
-  const lift = facesViewer ? 0 : NAP_ZZ_BACK_LIFT_PX;
+export function napZzPlacements(nowMs: number): ZzPlacement[] {
   return [
     { sprite: ZZ_SMALL, phase: 0 },
     { sprite: ZZ_LARGE, phase: 0.5 },
@@ -151,7 +144,7 @@ export function napZzPlacements(nowMs: number, facesViewer = true): ZzPlacement[
     return {
       sprite,
       dx: zz.dx + t * NAP_ZZ_DRIFT_PX,
-      dy: zz.dy - lift - t * NAP_ZZ_RISE_PX,
+      dy: zz.dy - t * NAP_ZZ_RISE_PX,
       alpha: 1 - t * t,
     };
   });

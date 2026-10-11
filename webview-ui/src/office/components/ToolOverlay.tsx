@@ -20,6 +20,8 @@ import {
   CONTEXT_WARN_THRESHOLD,
   FULL_BOX_ROW_PX,
   LABEL_LAYOUT_DIM_OPACITY,
+  NAMEPLATE_COMPACT_FONT_PX,
+  NAMEPLATE_COMPACT_LINE_PX,
   NAMEPLATE_LINE1_PX,
   NAMEPLATE_LINE2_PX,
   NAMEPLATE_NAME_FONT_PX,
@@ -52,11 +54,12 @@ import {
 } from '../labelLayout.js';
 import {
   chipBoxHeight,
+  type NameplateStyle,
   nameplateStyle,
   plateAnchorAboveY,
   plateBoxHeight,
+  plateIsCompact,
   plateScale,
-  plateShowsTitle,
   type PlateSide,
   plateSide,
 } from '../nameplate.js';
@@ -144,6 +147,74 @@ function getFuelColor(ratio: number): string {
 const FULL_BOX_Z_INDEX = 43;
 const COMPACT_LABEL_Z_INDEX = 40;
 
+/** The plate itself: `Lv N` badge and name, plus the title line when it is not compact. */
+function PlateBox({
+  plate,
+  style,
+  compact,
+}: {
+  plate: NameplateContent;
+  style: NameplateStyle;
+  compact: boolean;
+}) {
+  const line1 = compact ? NAMEPLATE_COMPACT_LINE_PX : NAMEPLATE_LINE1_PX;
+  const font = compact ? NAMEPLATE_COMPACT_FONT_PX : NAMEPLATE_NAME_FONT_PX;
+  return (
+    <div
+      className={`nameplate relative flex flex-col max-w-full overflow-hidden${plate.rarity === Rarity.LEGENDARY ? ' rarity-shimmer' : ''}`}
+      style={
+        {
+          '--plate-bg': style.bg,
+          '--plate-text': style.text,
+          '--plate-border': style.border,
+          padding: `${NAMEPLATE_PAD_Y_PX}px 6px`,
+          ...(plate.rarity === Rarity.LEGENDARY
+            ? { '--rarity-shimmer-sec': `${RARITY_SHIMMER_SEC}s` }
+            : {}),
+        } as React.CSSProperties
+      }
+    >
+      {(plate.badge || plate.name) && (
+        <span
+          className="flex items-center gap-4 whitespace-nowrap leading-none"
+          style={{ height: line1, fontSize: font }}
+        >
+          {plate.badge && (
+            <span
+              className="shrink-0 text-2xs leading-none px-4"
+              style={{
+                background: style.badgeBg,
+                color: style.badgeInk,
+                border: `2px solid ${style.badgeInk}`,
+                height: line1 - 2,
+                display: 'flex',
+                alignItems: 'center',
+                ...(compact ? { fontSize: font } : {}),
+              }}
+            >
+              {plate.badge}
+            </span>
+          )}
+          <span className="overflow-hidden text-ellipsis">{plate.name}</span>
+        </span>
+      )}
+      {plate.sub && (
+        <span
+          className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none px-4"
+          style={{
+            height: NAMEPLATE_LINE2_PX,
+            lineHeight: `${NAMEPLATE_LINE2_PX}px`,
+            fontSize: NAMEPLATE_SUB_FONT_PX,
+            background: style.subBg,
+          }}
+        >
+          {plate.sub}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function CompactLabel({
   id,
   status,
@@ -153,6 +224,7 @@ function CompactLabel({
   top,
   side,
   scale,
+  compact,
   dx,
   dy,
   dim,
@@ -170,6 +242,8 @@ function CompactLabel({
   side: PlateSide;
   /** Plate scale (see `plateScale`): the box is authored at 1 and scaled about its anchor edge. */
   scale: number;
+  /** One-line plate (zoom level <= 3): no title, fixed size, a little see-through. */
+  compact: boolean;
   /** Sideways shift that keeps the plate inside its room. */
   dx: number;
   dy: number;
@@ -178,7 +252,7 @@ function CompactLabel({
   onAckTripwire: (id: number, count: number) => void;
 }) {
   const hasPlate = !!plate && (plate.badge || plate.name || plate.sub);
-  const style = nameplateStyle(plate?.rarity ?? null);
+  const style = nameplateStyle(plate?.rarity ?? null, compact);
   // The chip sits over the plate on an above-head label and under it on a below-feet one.
   const pillMargin = side === 'above' ? 'marginBottom' : 'marginTop';
   return (
@@ -225,115 +299,11 @@ function CompactLabel({
               {plate.pill}
             </span>
           )}
-          {plate && hasPlate && (
-            <div
-              className={`nameplate relative flex flex-col max-w-full overflow-hidden${plate.rarity === Rarity.LEGENDARY ? ' rarity-shimmer' : ''}`}
-              style={
-                {
-                  '--plate-bg': style.bg,
-                  '--plate-text': style.text,
-                  '--plate-border': style.border,
-                  padding: `${NAMEPLATE_PAD_Y_PX}px 6px`,
-                  ...(plate.rarity === Rarity.LEGENDARY
-                    ? { '--rarity-shimmer-sec': `${RARITY_SHIMMER_SEC}s` }
-                    : {}),
-                } as React.CSSProperties
-              }
-            >
-              {(plate.badge || plate.name) && (
-                <span
-                  className="flex items-center gap-4 whitespace-nowrap leading-none"
-                  style={{ height: NAMEPLATE_LINE1_PX, fontSize: NAMEPLATE_NAME_FONT_PX }}
-                >
-                  {plate.badge && (
-                    <span
-                      className="shrink-0 text-2xs leading-none px-4"
-                      style={{
-                        background: style.badgeBg,
-                        color: style.badgeInk,
-                        border: `2px solid ${style.badgeInk}`,
-                        height: NAMEPLATE_LINE1_PX - 2,
-                        display: 'flex',
-                        alignItems: 'center',
-                      }}
-                    >
-                      {plate.badge}
-                    </span>
-                  )}
-                  <span className="overflow-hidden text-ellipsis">{plate.name}</span>
-                </span>
-              )}
-              {plate.sub && (
-                <span
-                  className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none px-4"
-                  style={{
-                    height: NAMEPLATE_LINE2_PX,
-                    lineHeight: `${NAMEPLATE_LINE2_PX}px`,
-                    fontSize: NAMEPLATE_SUB_FONT_PX,
-                    background: style.subBg,
-                  }}
-                >
-                  {plate.sub}
-                </span>
-              )}
-            </div>
-          )}
+          {plate && hasPlate && <PlateBox plate={plate} style={style} compact={compact} />}
         </>
       ) : (
         <>
-          {plate && hasPlate && (
-            <div
-              className={`nameplate relative flex flex-col max-w-full overflow-hidden${plate.rarity === Rarity.LEGENDARY ? ' rarity-shimmer' : ''}`}
-              style={
-                {
-                  '--plate-bg': style.bg,
-                  '--plate-text': style.text,
-                  '--plate-border': style.border,
-                  padding: `${NAMEPLATE_PAD_Y_PX}px 6px`,
-                  ...(plate.rarity === Rarity.LEGENDARY
-                    ? { '--rarity-shimmer-sec': `${RARITY_SHIMMER_SEC}s` }
-                    : {}),
-                } as React.CSSProperties
-              }
-            >
-              {(plate.badge || plate.name) && (
-                <span
-                  className="flex items-center gap-4 whitespace-nowrap leading-none"
-                  style={{ height: NAMEPLATE_LINE1_PX, fontSize: NAMEPLATE_NAME_FONT_PX }}
-                >
-                  {plate.badge && (
-                    <span
-                      className="shrink-0 text-2xs leading-none px-4"
-                      style={{
-                        background: style.badgeBg,
-                        color: style.badgeInk,
-                        border: `2px solid ${style.badgeInk}`,
-                        height: NAMEPLATE_LINE1_PX - 2,
-                        display: 'flex',
-                        alignItems: 'center',
-                      }}
-                    >
-                      {plate.badge}
-                    </span>
-                  )}
-                  <span className="overflow-hidden text-ellipsis">{plate.name}</span>
-                </span>
-              )}
-              {plate.sub && (
-                <span
-                  className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none px-4"
-                  style={{
-                    height: NAMEPLATE_LINE2_PX,
-                    lineHeight: `${NAMEPLATE_LINE2_PX}px`,
-                    fontSize: NAMEPLATE_SUB_FONT_PX,
-                    background: style.subBg,
-                  }}
-                >
-                  {plate.sub}
-                </span>
-              )}
-            </div>
-          )}
+          {plate && hasPlate && <PlateBox plate={plate} style={style} compact={compact} />}
           {plate?.pill && (
             <span
               className="overflow-hidden text-ellipsis block whitespace-nowrap leading-none text-2xs cursor-pointer max-w-full"
@@ -421,8 +391,10 @@ export function ToolOverlay({
     panRef.current,
     dpr,
   );
-  // Plates keep their share of the screen: scaled against the zoom at which the whole map fits.
-  const scale = plateScale(
+  // Up to zoom level 3 plates are one-line and fixed size. Above that they keep their share of the
+  // screen: scaled against the zoom at which the whole map fits.
+  const compact = plateIsCompact(zoom);
+  const fitScale = plateScale(
     zoom,
     fitZoomWholeMap(
       { cols: officeState.getLayout().cols, rows: officeState.getLayout().rows },
@@ -430,7 +402,7 @@ export function ToolOverlay({
       dpr,
     ),
   );
-  const showTitle = plateShowsTitle(scale);
+  const scale = compact ? 1 : fitScale;
 
   const selectedId = officeState.selectedAgentId;
   const hoveredId = officeState.hoveredAgentId;
@@ -476,16 +448,16 @@ export function ToolOverlay({
         maxWidth,
       });
       if (content.mode === 'full') continue;
-      // Small plates lose their title line: `Lv N  Name` is what still reads at that size.
+      // Compact plates lose their title line: `Lv N  Name` is what still reads at that size.
       const shown: typeof content =
-        content.mode === 'compact' && content.plate && !showTitle
+        content.mode === 'compact' && content.plate && compact
           ? { mode: 'compact', plate: { ...content.plate, sub: null } }
           : content;
       plans.set(id, { kind: 'compact', content: shown });
       if (shown.mode === 'compact' && shown.plate) {
         // Anchor on the tile centre, not the sprite, so plates do not reshuffle while agents walk.
         const sit = seatedDrawOffsetPx(ch);
-        const plateH = plateBoxHeight(shown.plate) * scale;
+        const plateH = plateBoxHeight(shown.plate, compact) * scale;
         const chipH = chipBoxHeight(shown.plate) * scale;
         const h = plateH + (plateH > 0 && chipH > 0 ? NAMEPLATE_PILL_GAP_PX : 0) + chipH;
         const side = plateSide(ch.dir);
@@ -589,7 +561,7 @@ export function ToolOverlay({
     <>
       <FxText
         officeState={officeState}
-        scale={scale}
+        scale={fitScale}
         toScreenX={project.toScreenX}
         toScreenY={project.toScreenY}
       />
@@ -621,6 +593,7 @@ export function ToolOverlay({
               }
               side={side}
               scale={scale}
+              compact={compact}
               dx={clamps.get(id)?.dx ?? 0}
               dy={(placement?.dy ?? 0) + (clamps.get(id)?.dy ?? 0)}
               dim={placement?.dim ?? false}

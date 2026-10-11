@@ -283,8 +283,12 @@ export const PLATE_SCALE_MAX = 1.5;
 /** Plates scale against the whole-map fit, but never against less than this: at a fit of 1 every
  *  zoom would read as a big multiple and the plates would sit at their cap. */
 export const PLATE_SCALE_FIT_FLOOR = 2;
-/** Below this scale the plate drops its title (second) line and keeps `Lv N  Name`. */
-export const PLATE_TITLE_MIN_SCALE = 1;
+/** Zoom level (the HUD's "Nx", zoom / ART_DENSITY) up to which plates are one-line compact. */
+export const PLATE_COMPACT_MAX_LEVEL = 3;
+/** Compact plate: one `Lv N  Name` line, fixed size (not scaled), a little see-through. */
+export const NAMEPLATE_COMPACT_FONT_PX = 13;
+export const NAMEPLATE_COMPACT_LINE_PX = 16;
+export const NAMEPLATE_COMPACT_BG = 'rgba(59, 36, 18, 0.80)';
 /** Nameplate box, CSS px. Line 1 is the badge + member name, line 2 the session label. */
 export const NAMEPLATE_LINE1_PX = 20;
 export const NAMEPLATE_LINE2_PX = 16;
@@ -617,6 +621,11 @@ export const LAMP_HEAD_OFFSET_PX = 6;
 export const HUD_CLOCK_REFRESH_MS = 15_000;
 /** HUD active-agent count refresh, ms (reads the characters' status, which is not React state). */
 export const HUD_ACTIVE_REFRESH_MS = 500;
+/** HUD card type and glyph sizes, CSS px; the zoom row keeps the default size. */
+export const HUD_CLOCK_FONT_PX = 20;
+export const HUD_ACTIVE_FONT_PX = 16;
+export const HUD_GLYPH_PX = 20;
+export const HUD_CARD_MIN_HEIGHT_PX = 52;
 
 // ── Cozy look: camera fit ───────────────────────────────────────
 /** Margin around the framed rooms, in tiles. The rooms' own floor is the frame: plates are clamped inside it. */
@@ -690,6 +699,3 @@ export const FULL_BOX_MOOD_COLORS = {
   frustrated: '#8fc6ff',
   alarmed: '#ff4d4d',
 } as const;
-
-/** World px the nap Zz rise above the head when the napper is seen from behind or the side. */
-export const NAP_ZZ_BACK_LIFT_PX = 10;

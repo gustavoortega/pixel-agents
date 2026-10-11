@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react';
 
 import { ART_DENSITY } from '../../../core/src/assets/constants.js';
-import { HUD_ACTIVE_REFRESH_MS, HUD_CLOCK_REFRESH_MS, ZOOM_MAX, ZOOM_MIN } from '../constants.js';
+import {
+  HUD_ACTIVE_FONT_PX,
+  HUD_ACTIVE_REFRESH_MS,
+  HUD_CARD_MIN_HEIGHT_PX,
+  HUD_CLOCK_FONT_PX,
+  HUD_CLOCK_REFRESH_MS,
+  HUD_GLYPH_PX,
+  ZOOM_MAX,
+  ZOOM_MIN,
+} from '../constants.js';
 import { countActiveAgents } from '../office/activeAgents.js';
 import { stepZoom } from '../office/camera.js';
 import { clockLabel, isDaytime } from '../office/lighting.js';
@@ -11,27 +20,20 @@ import { Button } from './ui/Button.js';
 /** Pixel glyphs on a 7x7 grid: a sun by day, a moon at night. */
 const SUN = ['..#.#..', '.#####.', '#######', '.#####.', '#######', '.#####.', '..#.#..'];
 const MOON = ['..###..', '.##....', '##.....', '##.....', '##.....', '.##...#', '..#####'];
-const GLYPH_CELL_PX = 3;
 
 function Glyph({ rows, fill }: { rows: string[]; fill: string }) {
   return (
     <svg
-      width={rows[0].length * GLYPH_CELL_PX}
-      height={rows.length * GLYPH_CELL_PX}
+      width={HUD_GLYPH_PX}
+      height={HUD_GLYPH_PX}
+      viewBox={`0 0 ${rows[0].length} ${rows.length}`}
       shapeRendering="crispEdges"
       aria-hidden="true"
     >
       {rows.flatMap((row, y) =>
         [...row].map((ch, x) =>
           ch === '#' ? (
-            <rect
-              key={`${x}-${y}`}
-              x={x * GLYPH_CELL_PX}
-              y={y * GLYPH_CELL_PX}
-              width={GLYPH_CELL_PX}
-              height={GLYPH_CELL_PX}
-              fill={fill}
-            />
+            <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} fill={fill} />
           ) : null,
         ),
       )}
@@ -69,12 +71,15 @@ export function HudCard({ characters, zoom, onZoomChange, fitActive, onFit }: Hu
   return (
     <div
       className="absolute top-8 left-8 z-10 brand-panel py-6 px-10 flex flex-col gap-6 text-2xs leading-none select-none"
+      style={{ minHeight: HUD_CARD_MIN_HEIGHT_PX }}
       data-testid="hud-card"
     >
       <div className="flex items-center gap-8 pointer-events-none">
         <Glyph rows={day ? SUN : MOON} fill={day ? 'var(--brand-gold)' : 'var(--brand-rust)'} />
-        <span>{clockLabel(now.getHours(), now.getMinutes())}</span>
-        <span>{active} active</span>
+        <span style={{ fontSize: HUD_CLOCK_FONT_PX }}>
+          {clockLabel(now.getHours(), now.getMinutes())}
+        </span>
+        <span style={{ fontSize: HUD_ACTIVE_FONT_PX }}>{active} active</span>
       </div>
       <div className="flex items-center gap-6">
         <Button

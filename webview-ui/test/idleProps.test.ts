@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { ART_DENSITY } from '../../core/src/assets/constants.js';
+import { ART_DENSITY, CHAR_FRAME_W } from '../../core/src/assets/constants.js';
 import { IDLE_PROP_STEAM_FRAME_SEC, NAP_ZZ_PERIOD_MS } from '../src/constants.js';
 import {
   bookPlacement,
@@ -59,11 +59,15 @@ describe('napping Zz', () => {
     for (const t of [0, 300, 1200, 2399]) expect(napZzPlacements(t)).toHaveLength(2);
   });
 
-  it('start above the head, not on the back of it, when the napper faces away', () => {
-    // From behind the head is upright: every glyph's bottom must clear the head top.
-    for (const t of [0, 600, 1200, 1800]) {
-      for (const g of napZzPlacements(t, false)) {
-        expect(g.dy + g.sprite.length / ART_DENSITY).toBeLessThanOrEqual(ANCHORS.up.headTopY);
+  it('start above and right of the head from every side, so none begins on it', () => {
+    // Same spawn point for every view: each glyph's bottom clears the head top, its left edge is
+    // right of the head centre (the frame is CHAR_FRAME_W wide).
+    for (const view of [ANCHORS.down, ANCHORS.up, ANCHORS.right]) {
+      for (const t of [0, 600, 1200, 1800]) {
+        for (const g of napZzPlacements(t)) {
+          expect(g.dy + g.sprite.length / ART_DENSITY).toBeLessThanOrEqual(view.headTopY);
+          expect(g.dx).toBeGreaterThan(CHAR_FRAME_W / 2);
+        }
       }
     }
   });
