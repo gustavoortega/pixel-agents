@@ -107,22 +107,49 @@ test('fitTarget: a map with fewer rooms than the minimum frames the whole map', 
   assert.equal(fitTarget(single, [agent('A')]), null);
 });
 
-test('fitView: the frame is EXACTLY the room union plus one tile of margin', () => {
-  // 1280x720 canvas. Rooms A+B = cols 0-7, rows 0-5; with the margin cols -1..8, rows -1..6.
+test('fitView: the frame is EXACTLY the room union, centred on it', () => {
+  // 1280x720 canvas. Rooms A+B = cols 0-7, rows 0-5.
   const target = fitTarget(rooms, [agent('A')]);
   const fit = fitView(target, { cols: 12, rows: 6 }, { width: 1280, height: 720 }, 1);
-  assert.deepEqual(fit.box, box(-1, -1, 8, 6));
-  // 10x8 tiles: min(1280/160, 720/128) = 5.6, and the largest zoom level under it is 4
-  assert.equal(fit.zoom, 4);
+  assert.deepEqual(fit.box, box(0, 0, 7, 5));
+  // 8x6 tiles in 1264x704 px (8 px padding a side): min(9.875, 7.33) = 7.33, and the level under it is 6
+  assert.equal(fit.zoom, 6);
   assert.deepEqual(fit.center, { x: 64, y: 48 });
 });
 
+test('fitView: a room target frames its top wall too, so the windows are never cut in half', () => {
+  const map = { cols: 20, rows: 11 };
+  const fit = fitView(box(3, 4, 8, 9), map, { width: 1280, height: 720 }, 1);
+  assert.deepEqual(fit.box, box(3, 2, 8, 9));
+  // never above the map
+  assert.equal(fitView(box(3, 1, 8, 9), map, { width: 1280, height: 720 }, 1).box?.row0, 0);
+});
+
+test('fitView: 8 CSS px of padding a side, in CSS px whatever the dpr: it decides the zoom level', () => {
+  // The whole 20x11 map is 320x176 world px. At zoom 4 it needs 1280x704 device px, and the
+  // padding adds 16 CSS px a side pair; a tile of margin (32 px at zoom 4) would not fit.
+  const map = { cols: 20, rows: 11 };
+  const zoomOf = (width: number, height: number, dpr: number) =>
+    fitView(null, map, { width, height }, dpr).zoom;
+  assert.equal(zoomOf(1296, 720, 1), 4, 'exactly map + 8 px a side');
+  assert.equal(zoomOf(1295, 720, 1), 2, 'a pixel short');
+  assert.equal(zoomOf(1296, 719, 1), 2, 'a pixel short, vertically');
+  // Zoom 8 needs 2560x1408 device px plus 16 a side at dpr 2 (the padding doubles with it).
+  assert.equal(zoomOf(1296, 720, 2), 8, 'exactly map + 8 CSS px a side');
+  assert.equal(zoomOf(1295, 720, 2), 6, 'a CSS pixel short');
+  // A target is padded the same way: 2x2 floor tiles plus their 2 wall-face rows are 2x4 tiles,
+  // 640x1280 at zoom 20, +16 a side.
+  const fit = fitView(box(3, 3, 4, 4), map, { width: 656, height: 1296 }, 1);
+  assert.equal(fit.zoom, 20);
+  assert.equal(fitView(box(3, 3, 4, 4), map, { width: 655, height: 1296 }, 1).zoom, 18);
+});
+
 test('fitView: no target is the whole map at the biggest zoom level that fits', () => {
-  const fit = fitView(null, { cols: 20, rows: 11 }, { width: 1280, height: 720 }, 1);
+  const fit = fitView(null, { cols: 20, rows: 11 }, { width: 1296, height: 720 }, 1);
   assert.equal(fit.zoom, 4);
   assert.deepEqual(fit.center, { x: 160, y: 88 });
-  // dpr doubles the device pixels: 2560 x 1440 fits 20 x 11 tiles at min(8, 8.18) = 8.
-  assert.equal(fitView(null, { cols: 20, rows: 11 }, { width: 1280, height: 720 }, 2).zoom, 8);
+  // dpr doubles the device pixels: 2592 x 1440 less 16 a side fits 20 x 11 tiles at min(8, 8) = 8.
+  assert.equal(fitView(null, { cols: 20, rows: 11 }, { width: 1296, height: 720 }, 2).zoom, 8);
 });
 
 test('fitView: the zoom is the largest of {1, 2, 4, ..., 20} that fits, never odd', () => {
@@ -153,7 +180,7 @@ test('fitZoomWholeMap: the 27x21 layout on a 2560x1300 device-px canvas fits at 
 // ── Hysteresis ─────────────────────────────────────────────────
 
 const WIDE = { cols: 40, rows: 11 };
-const CANVAS = { width: 1280, height: 720 };
+const CANVAS = { width: 1296, height: 720 };
 
 test('refitView: a target inside the current view changes nothing', () => {
   const current = { zoom: 4, center: { x: 160, y: 88 } };
@@ -163,17 +190,24 @@ test('refitView: a target inside the current view changes nothing', () => {
 
 test('refitView: a target outside the view re-centres but never zooms in', () => {
   const current = { zoom: 3, center: { x: 48, y: 88 } };
-  // the box alone would fit at zoom 11; the view stays at 3 and only moves
+  // the box alone would fit at zoom 11; the view stays at 3 and only moves (to the floor rows 5-6
+  // plus the two wall-face rows above them)
   assert.deepEqual(refitView(current, box(30, 5, 32, 6), WIDE, CANVAS, 1), {
     zoom: 3,
-    center: { x: 504, y: 96 },
+    center: { x: 504, y: 80 },
   });
 });
 
 test('refitView: a target that no longer fits zooms out', () => {
   const current = { zoom: 5, center: { x: 160, y: 88 } };
-  // the 22x13 tiles with margin fit at min(3.6, 3.46), and the zoom level under it is 2
-  assert.equal(refitView(current, box(0, 0, 19, 10), { cols: 20, rows: 11 }, CANVAS, 1)?.zoom, 2);
+  // the 20x11 tiles in 1280x704 px fit at min(4, 4), so the view drops from 5 to 4; one
+  // CSS pixel less on the canvas and it would be 2
+  assert.equal(refitView(current, box(0, 0, 19, 10), { cols: 20, rows: 11 }, CANVAS, 1)?.zoom, 4);
+  assert.equal(
+    refitView(current, box(0, 0, 19, 10), { cols: 20, rows: 11 }, { width: 1295, height: 720 }, 1)
+      ?.zoom,
+    2,
+  );
 });
 
 const input = (patch: Partial<AutoFitInput> = {}): AutoFitInput => ({
@@ -192,22 +226,22 @@ const input = (patch: Partial<AutoFitInput> = {}): AutoFitInput => ({
 
 test('AutoFit: fits once on start, then leaves a target inside the view alone', () => {
   const fit = new AutoFit();
-  // whole 40x11 map: floor(min(2, 4.09)) = 2; the 1280 px map fills the width, the height is centred
+  // whole 40x11 map: floor(min(2, 4.0)) = 2; the 1280 px map fills the width less padding, the height is centred
   assert.deepEqual(fit.step(input()), { zoom: 2, pan: { x: 0, y: 0 }, panZoom: 2 });
   assert.deepEqual(fit.step(input({ target: box(5, 5, 6, 6), zoom: 2, nowMs: 50 })), {});
 });
 
 test('AutoFit: a target outside the view eases the centre over 300 ms, keeps the zoom, and stays void-free', () => {
   const fit = new AutoFit();
-  // 8x8 tiles with the margin: fits at zoom 4, a 20-tile-wide view that cannot see column 30
-  fit.step(input({ target: box(0, 0, 5, 5), zoom: 4 }));
+  // 8x8 tiles: fits at zoom 4, a 20-tile-wide view that cannot see column 30
+  fit.step(input({ target: box(0, 0, 7, 7), zoom: 4 }));
   const far = input({ target: box(30, 5, 32, 6), zoom: 4, nowMs: 1000 });
   const first = fit.step(far);
   assert.equal(first.zoom, undefined, 'the zoom is not animated or changed');
   assert.deepEqual(first.pan, { x: 0, y: 0 }, 'starts where the view is');
   const done = fit.step({ ...far, nowMs: 1300 });
-  // The centre would pan -736, past the right edge of the 40-tile map: clamped to -640.
-  assert.deepEqual(done.pan, { x: -640, y: 0 }, 'ends on the new rooms, without void');
+  // The centre would pan -736, past the right edge of the 40-tile map: clamped to -632 (the right edge flush with the 1296 px view).
+  assert.deepEqual(done.pan, { x: -632, y: 0 }, 'ends on the new rooms, without void');
 });
 
 test('AutoFit: a manual zoom or pan, an open editor or a followed agent stops refits; Fit resumes', () => {

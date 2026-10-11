@@ -49,6 +49,7 @@ import {
   MONITOR_SCREEN_RECT,
   NIGHT_DARKEN_ALPHA,
   NIGHT_DARKEN_COLOR,
+  POOL_BLEND_MODE,
   ROTATE_BUTTON_BG,
   SEAT_AVAILABLE_COLOR,
   SEAT_BUSY_COLOR,
@@ -1367,10 +1368,11 @@ function renderNightDarkening(
   ctx.restore();
 }
 
-/** Paint glow sprites with `screen` inside the map rect. */
+/** Paint glow sprites with `blend` inside the map rect. */
 function paintGlows(
   ctx: CanvasRenderingContext2D,
   draws: readonly GlowDraw[],
+  blend: GlobalCompositeOperation,
   zoom: number,
   offsetX: number,
   offsetY: number,
@@ -1383,7 +1385,7 @@ function paintGlows(
   ctx.beginPath();
   ctx.rect(offsetX, offsetY, cols * s, rows * s);
   ctx.clip();
-  ctx.globalCompositeOperation = 'screen';
+  ctx.globalCompositeOperation = blend;
   for (const d of draws) {
     ctx.globalAlpha = d.alpha;
     ctx.drawImage(getGlowSprite(d.kind, zoom), d.sx, d.sy, d.w, d.h, d.x, d.y, d.w, d.h);
@@ -1414,7 +1416,7 @@ function renderGlows(
     cols,
     rows,
   });
-  paintGlows(ctx, [...draws, ...fairy], zoom, offsetX, offsetY, cols, rows);
+  paintGlows(ctx, [...draws, ...fairy], 'screen', zoom, offsetX, offsetY, cols, rows);
 }
 
 export function renderFrame(
@@ -1473,6 +1475,7 @@ export function renderFrame(
         strength: lightingState.darkness / NIGHT_DARKEN_ALPHA,
         fixtures: lightingState.fixtures,
         monitors: lightingState.monitors,
+        isWall: (col, row) => tileMap[row]?.[col] === TileType.WALL,
         nowMs: lightingState.nowMs,
         zoom,
         offsetX,
@@ -1529,7 +1532,7 @@ export function renderFrame(
   // Bubbles and everything after stay outside the darkening.
   if (lightingState && cozyLighting) {
     renderNightDarkening(ctx, lightingState.darkness, zoom, offsetX, offsetY, cols, rows);
-    paintGlows(ctx, night.pools, zoom, offsetX, offsetY, cols, rows);
+    paintGlows(ctx, night.pools, POOL_BLEND_MODE, zoom, offsetX, offsetY, cols, rows);
   }
 
   // Monitor, lamp and window glows: light on top of the scene, under the bubbles

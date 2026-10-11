@@ -520,15 +520,50 @@ export const LIGHT_PHASES = {
 export const GLOW_MONITOR_RADIUS_TILES = 2;
 export const GLOW_LAMP_RADIUS_TILES = 2.5;
 export const GLOW_DOWN_OFFSET_TILES = 0.5;
-/** Radial glow gradient stops (centre, edge) per kind. */
+/** Glow gradient stops per kind: [offset 0..1 from the centre (top, for the fairy band), color]. */
 export const GLOW_COLORS = {
-  monitor: { core: 'rgba(207, 232, 255, 0.4)', edge: 'rgba(207, 232, 255, 0)' },
-  lamp: { core: 'rgba(255, 200, 110, 0.55)', edge: 'rgba(255, 200, 110, 0)' },
-  lampPool: { core: 'rgba(255, 200, 120, 0.55)', edge: 'rgba(255, 200, 120, 0)' },
-  monitorPool: { core: 'rgba(120, 255, 200, 0.35)', edge: 'rgba(120, 255, 200, 0)' },
-  fairyBand: { core: 'rgba(255, 220, 150, 0.3)', edge: 'rgba(255, 220, 150, 0)' },
-  fairy: { core: 'rgba(255, 224, 150, 0.8)', edge: 'rgba(255, 224, 150, 0)' },
-} as const;
+  monitor: {
+    stops: [
+      [0, 'rgba(207, 232, 255, 0.4)'],
+      [1, 'rgba(207, 232, 255, 0)'],
+    ],
+  },
+  lamp: {
+    stops: [
+      [0, 'rgba(255, 200, 110, 0.55)'],
+      [1, 'rgba(255, 200, 110, 0)'],
+    ],
+  },
+  lampPool: {
+    stops: [
+      [0, 'rgba(255, 200, 120, 0.38)'],
+      [0.55, 'rgba(255, 200, 120, 0.16)'],
+      [1, 'rgba(255, 200, 120, 0)'],
+    ],
+  },
+  monitorPool: {
+    stops: [
+      [0, 'rgba(120, 255, 200, 0.3)'],
+      [0.7, 'rgba(120, 255, 200, 0)'],
+      [1, 'rgba(120, 255, 200, 0)'],
+    ],
+  },
+  fairyBand: {
+    stops: [
+      [0, 'rgba(255, 220, 150, 0.3)'],
+      [1, 'rgba(255, 220, 150, 0)'],
+    ],
+  },
+  fairy: {
+    stops: [
+      [0, 'rgba(255, 224, 150, 0.8)'],
+      [1, 'rgba(255, 224, 150, 0)'],
+    ],
+  },
+} as const satisfies Record<string, { stops: ReadonlyArray<readonly [number, string]> }>;
+/** The floor pools (lamp, monitor, fairy band) are laid on with this blend, so they lift the
+ *  darkened scene toward their color instead of washing it out like `screen`. */
+export const POOL_BLEND_MODE = 'soft-light';
 /** Night pools on the floor: radius in tiles around a floor lamp's base and an active monitor. */
 export const POOL_LAMP_RADIUS_TILES = 4;
 /** A lamp pool is centered on the middle of the lamp's base tile, this many tiles below its top. */
@@ -628,8 +663,8 @@ export const HUD_GLYPH_PX = 20;
 export const HUD_CARD_MIN_HEIGHT_PX = 52;
 
 // ── Cozy look: camera fit ───────────────────────────────────────
-/** Margin around the framed rooms, in tiles. The rooms' own floor is the frame: plates are clamped inside it. */
-export const FIT_MARGIN_TILES = 1;
+/** Canvas left free around the framed rooms (or the whole map), in CSS px: a fixed length, not a tile count. */
+export const FIT_PADDING_CSS_PX = 8;
 /** Furniture type that marks the lounge: the Area holding it is the lounge room. */
 export const LOUNGE_FURNITURE_TYPE = 'COFFEE_TABLE';
 /** The fit frames at least this many rooms (or the whole map when it has fewer). */
