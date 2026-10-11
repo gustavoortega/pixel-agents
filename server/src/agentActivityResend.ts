@@ -3,6 +3,28 @@ import { rosterMessage } from './rosterAgent.js';
 import { derivedTitle } from './sessionTitle.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 import { tripwireResendMessage } from './tripwires.js';
+import type { AgentState } from './types.js';
+
+/**
+ * The agentStatus an agent should be shown with, read from its state right now.
+ *
+ * Always explicit: a client that guessed a default would show an idle session as
+ * working. `active` means tools in flight, a turn the server saw start and not
+ * finish, or one the transcript tail said was mid-turn at adoption.
+ */
+export function agentStatusMessage(id: number, agent: AgentState): Record<string, unknown> {
+  if (agent.isWaiting) {
+    return {
+      type: 'agentStatus',
+      id,
+      status: 'waiting',
+      awaitingInput: agent.awaitingInput === true,
+    };
+  }
+  const working =
+    agent.activeToolStatuses.size > 0 || agent.hadToolsInTurn || agent.derivedActive === true;
+  return { type: 'agentStatus', id, status: working ? 'active' : 'idle' };
+}
 
 /**
  * Replay an agent's active state to a connecting client.
@@ -11,7 +33,7 @@ import { tripwireResendMessage } from './tripwires.js';
  * 1. Team info first — webview needs team context before tool messages
  * 2. Regular tools
  * 3. Background tools with runInBackground + isTeammateSpawn flags, skipping promoted spawns
- * 4. Waiting status
+ * 4. Status (active, waiting or idle; one per agent)
  * 5. Context usage
  * 6. Model look
  * 7. Session title
@@ -73,14 +95,8 @@ export function resendAgentActivity(
       });
     }
 
-    // 4. Waiting status
-    if (agent.isWaiting) {
-      send({
-        type: 'agentStatus',
-        id,
-        status: 'waiting',
-      });
-    }
+    // 4. Status: exactly one per agent, never left to a client default.
+    send(agentStatusMessage(id, agent));
 
     // 5. Context usage
     if (agent.contextTokens > 0) {

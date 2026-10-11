@@ -41,6 +41,16 @@ export const CONTEXT_WINDOW_TIERS = [200_000, 1_000_000] as const;
  *  adoption or restore. Comfortably more than one turn's worth of records. */
 export const CONTEXT_SEED_TAIL_BYTES = 256 * 1024;
 
+// ── Derived turn state (turnState.ts) ──────────────────────
+/** An agent whose last record says "working" but whose files have been quiet
+ *  this long is shown idle: the process is gone or the turn was abandoned. */
+export const TURN_ACTIVE_STALE_MS = 90_000;
+/** Same, while a long-running tool (a shell command, a spawned agent) is pending:
+ *  those write nothing for minutes while genuinely working. */
+export const TURN_LONG_TOOL_STALE_MS = 15 * 60_000;
+/** A finished turn older than this no longer deserves a "Done" bubble. */
+export const TURN_WAITING_STALE_MS = 2 * 60 * 60_000;
+
 // ── Global Session Scanning ─────────────────────────────────
 /** Only adopt global JSONL files larger than this (filters out empty/init-only sessions) */
 export const GLOBAL_SCAN_ACTIVE_MIN_SIZE = 3_072; // 3KB

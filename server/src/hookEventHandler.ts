@@ -321,6 +321,9 @@ export class HookEventHandler {
     if (!agent) return;
 
     agent.hookDelivered = true;
+    // A hook is fresher than anything derived from the transcript tail.
+    agent.hookSeq = (agent.hookSeq ?? 0) + 1;
+    agent.derivedActive = false;
     if (debug)
       console.log(
         `[Pixel Agents] Hook: Agent ${agentId} - ${eventName} (session=${event.session_id.slice(0, 8)}...)`,
@@ -830,6 +833,7 @@ export class HookEventHandler {
     }
 
     agent.isWaiting = true;
+    agent.awaitingInput = awaitingInput;
     agent.permissionSent = false;
     agent.hadToolsInTurn = false;
     agent.currentHookToolId = undefined;

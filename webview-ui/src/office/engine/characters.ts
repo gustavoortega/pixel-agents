@@ -52,13 +52,14 @@ export function createCharacter(
   seatId: string | null,
   seat: Seat | null,
   hueShift = 0,
+  initialActive = true,
 ): Character {
   const col = seat ? seat.seatCol : 1;
   const row = seat ? seat.seatRow : 1;
   const center = tileCenter(col, row);
   return {
     id,
-    state: CharacterState.TYPE,
+    state: initialActive ? CharacterState.TYPE : CharacterState.IDLE,
     dir: seat ? seat.facingDir : Direction.DOWN,
     x: center.x,
     y: center.y,
@@ -74,7 +75,7 @@ export function createCharacter(
     wanderTimer: 0,
     wanderCount: 0,
     wanderLimit: randomInt(WANDER_MOVES_BEFORE_REST_MIN, WANDER_MOVES_BEFORE_REST_MAX),
-    isActive: true,
+    isActive: initialActive,
     seatId,
     bubbleType: null,
     bubbleTimer: 0,

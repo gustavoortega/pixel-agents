@@ -55,7 +55,9 @@ export function clearAgentActivity(
       });
     }
   }
-  agents.broadcast({ type: 'agentStatus', id: agentId, status: 'active' });
+  // No status broadcast: clearing activity says nothing about whether the agent is
+  // working. Callers that start a turn announce `active` themselves; a reassign
+  // derives the new file's status instead of assuming one.
 }
 
 export function cancelWaitingTimer(
@@ -81,6 +83,7 @@ export function startWaitingTimer(
     const agent = agents.get(agentId);
     if (agent) {
       agent.isWaiting = true;
+      agent.awaitingInput = false;
     }
     agents.broadcast({
       type: 'agentStatus',

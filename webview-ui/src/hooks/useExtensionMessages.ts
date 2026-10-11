@@ -9,6 +9,7 @@ import {
   playPermissionSound,
   setSoundEnabled,
 } from '../notificationSound.js';
+import { applyAgentStatus } from '../office/engine/agentStatus.js';
 import type { ExistingAgentMeta, PendingAgent } from '../office/engine/existingAgents.js';
 import { reconcileExistingAgents } from '../office/engine/existingAgents.js';
 import type { OfficeState } from '../office/engine/officeState.js';
@@ -265,7 +266,7 @@ export function useExtensionMessages(
         }
         // Add buffered agents now that layout (and seats) are correct
         for (const p of pendingAgents) {
-          os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName);
+          os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName, undefined, false);
           if (p.isHeadless) os.setHeadless(p.id, true);
         }
         pendingAgents = [];
@@ -284,6 +285,9 @@ export function useExtensionMessages(
         const teammateName = msg.teammateName as string | undefined;
         const teammateParentId = msg.parentAgentId as number | undefined;
         const teamName = msg.teamName as string | undefined;
+        // Adopted sessions have an unknown status: idle until the server says
+        // otherwise. Terminals launched from the UI start working.
+        const isExternalAgent = msg.isExternal === true;
         setAgents((prev) => (prev.includes(id) ? prev : [...prev, id]));
         // Don't auto-select teammates (keep focus on lead)
         if (!isTeammate) {
@@ -304,6 +308,7 @@ export function useExtensionMessages(
             undefined,
             parentCh?.folderName,
             teammateParentId,
+            !isExternalAgent,
           );
           noteFolderName(parentCh?.folderName);
           // Set team metadata on the character
@@ -316,7 +321,16 @@ export function useExtensionMessages(
         } else {
           const palette = msg.palette as number | undefined;
           const hueShift = msg.hueShift as number | undefined;
-          os.addAgent(id, palette, hueShift, undefined, undefined, folderName);
+          os.addAgent(
+            id,
+            palette,
+            hueShift,
+            undefined,
+            undefined,
+            folderName,
+            undefined,
+            !isExternalAgent,
+          );
           noteFolderName(folderName);
           if (isHeadlessAgent(msg.isExternal as boolean | undefined)) {
             os.setHeadless(id, true);
@@ -516,9 +530,8 @@ export function useExtensionMessages(
           }
           return { ...prev, [id]: status };
         });
-        os.setAgentActive(id, status === 'active');
-        if (status === 'waiting') {
-          os.showWaitingBubble(id, msg.awaitingInput === true);
+        const wasActive = os.characters.get(id)?.isActive === true;
+        if (applyAgentStatus(os, id, status, msg.awaitingInput === true, wasActive)) {
           playDoneSound();
         }
       } else if (msg.type === 'agentToolPermission') {

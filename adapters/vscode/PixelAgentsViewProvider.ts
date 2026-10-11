@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 
 import type { StateAdapter } from '../../core/src/adapter.js';
 import type { HookProvider } from '../../core/src/provider.js';
+import { agentStatusMessage } from '../../server/src/agentActivityResend.js';
 import { buildAgentDiagnostics } from '../../server/src/agentDiagnostics.js';
 import { AgentRuntime } from '../../server/src/agentRuntime.js';
 import { AgentStateStore } from '../../server/src/agentStateStore.js';
@@ -147,6 +148,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         palette: agent.palette,
         hueShift: agent.hueShift,
       });
+      // The webview starts external agents idle; say what they really are, read from
+      // the state at send time so a status derived from the transcript is not lost.
+      if (agent.isExternal) this.sendOrBuffer(agentStatusMessage(id, agent));
     });
     this.store.on('agentRemoved', (id) => {
       this.sendOrBuffer({ type: 'agentClosed', id });

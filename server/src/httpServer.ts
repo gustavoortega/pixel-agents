@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import Fastify from 'fastify';
 
+import { agentStatusMessage } from './agentActivityResend.js';
 import type { AgentRuntime } from './agentRuntime.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import type {
@@ -202,6 +203,9 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
         palette: agent.palette,
         hueShift: agent.hueShift,
       });
+      // The client starts external agents idle; say what they really are, read from
+      // the state at send time so a status derived from the transcript is not lost.
+      if (agent.isExternal) safeSend(socket, agentStatusMessage(id, agent));
     };
 
     const onAgentRemoved = (id: number) => {

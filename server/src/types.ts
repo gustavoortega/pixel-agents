@@ -20,6 +20,16 @@ export interface AgentState {
   activeSubagentToolNames: Map<string, Map<string, string>>; // parentToolId → (subToolId → toolName)
   backgroundAgentToolIds: Set<string>; // tool IDs for run_in_background Agent calls (stay alive until queue-operation)
   isWaiting: boolean;
+  /** Meaningful while `isWaiting`: true when the agent stopped on a question for
+   *  the user ("Waiting for input"), false/absent when it finished ("Done"). */
+  awaitingInput?: boolean;
+  /** True when the transcript tail said the agent is mid-turn at adoption or
+   *  restore, before any live event confirmed it. Cleared by the first live
+   *  record or hook event. Lets a reconnecting client be told `active`. */
+  derivedActive?: boolean;
+  /** Counts hook events routed to this agent. A derived status is applied only
+   *  if the count did not move while it was computed: a hook is fresher. */
+  hookSeq?: number;
   permissionSent: boolean;
   hadToolsInTurn: boolean;
   /** Workspace folder name (only set for multi-root workspaces) */

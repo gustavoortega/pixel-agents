@@ -38,6 +38,8 @@ export interface ExistingAgentsOffice {
     preferredSeatId?: string,
     skipSpawnEffect?: boolean,
     folderName?: string,
+    nearAgentId?: number,
+    initialActive?: boolean,
   ) => void;
   setHeadless: (id: number, headless: boolean) => void;
 }
@@ -71,7 +73,8 @@ export function reconcileExistingAgents(
     };
     if (layoutReady) {
       if (!os.characters.has(p.id)) {
-        os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName);
+        // Restored agents have no known status yet: idle until the server says.
+        os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName, undefined, false);
         if (p.isHeadless) os.setHeadless(p.id, true);
         addedDirectly = true;
       }
