@@ -51,17 +51,6 @@ function getOfficeState(): OfficeState {
 }
 
 function App() {
-  // Browser runtime (dev or static dist): dispatch mock messages after the
-  // useExtensionMessages listener has been registered.
-  useEffect(() => {
-    // browserMock is for Vite dev mode only (UI prototyping without a server).
-    // In standalone server mode, the server sends all state over WebSocket.
-    // In VS Code mode, the extension sends all state via postMessage.
-    if (isBrowserRuntime && import.meta.env.DEV) {
-      void import('./browserMock.js').then(({ dispatchMockMessages }) => dispatchMockMessages());
-    }
-  }, []);
-
   const editor = useEditorActions(getOfficeState, editorState);
 
   // Fit to activity: on at start, off after any manual zoom or pan, back on with the Fit button.
@@ -76,6 +65,27 @@ function App() {
     [autoFit, handleZoomChange],
   );
   const handleFit = useCallback(() => autoFit.enable(), [autoFit]);
+
+  // Browser runtime (dev or static dist): dispatch mock messages after the
+  // useExtensionMessages listener has been registered.
+  useEffect(() => {
+    // browserMock is for Vite dev mode only (UI prototyping without a server).
+    // In standalone server mode, the server sends all state over WebSocket.
+    // In VS Code mode, the extension sends all state via postMessage.
+    if (isBrowserRuntime && import.meta.env.DEV) {
+      void import('./browserMock.js').then(({ dispatchMockMessages }) =>
+        dispatchMockMessages({
+          office: getOfficeState(),
+          setZoom: (z) => {
+            autoFit.disable();
+            handleZoomChange(z);
+          },
+        }),
+      );
+    }
+    // Once on mount: autoFit and handleZoomChange are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const isEditDirty = useCallback(
     () => editor.isEditMode && editor.isDirty,

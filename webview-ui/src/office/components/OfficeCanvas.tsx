@@ -15,6 +15,7 @@ import {
   roomsOf,
   stepZoom,
 } from '../camera.js';
+import { officeNow } from '../clock.js';
 import { getColorizedSprite } from '../colorize.js';
 import { canPlaceFurniture, getWallPlacementRow } from '../editor/editorActions.js';
 import type { EditorState } from '../editor/editorState.js';
@@ -342,7 +343,7 @@ export function OfficeCanvas({
         };
 
         const layout = officeState.getLayout();
-        const now = new Date();
+        const now = officeNow();
         const darkness = nightDarkness(now.getHours(), now.getMinutes());
         const { offsetX, offsetY } = renderFrame(
           ctx,
