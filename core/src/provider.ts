@@ -9,6 +9,36 @@
 
 import type { TeamProvider } from './teamProvider.js';
 
+// ── Turn signals (one classifier for live and derived state) ──
+
+/** What one transcript record says about the turn, in provider-neutral terms.
+ *  The live parser and the adoption-time tail walk both read records through
+ *  this, so the two can never disagree about what a record means. */
+export interface TurnSignal {
+  kind:
+    | 'prompt' // the user started a turn
+    | 'interrupted' // the user cut the turn short
+    | 'meta' // CLI-injected user record (slash command output, compaction): not a turn
+    | 'toolUse'
+    | 'toolResult'
+    | 'textAnswer' // assistant text with no tool call
+    | 'thinking' // assistant reasoning only
+    | 'turnEnd'
+    | 'ignore'; // bookkeeping records
+  toolUseIds?: string[];
+  toolNames?: string[];
+  /** Epoch ms the record claims, when it carries one. */
+  timestampMs?: number;
+}
+
+/** Tool names a provider needs the tail walk to treat specially. */
+export interface TurnTraits {
+  /** Tools that legitimately run for minutes without writing to the transcript. */
+  longRunningTools: ReadonlySet<string>;
+  /** Tools that block on an answer from the user. */
+  userQuestionTools: ReadonlySet<string>;
+}
+
 // ── Normalized Events (all provider types produce these) ──────
 
 export type AgentEvent =
@@ -136,6 +166,13 @@ export interface HookProvider {
    *  strings, capped at SESSION_TITLE_MAX_LENGTH: a field that is missing, blank
    *  or not a string is absent, never an empty title. */
   extractSessionTitle?(record: unknown): { customTitle?: string; aiTitle?: string } | null;
+
+  /** Classify one parsed transcript record. Required for the adoption-time tail
+   *  walk (server/src/turnState.ts); a provider without it keeps the old behavior
+   *  of showing adopted agents as unknown. */
+  turnSignal?(record: unknown): TurnSignal;
+  /** Tool names the tail walk treats specially. See `TurnTraits`. */
+  readonly turnTraits?: TurnTraits;
 
   /** How this CLI's transcripts report token usage. Present = the token ledger can
    *  total usage across sessions. See `TranscriptUsageSource`. */

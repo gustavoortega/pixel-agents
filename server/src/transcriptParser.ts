@@ -133,6 +133,13 @@ export function processTranscriptLine(
       });
     }
 
+    // One classification for live records and the adoption-time tail walk
+    // (turnState.ts), so they can't disagree about what a record means.
+    const turn = hookProvider?.turnSignal?.(record);
+    // Any record that says something about the turn supersedes a status that was
+    // only derived from the transcript tail at adoption.
+    if (turn && turn.kind !== 'ignore' && turn.kind !== 'meta') agent.derivedActive = false;
+
     // -- Session title (custom-title / ai-title records drive the character label) --
     const titles = hookProvider?.extractSessionTitle?.(record);
     if (titles) applySessionTitle(agentId, agent, agents, titles);
@@ -264,6 +271,23 @@ export function processTranscriptLine(
       );
     } else if (record.type === 'progress') {
       processProgressRecord(agentId, record, agents, waitingTimers, permissionTimers);
+    } else if (record.type === 'user' && turn?.kind === 'meta') {
+      // Slash-command output and compaction summaries are not prompts: treating
+      // them as one flipped an idle agent to active on /cost or /clear.
+    } else if (record.type === 'user' && turn?.kind === 'interrupted') {
+      // Esc writes only this record: the Stop hook does not fire, so unlike
+      // turn_duration this must broadcast even when hooks are delivering.
+      cancelWaitingTimer(agentId, waitingTimers);
+      clearAgentActivity(agent, agentId, agents, permissionTimers);
+      agent.isWaiting = true;
+      agent.awaitingInput = false;
+      agent.hadToolsInTurn = false;
+      agents.broadcast({
+        type: 'agentStatus',
+        id: agentId,
+        status: 'waiting',
+        awaitingInput: false,
+      });
     } else if (record.type === 'user') {
       const content = record.message?.content ?? record.content;
       if (Array.isArray(content)) {
@@ -404,12 +428,14 @@ export function processTranscriptLine(
           // New user text prompt — new turn starting
           cancelWaitingTimer(agentId, waitingTimers);
           clearAgentActivity(agent, agentId, agents, permissionTimers);
+          agents.broadcast({ type: 'agentStatus', id: agentId, status: 'active' });
           agent.hadToolsInTurn = false;
         }
       } else if (typeof content === 'string' && content.trim()) {
         // New user text prompt — new turn starting
         cancelWaitingTimer(agentId, waitingTimers);
         clearAgentActivity(agent, agentId, agents, permissionTimers);
+        agents.broadcast({ type: 'agentStatus', id: agentId, status: 'active' });
         agent.hadToolsInTurn = false;
       }
     } else if (record.type === 'queue-operation' && record.operation === 'enqueue') {
@@ -508,6 +534,7 @@ export function processTranscriptLine(
       }
 
       agent.isWaiting = true;
+      agent.awaitingInput = false;
       agent.permissionSent = false;
       agent.hadToolsInTurn = false;
       // Skip status post when hooks already handled it

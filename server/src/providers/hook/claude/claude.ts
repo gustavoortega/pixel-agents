@@ -3,7 +3,13 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { normalizeProjectPath } from '../../../../../core/src/normalizeProjectPath.js';
-import type { AgentEvent, HookProvider, ModelTier } from '../../../../../core/src/provider.js';
+import type {
+  AgentEvent,
+  HookProvider,
+  ModelTier,
+  TurnSignal,
+  TurnTraits,
+} from '../../../../../core/src/provider.js';
 import {
   SESSION_TITLE_MAX_LENGTH,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
@@ -353,6 +359,102 @@ export function extractSessionTitle(
   return null;
 }
 
+// ── Turn signals ──
+
+/** Interrupt marker Claude writes as a user text record, with or without the
+ *  "for tool use" suffix. */
+const INTERRUPT_PREFIX = '[Request interrupted by user';
+
+/** Prefixes of user records the CLI injects around slash commands. They carry
+ *  no prompt: treating them as one marks an idle session as working. */
+const META_TEXT_PREFIXES = [
+  '<command-name>',
+  '<command-message>',
+  '<local-command-stdout>',
+  '<local-command-stderr>',
+];
+
+const TURN_TRAITS: TurnTraits = {
+  longRunningTools: new Set(['Bash', 'Agent', 'Task', 'Monitor', 'WebFetch']),
+  userQuestionTools: new Set(['AskUserQuestion']),
+};
+
+/**
+ * What one Claude transcript record says about the turn. The live parser and
+ * the adoption-time tail walk both classify through this, so a record can't
+ * mean one thing while an agent runs and another when it is adopted.
+ */
+export function turnSignal(record: unknown): TurnSignal {
+  const r = (record ?? {}) as {
+    type?: unknown;
+    subtype?: unknown;
+    isMeta?: unknown;
+    isCompactSummary?: unknown;
+    timestamp?: unknown;
+    message?: { content?: unknown };
+    content?: unknown;
+  };
+  const parsed = typeof r.timestamp === 'string' ? Date.parse(r.timestamp) : NaN;
+  const stamp = (kind: TurnSignal['kind'], extra?: Partial<TurnSignal>): TurnSignal => ({
+    kind,
+    ...extra,
+    ...(Number.isNaN(parsed) ? {} : { timestampMs: parsed }),
+  });
+  const content = r.message?.content ?? r.content;
+
+  if (r.type === 'system') {
+    return stamp(r.subtype === 'turn_duration' ? 'turnEnd' : 'ignore');
+  }
+
+  if (r.type === 'assistant') {
+    if (typeof content === 'string') return stamp(content.trim() ? 'textAnswer' : 'ignore');
+    if (!Array.isArray(content) || content.length === 0) return stamp('ignore');
+    const blocks = content as Array<{ type?: string; id?: string; name?: string }>;
+    const toolUses = blocks.filter((b) => b.type === 'tool_use');
+    if (toolUses.length > 0) {
+      return stamp('toolUse', {
+        toolUseIds: toolUses.flatMap((b) => (b.id ? [b.id] : [])),
+        toolNames: toolUses.map((b) => b.name ?? ''),
+      });
+    }
+    if (blocks.some((b) => b.type === 'text')) return stamp('textAnswer');
+    if (blocks.some((b) => b.type === 'thinking' || b.type === 'redacted_thinking')) {
+      return stamp('thinking');
+    }
+    return stamp('ignore');
+  }
+
+  if (r.type === 'user') {
+    const injected = r.isMeta === true || r.isCompactSummary === true;
+    let text: string | undefined;
+    if (typeof content === 'string') {
+      text = content;
+    } else if (Array.isArray(content)) {
+      const blocks = content as Array<{ type?: string; tool_use_id?: string; text?: unknown }>;
+      // A result closes a tool call whatever flags the record carries.
+      const results = blocks.filter((b) => b.type === 'tool_result');
+      if (results.length > 0) {
+        return stamp('toolResult', {
+          toolUseIds: results.flatMap((b) => (b.tool_use_id ? [b.tool_use_id] : [])),
+        });
+      }
+      const first = blocks.find((b) => b.type === 'text' && typeof b.text === 'string');
+      // Attachments without text (a pasted image) still start a turn.
+      text = first ? (first.text as string) : blocks.length > 0 ? 'attachment' : '';
+    }
+    if (injected) return stamp('meta');
+    const trimmed = (text ?? '').trim();
+    if (!trimmed) return stamp('ignore');
+    if (trimmed.startsWith(INTERRUPT_PREFIX)) return stamp('interrupted');
+    if (META_TEXT_PREFIXES.some((p) => trimmed.startsWith(p))) return stamp('meta');
+    return stamp('prompt');
+  }
+
+  // file-history-snapshot, queue-operation, custom-title, ai-title, agent-name,
+  // summary, attachment, progress and anything newer: bookkeeping.
+  return stamp('ignore');
+}
+
 // ── The provider ──
 
 export const claudeProvider: HookProvider = {
@@ -376,6 +478,8 @@ export const claudeProvider: HookProvider = {
   contextWindowForModel,
   modelTier,
   extractSessionTitle,
+  turnSignal,
+  turnTraits: TURN_TRAITS,
   transcriptUsage: createClaudeTranscriptUsage(extractSessionTitle),
 
   getSessionDirs,

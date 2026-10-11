@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 
 import type { StateAdapter } from '../../core/src/adapter.js';
-import { resendAgentActivity } from '../../server/src/agentActivityResend.js';
+import { agentStatusMessage, resendAgentActivity } from '../../server/src/agentActivityResend.js';
 import { AgentStateStore } from '../../server/src/agentStateStore.js';
 import { DEFAULT_MAX_CONTEXT_TOKENS, JSONL_POLL_INTERVAL_MS } from '../../server/src/constants.js';
 import {
@@ -19,6 +19,11 @@ import { CLAUDE_TERMINAL_NAME_PREFIX } from '../../server/src/providers/hook/cla
 import { claudeProvider } from '../../server/src/providers/index.js';
 import { claimRosterMember, withRosterLook } from '../../server/src/rosterAgent.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from '../../server/src/timerManager.js';
+import {
+  applyTurnDerivation,
+  deriveAgentTurnState,
+  seedTurnState,
+} from '../../server/src/turnStateSeed.js';
 import type { AgentState, PersistedAgent } from '../../server/src/types.js';
 
 export function getProjectDirPath(cwd?: string): string {
@@ -399,6 +404,17 @@ export function restoreAgents(
       rosterId: p.rosterId,
     };
 
+    // Restore skips history and persisted state never held a status: read it off
+    // the transcript tail before the agent is announced.
+    try {
+      if (fs.existsSync(p.jsonlFile)) {
+        agent.fileOffset = fs.statSync(p.jsonlFile).size;
+        seedTurnState(agent, claudeProvider);
+      }
+    } catch {
+      /* ignore errors during restore */
+    }
+
     claimRosterMember(agent, store);
     assignPaletteIfNeeded(agent, store);
     store.set(p.id, agent);
@@ -427,8 +443,7 @@ export function restoreAgents(
     // Start file watching if JSONL exists, skipping to end of file
     try {
       if (fs.existsSync(p.jsonlFile)) {
-        const stat = fs.statSync(p.jsonlFile);
-        agent.fileOffset = stat.size;
+        // fileOffset was set by the seed above, before the agent was announced.
         startFileWatching(
           p.id,
           p.jsonlFile,
@@ -448,6 +463,11 @@ export function restoreAgents(
               jsonlPollTimers.delete(p.id);
               const stat = fs.statSync(agent.jsonlFile);
               agent.fileOffset = stat.size;
+              // Already announced: derive and say what the file turned out to be.
+              const derivation = deriveAgentTurnState(agent, claudeProvider);
+              if (derivation && applyTurnDerivation(agent, derivation)) {
+                store.broadcast(agentStatusMessage(p.id, agent));
+              }
               startFileWatching(
                 p.id,
                 agent.jsonlFile,

@@ -349,3 +349,59 @@ describe('transcriptParser: teammate spawn results (new-harness implicit teams)'
     expect(agent.isTeamLead).toBeUndefined();
   });
 });
+
+describe('transcriptParser: status truth (live path)', () => {
+  let agents: AgentStateStore;
+  let agent: AgentState;
+  let messages: Array<Record<string, unknown>>;
+  const waitingTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  const permissionTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  const feed = (record: unknown) =>
+    processTranscriptLine(1, JSON.stringify(record), agents, waitingTimers, permissionTimers);
+  const statuses = () => messages.filter((m) => m.type === 'agentStatus');
+
+  beforeEach(() => {
+    setHookProvider(claudeProvider);
+    agents = new AgentStateStore();
+    agent = createTestAgent({ isWaiting: true });
+    agents.set(1, agent);
+    messages = [];
+    agents.on('broadcast', (msg) => {
+      messages.push(msg as Record<string, unknown>);
+    });
+    vi.useFakeTimers();
+    return () => vi.useRealTimers();
+  });
+
+  it('T8: slash-command output and compaction records do not make an idle agent active', () => {
+    feed({ type: 'user', isMeta: true, message: { content: 'Caveat: local commands' } });
+    feed({ type: 'user', message: { content: '<command-name>/cost</command-name>' } });
+    feed({ type: 'user', message: { content: '<local-command-stdout>$1</local-command-stdout>' } });
+    feed({ type: 'user', isCompactSummary: true, message: { content: 'summary' } });
+    expect(statuses()).toEqual([]);
+    expect(agent.isWaiting).toBe(true);
+  });
+
+  it('T8: a real prompt still starts the turn as active', () => {
+    feed({ type: 'user', message: { content: 'fix the bug' } });
+    expect(statuses()).toEqual([{ type: 'agentStatus', id: 1, status: 'active' }]);
+    expect(agent.isWaiting).toBe(false);
+  });
+
+  it('T8: an interrupt marks the agent waiting even when hooks are delivering', () => {
+    agent.hookDelivered = true;
+    agent.isWaiting = false;
+    feed(agentToolUseRecord('t1', 'Bash', { command: 'sleep 99' }));
+    messages.length = 0;
+    feed({
+      type: 'user',
+      message: { content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] },
+    });
+    expect(statuses()).toEqual([
+      { type: 'agentStatus', id: 1, status: 'waiting', awaitingInput: false },
+    ]);
+    expect(agent.isWaiting).toBe(true);
+    expect(agent.activeToolIds.size).toBe(0);
+  });
+});

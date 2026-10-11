@@ -43,12 +43,14 @@ import { SessionRouter } from './sessionRouter.js';
 import { SubagentWatch } from './subagentWatch.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import {
+  getHookProvider,
   setBackgroundAgentCompletedCallback,
   setBackgroundAgentDetectedCallback,
   setHookProvider,
   setTeamSwitchCallback,
 } from './transcriptParser.js';
 import type { TripwireRule } from './tripwires.js';
+import { seedTurnState } from './turnStateSeed.js';
 import type { AgentState } from './types.js';
 
 /** Callbacks that adapters register for platform-specific behavior. */
@@ -526,14 +528,21 @@ export class AgentRuntime {
         rosterId: p.rosterId,
       };
 
+      // Restore skips history, and persisted state never held a status: read it
+      // off the transcript tail before the agent is announced.
+      try {
+        agent.fileOffset = fs.statSync(p.jsonlFile).size;
+      } catch {
+        /* ignore stat errors on restore */
+      }
+      seedTurnState(agent, getHookProvider());
+
       claimRosterMember(agent, this.store);
       assignPaletteIfNeeded(agent, this.store);
       this.store.set(p.id, agent);
       this.knownJsonlFiles.add(p.jsonlFile);
 
       try {
-        const stat = fs.statSync(p.jsonlFile);
-        agent.fileOffset = stat.size;
         startFileWatching(
           p.id,
           p.jsonlFile,

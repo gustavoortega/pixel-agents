@@ -30,6 +30,7 @@ const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
 import type { HookProvider } from '../../core/src/provider.js';
 import type { TeamProvider } from '../../core/src/teamProvider.js';
 import type { ITerminalAdapter } from '../../core/src/terminalAdapter.js';
+import { agentStatusMessage } from './agentActivityResend.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import {
   CLEAR_IDLE_THRESHOLD_MS,
@@ -52,6 +53,7 @@ import { seedSessionTitle } from './sessionTitle.js';
 import type { SubagentWatch } from './subagentWatch.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
 import { getHookProvider, processTranscriptLine } from './transcriptParser.js';
+import { applyTurnDerivation, deriveAgentTurnState, seedTurnState } from './turnStateSeed.js';
 import type { AgentState } from './types.js';
 
 /** Dismissal tracker instance. Set once at startup via setDismissalTracker().
@@ -1200,11 +1202,13 @@ function adoptExternalSession(
   // ext4. On filesystems that don't track it, Node returns the epoch (0) —
   // we treat that as "very old" and skip to end, matching prior behavior.
   let fileOffset = 0;
+  let skippedHistory = false;
   try {
     const stat = fs.statSync(jsonlFile);
     const ageMs = stat.birthtimeMs > 0 ? Date.now() - stat.birthtimeMs : Number.POSITIVE_INFINITY;
     const freshnessWindowMs = EXTERNAL_SCAN_INTERVAL_MS * 2;
-    fileOffset = ageMs <= freshnessWindowMs ? 0 : stat.size;
+    skippedHistory = ageMs > freshnessWindowMs;
+    fileOffset = skippedHistory ? stat.size : 0;
   } catch {
     /* start from beginning if stat fails */
   }
@@ -1234,6 +1238,10 @@ function adoptExternalSession(
     contextTokens: 0,
     maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS,
   };
+
+  // Skipped history means nothing replays to say what the session is doing, so
+  // read it off the tail. Before set(): the agent is announced with this state.
+  if (skippedHistory) seedTurnState(agent, getHookProvider());
 
   claimRosterMember(agent, agents);
   assignPaletteIfNeeded(agent, agents);
@@ -1641,6 +1649,14 @@ export function reassignAgentToFile(
   agent.fileOffset = 0;
   agent.lineBuffer = '';
   persistAgents();
+
+  // clearAgentActivity no longer asserts `active`: say what the new file really
+  // is. Reads up to one stat of the file and moves the offset there, so the live
+  // reader parses only what lands after it.
+  const derivation = deriveAgentTurnState(agent, getHookProvider());
+  if (derivation && applyTurnDerivation(agent, derivation)) {
+    agents.broadcast(agentStatusMessage(agentId, agent));
+  }
 
   // Start watching new file
   startFileWatching(

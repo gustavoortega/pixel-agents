@@ -72,12 +72,18 @@ describe('resendAgentActivity roster', () => {
 
     const forAgent = (id: number) => sent.filter((m) => m.id === id).map((m) => m.type);
     expect(forAgent(1)).toEqual([
+      'agentStatus',
       'agentModel',
       'agentSessionTitle',
       'agentTripwireClear',
       'agentRoster',
     ]);
-    expect(forAgent(2)).toEqual(['agentModel', 'agentSessionTitle', 'agentTripwireClear']);
+    expect(forAgent(2)).toEqual([
+      'agentStatus',
+      'agentModel',
+      'agentSessionTitle',
+      'agentTripwireClear',
+    ]);
     expect(sent.find((m) => m.type === 'agentRoster')).toMatchObject({
       id: 1,
       level: 1,
@@ -129,7 +135,8 @@ describe('resendAgentActivity', () => {
     const sent: Array<Record<string, unknown>> = [];
     resendActivityWithoutTitlesOrAlarms(sent, store);
 
-    expect(sent).toHaveLength(1);
+    // The agent has a tool in flight, so it is also explicitly active.
+    expect(sent).toHaveLength(2);
     expect(sent[0]).toEqual({
       type: 'agentToolStart',
       id: 1,
@@ -137,6 +144,7 @@ describe('resendAgentActivity', () => {
       status: 'Running',
       toolName: 'Bash',
     });
+    expect(sent[1]).toEqual({ type: 'agentStatus', id: 1, status: 'active' });
   });
 
   it('handles background tools with flags and promoted skip logic', () => {
@@ -209,7 +217,7 @@ describe('resendAgentActivity', () => {
     store.set(1, createTestAgent({ id: 1, teamName: 'my-team' }));
     let sent: Array<Record<string, unknown>> = [];
     resendActivityWithoutTitlesOrAlarms(sent, store);
-    expect(sent).toHaveLength(1);
+    expect(sent.filter((m) => m.type === 'agentTeamInfo')).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'agentTeamInfo', id: 1, teamName: 'my-team' });
 
     // agentName trigger (derived team)
@@ -217,7 +225,7 @@ describe('resendAgentActivity', () => {
     store.set(2, createTestAgent({ id: 2, agentName: 'worker-1', leadAgentId: 1 }));
     sent = [];
     resendActivityWithoutTitlesOrAlarms(sent, store);
-    expect(sent).toHaveLength(1);
+    expect(sent.filter((m) => m.type === 'agentTeamInfo')).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'agentTeamInfo', id: 2, agentName: 'worker-1' });
 
     // isTeamLead trigger
@@ -225,7 +233,7 @@ describe('resendAgentActivity', () => {
     store.set(3, createTestAgent({ id: 3, isTeamLead: true }));
     sent = [];
     resendActivityWithoutTitlesOrAlarms(sent, store);
-    expect(sent).toHaveLength(1);
+    expect(sent.filter((m) => m.type === 'agentTeamInfo')).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'agentTeamInfo', id: 3, isTeamLead: true });
 
     // No team fields: no message
@@ -236,18 +244,38 @@ describe('resendAgentActivity', () => {
     expect(sent.filter((m) => m.type === 'agentTeamInfo')).toHaveLength(0);
   });
 
-  it('sends waiting status only when agent is waiting', () => {
+  it('sends waiting for a waiting agent and idle for a quiet one, never nothing', () => {
     let store = new AgentStateStore();
     store.set(1, createTestAgent({ id: 1, isWaiting: true }));
     let sent: Array<Record<string, unknown>> = [];
     resendActivityWithoutTitlesOrAlarms(sent, store);
-    expect(sent).toEqual([{ type: 'agentStatus', id: 1, status: 'waiting' }]);
+    expect(sent).toEqual([{ type: 'agentStatus', id: 1, status: 'waiting', awaitingInput: false }]);
 
     store = new AgentStateStore();
     store.set(2, createTestAgent({ id: 2, isWaiting: false }));
     sent = [];
     resendActivityWithoutTitlesOrAlarms(sent, store);
-    expect(sent).toHaveLength(0);
+    expect(sent).toEqual([{ type: 'agentStatus', id: 2, status: 'idle' }]);
+  });
+
+  it('sends exactly one status per agent, with the value its state implies', () => {
+    const store = new AgentStateStore();
+    store.set(1, createTestAgent({ id: 1, hadToolsInTurn: true }));
+    store.set(2, createTestAgent({ id: 2, derivedActive: true }));
+    store.set(3, createTestAgent({ id: 3, isWaiting: true, awaitingInput: true }));
+    store.set(4, createTestAgent({ id: 4, isWaiting: true, hadToolsInTurn: true }));
+    store.set(5, createTestAgent({ id: 5 }));
+    const sent: Array<Record<string, unknown>> = [];
+    resendAgentActivity((m) => {
+      if (m.type === 'agentStatus') sent.push(m);
+    }, store);
+    expect(sent).toEqual([
+      { type: 'agentStatus', id: 1, status: 'active' },
+      { type: 'agentStatus', id: 2, status: 'active' },
+      { type: 'agentStatus', id: 3, status: 'waiting', awaitingInput: true },
+      { type: 'agentStatus', id: 4, status: 'waiting', awaitingInput: false },
+      { type: 'agentStatus', id: 5, status: 'idle' },
+    ]);
   });
 
   it('sends context usage only when agent has tokens', () => {
@@ -255,7 +283,7 @@ describe('resendAgentActivity', () => {
     store.set(1, createTestAgent({ id: 1, contextTokens: 50_000, maxContextTokens: 200_000 }));
     let sent: Array<Record<string, unknown>> = [];
     resendActivityWithoutTitlesOrAlarms(sent, store);
-    expect(sent).toEqual([
+    expect(sent.filter((m) => m.type === 'agentContextUsage')).toEqual([
       { type: 'agentContextUsage', id: 1, contextTokens: 50_000, maxContextTokens: 200_000 },
     ]);
 
@@ -263,7 +291,7 @@ describe('resendAgentActivity', () => {
     store.set(2, createTestAgent({ id: 2, contextTokens: 0, maxContextTokens: 200_000 }));
     sent = [];
     resendActivityWithoutTitlesOrAlarms(sent, store);
-    expect(sent).toHaveLength(0);
+    expect(sent.filter((m) => m.type === 'agentContextUsage')).toHaveLength(0);
   });
 
   it('sends the model look for every agent, omitting what is unknown', () => {
@@ -300,9 +328,10 @@ describe('resendAgentActivity', () => {
     store.set(2, createTestAgent({ id: 2, isWaiting: true }));
     sent = [];
     resendActivityWithoutTitlesOrAlarms(sent, store);
-    expect(sent).toHaveLength(2);
+    expect(sent).toHaveLength(3);
     expect(sent[0]).toMatchObject({ type: 'agentToolStart', id: 1 });
-    expect(sent[1]).toMatchObject({ type: 'agentStatus', id: 2, status: 'waiting' });
+    expect(sent[1]).toMatchObject({ type: 'agentStatus', id: 1, status: 'active' });
+    expect(sent[2]).toMatchObject({ type: 'agentStatus', id: 2, status: 'waiting' });
   });
 
   it('sends the title of a titled agent and an omitted title for an untitled one', () => {

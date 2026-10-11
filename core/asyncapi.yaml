@@ -279,9 +279,13 @@ components:
             absent/false means the agent finished its turn ("Done").
 
     AgentActivityStatus:
-      description: Activity state of an agent.
+      description: >-
+        Activity state of an agent. "active" = working (typing, monitor on).
+        "waiting" = the turn is over and the agent awaits the user (bubble).
+        "idle" = not working and nothing to announce: also what an agent whose
+        state is unknown or stale reads as, so it never renders as working.
       type: string
-      enum: [active, waiting]
+      enum: [active, waiting, idle]
 
     AgentToolStart:
       description: Agent began executing a tool.

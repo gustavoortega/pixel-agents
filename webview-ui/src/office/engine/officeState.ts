@@ -477,6 +477,9 @@ export class OfficeState {
     skipSpawnEffect?: boolean,
     folderName?: string,
     nearAgentId?: number,
+    /** False for agents of unknown status (adopted or restored): they read as
+     *  idle until the server says otherwise. Terminals we launched start working. */
+    initialActive = true,
   ): void {
     if (this.characters.has(id)) return;
 
@@ -515,7 +518,7 @@ export class OfficeState {
     if (seatId) {
       const seat = this.seats.get(seatId)!;
       seat.assigned = true;
-      ch = createCharacter(id, palette, seatId, seat, hueShift);
+      ch = createCharacter(id, palette, seatId, seat, hueShift, initialActive);
     } else {
       // No seats — teammates spawn beside their anchor, others at a random walkable tile
       let spawn = anchorAt ? this.closestFreeWalkableTile(anchorAt.col, anchorAt.row) : null;
@@ -525,7 +528,7 @@ export class OfficeState {
             ? this.walkableTiles[Math.floor(Math.random() * this.walkableTiles.length)]
             : { col: 1, row: 1 };
       }
-      ch = createCharacter(id, palette, null, null, hueShift);
+      ch = createCharacter(id, palette, null, null, hueShift, initialActive);
       ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2;
       ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2;
       ch.tileCol = spawn.col;
@@ -953,6 +956,15 @@ export class OfficeState {
       ch.bubbleType = 'waiting';
       ch.waitingAwaitingInput = awaitingInput;
       ch.bubbleTimer = WAITING_BUBBLE_DURATION_SEC;
+    }
+  }
+
+  /** Drop a waiting bubble (permission bubbles are not this method's to clear). */
+  clearWaitingBubble(id: number): void {
+    const ch = this.characters.get(id);
+    if (ch && ch.bubbleType === 'waiting') {
+      ch.bubbleType = null;
+      ch.bubbleTimer = 0;
     }
   }
 
