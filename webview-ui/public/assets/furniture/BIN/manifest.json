@@ -1,5 +1,6 @@
 {
   "id": "BIN",
+  "density": 2,
   "name": "Bin",
   "category": "misc",
   "type": "asset",

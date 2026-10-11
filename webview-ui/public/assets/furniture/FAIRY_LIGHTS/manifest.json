@@ -1,5 +1,6 @@
 {
   "id": "FAIRY_LIGHTS",
+  "density": 2,
   "name": "Fairy Lights",
   "category": "wall",
   "type": "asset",

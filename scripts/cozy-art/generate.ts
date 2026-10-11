@@ -3,10 +3,11 @@
  * randomness, no reading of existing PNGs. The same source always gives the same bytes.
  */
 
+import { buildCharacterSheet, CHAR_LOOKS, computeAnchors, validateMaps } from './characters';
 import { buildDecor } from './decor';
 import type { SpriteSet } from './furniture';
 import { buildChairs, buildDesks, buildPcs } from './furniture';
-import { buildCharacterSheet, CHAR_LOOKS, computeAnchors, validateMaps } from './characters';
+import { buildPets } from './pets';
 import { encodePng } from './png';
 import { buildCarpets, buildFloors, buildWalls } from './tiles';
 
@@ -25,7 +26,7 @@ export function buildAssets(): FileMap {
     files.set(`${ASSETS_DIR}/characters/char_${i}.png`, encodePng(buildCharacterSheet(look)));
   });
 
-  for (const group of [buildFloors(), buildWalls(), buildCarpets()]) {
+  for (const group of [buildFloors(), buildWalls(), buildCarpets(), buildPets()]) {
     for (const [rel, canvas] of Object.entries(group)) {
       files.set(`${ASSETS_DIR}/${rel}`, encodePng(canvas));
     }

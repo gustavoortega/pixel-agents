@@ -1,5 +1,6 @@
 {
   "id": "WINDOW",
+  "density": 2,
   "name": "Window",
   "category": "wall",
   "type": "asset",

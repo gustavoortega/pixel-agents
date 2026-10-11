@@ -1,5 +1,6 @@
 {
   "id": "LARGE_PAINTING",
+  "density": 2,
   "name": "Large Painting",
   "category": "wall",
   "type": "asset",

@@ -1,5 +1,6 @@
 {
   "id": "PC",
+  "density": 2,
   "name": "PC",
   "category": "electronics",
   "type": "group",

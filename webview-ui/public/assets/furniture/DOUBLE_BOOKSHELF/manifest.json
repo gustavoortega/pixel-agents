@@ -1,5 +1,6 @@
 {
   "id": "DOUBLE_BOOKSHELF",
+  "density": 2,
   "name": "Double Bookshelf",
   "category": "wall",
   "type": "asset",

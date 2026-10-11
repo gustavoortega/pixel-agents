@@ -101,7 +101,7 @@ describe('cozy art pack', () => {
     expect(looks.size, 'every sheet has its own palette').toBe(12);
   });
 
-  it('bakes the baseboard color into exactly the three rows above the wall outline', () => {
+  it('bakes the baseboard color into exactly the six art rows above the wall outline', () => {
     const png = PNG.sync.read(
       fs.readFileSync(path.join(runA, 'webview-ui/public/assets/walls/wall_0.png')),
     );
@@ -110,13 +110,14 @@ describe('cozy art pack', () => {
     for (let y = 0; y < png.height; y++) {
       for (let x = 0; x < png.width; x++) {
         const i = (y * png.width + x) * 4;
-        if (BASEBOARD.every((v, k) => png.data[i + k] === v)) rowsWithColor.add(y % 32);
+        if (BASEBOARD.every((v, k) => png.data[i + k] === v)) rowsWithColor.add(y % 64);
       }
     }
-    expect([...rowsWithColor].sort((a, b) => a - b)).toEqual([28, 29, 30]);
+    const rows = [56, 57, 58, 59, 60, 61];
+    expect([...rowsWithColor].sort((a, b) => a - b)).toEqual(rows);
     // The isolated-wall piece (mask 0, top-left cell) has a plain face: its inner pixels carry it.
-    for (const y of [28, 29, 30]) {
-      const i = (y * png.width + 8) * 4;
+    for (const y of rows) {
+      const i = (y * png.width + 16) * 4;
       expect(Array.from(png.data.slice(i, i + 3)), `row ${y}`).toEqual(BASEBOARD);
     }
   });
@@ -190,7 +191,7 @@ describe('cozy art pack', () => {
     ['FLOOR_LAMP', 'decor', false, 1, 16, 32],
     ['FAIRY_LIGHTS', 'wall', true, 0, 64, 16],
   ])(
-    'ships %s with a manifest that matches its generated PNG',
+    'ships %s with a manifest in world px and a density 2 PNG',
     (id, category, onWalls, bg, w, h) => {
       const dir = `webview-ui/public/assets/furniture/${id}`;
       const manifest = JSON.parse(
@@ -209,7 +210,7 @@ describe('cozy art pack', () => {
         footprintH: h / 16,
       });
       const png = PNG.sync.read(fs.readFileSync(path.join(runA, dir, `${id}.png`)));
-      expect([png.width, png.height]).toEqual([w, h]);
+      expect([png.width, png.height]).toEqual([w * 2, h * 2]);
       let opaque = 0;
       for (let i = 3; i < png.data.length; i += 4) {
         if (png.data[i] > 0) opaque++;
@@ -217,4 +218,55 @@ describe('cozy art pack', () => {
       expect(opaque, `${id} is not blank`).toBeGreaterThan(40);
     },
   );
+
+  it('ships every environment PNG at density 2 and generates all of them', () => {
+    // Furniture manifests stay in world px; the art is twice that. Tiles and pets have
+    // fixed legacy sizes the engine detects density from.
+    const assets = path.join(REPO_ROOT, 'webview-ui/public/assets');
+    const generated = new Set(rels);
+    const size = (rel: string): number[] => {
+      const png = PNG.sync.read(fs.readFileSync(path.join(REPO_ROOT, rel)));
+      return [png.width, png.height];
+    };
+    type Member = { file?: string; width?: number; height?: number; members?: Member[] };
+    const furnitureDir = path.join(assets, 'furniture');
+    const members = new Set<string>();
+    for (const id of fs.readdirSync(furnitureDir)) {
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(furnitureDir, id, 'manifest.json'), 'utf8'),
+      ) as Member & { id: string; density?: number };
+      expect(manifest.density, `${id} density`).toBe(2);
+      const walk = (m: Member, fallbackFile?: string): void => {
+        if (m.members) {
+          m.members.forEach((child) => walk(child));
+          return;
+        }
+        const rel = `webview-ui/public/assets/furniture/${id}/${m.file ?? fallbackFile}`;
+        expect(generated.has(rel), `${rel} is generated`).toBe(true);
+        expect(size(rel), rel).toEqual([m.width! * 2, m.height! * 2]);
+        members.add(rel);
+      };
+      walk(manifest, `${manifest.id}.png`);
+    }
+    // No shipped furniture PNG escapes the check by missing from its manifest.
+    const onDisk = (fs.readdirSync(furnitureDir, { recursive: true }) as string[])
+      .filter((f) => f.endsWith('.png'))
+      .map((f) => `webview-ui/public/assets/furniture/${f.split(path.sep).join('/')}`);
+    expect([...members].sort()).toEqual(onDisk.sort());
+    const fixed: Array<[RegExp, number[]]> = [
+      [/^floors\/floor_\d+\.png$/, [32, 32]],
+      [/^walls\/wall_\d+\.png$/, [128, 256]],
+      [/^carpets\/carpet_\d+\.png$/, [128, 128]],
+      [/^pets\/[^/]+\/pet\.png$/, [192, 192]],
+    ];
+    for (const dir of ['floors', 'walls', 'carpets', 'pets']) {
+      const files = fs.readdirSync(path.join(assets, dir), { recursive: true }) as string[];
+      for (const f of files.filter((name) => name.endsWith('.png'))) {
+        const rel = `${dir}/${f.split(path.sep).join('/')}`;
+        const full = `webview-ui/public/assets/${rel}`;
+        expect(generated.has(full), `${full} is generated`).toBe(true);
+        expect(size(full), full).toEqual(fixed.find(([re]) => re.test(rel))![1]);
+      }
+    }
+  });
 });

@@ -1,5 +1,6 @@
 {
   "id": "WHITEBOARD",
+  "density": 2,
   "name": "Whiteboard",
   "category": "wall",
   "type": "asset",

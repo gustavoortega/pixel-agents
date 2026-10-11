@@ -1,5 +1,6 @@
 {
   "id": "HANGING_PLANT",
+  "density": 2,
   "name": "Hanging Plant",
   "category": "wall",
   "type": "asset",

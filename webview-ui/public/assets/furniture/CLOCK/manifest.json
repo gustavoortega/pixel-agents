@@ -1,5 +1,6 @@
 {
   "id": "CLOCK",
+  "density": 2,
   "name": "Clock",
   "category": "wall",
   "type": "asset",

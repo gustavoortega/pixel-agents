@@ -1,5 +1,6 @@
 {
   "id": "WOODEN_BENCH",
+  "density": 2,
   "name": "Wooden Bench",
   "category": "chairs",
   "type": "asset",
