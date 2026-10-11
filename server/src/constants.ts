@@ -50,7 +50,6 @@ export const GLOBAL_SCAN_ACTIVE_MAX_AGE_MS = 600_000; // 10 minutes
 // ── Display Truncation + Pixel Agents Server paths ──────────
 // Centralized in core/src/constants.ts; re-exported here for back-compat.
 export {
-  BASH_COMMAND_DISPLAY_MAX_LENGTH,
   HOOK_API_PREFIX,
   HOOK_SCRIPTS_DIR,
   SERVER_JSON_DIR,

@@ -257,5 +257,21 @@ describe('claudeProvider', () => {
     it('handles undefined input', () => {
       expect(claudeProvider.formatToolStatus('Read', undefined)).toBe('Reading ');
     });
+
+    // The status is broadcast to every client; arguments and env assignments
+    // carry secrets, so only the program name may leave the server.
+    it.each([
+      ['git status', 'git'],
+      ['GITHUB_TOKEN=ghp_secret gh pr list', 'gh'],
+      ['/usr/bin/curl -H "Authorization: Bearer abc" https://api.internal', 'curl'],
+      ['TOKEN="abc def" curl https://x', 'curl'],
+      ["PASS='a b' A=1 mysql -u root", 'mysql'],
+      ['KEY=$(cat ~/.secret) deploy', 'deploy'],
+      ['KEY="unterminated secret value', 'command'],
+      ['DEBUG=1;echo hunter2', 'command'],
+      ['PASS=my\\ secret cmd', 'cmd'],
+    ])('formats Bash %j as the program name only', (command, program) => {
+      expect(claudeProvider.formatToolStatus('Bash', { command })).toBe(`Running: ${program}`);
+    });
   });
 });

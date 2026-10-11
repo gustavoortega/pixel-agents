@@ -6,7 +6,6 @@
     "pngjs",
     "@types/pngjs",
     "fastify",
-    "@fastify/cors",
     "@fastify/static",
     "@fastify/websocket"
   ],
