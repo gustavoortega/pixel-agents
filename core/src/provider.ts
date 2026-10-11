@@ -21,8 +21,16 @@ export type AgentEvent =
        *  `run_in_background` on Agent/Task). Handlers use this to suppress ghost
        *  sub-agent characters for teammate spawns. */
       runInBackground?: boolean;
+      /** True when this tool call is a shell command that ships work (a commit or
+       *  a PR creation). The provider decides; the command text stays inside it. */
+      ships?: boolean;
     }
-  | { kind: 'toolEnd'; toolId: string }
+  | {
+      kind: 'toolEnd';
+      toolId: string;
+      /** True when the tool failed (Claude's PostToolUseFailure). Absent = succeeded. */
+      failed?: boolean;
+    }
   | {
       kind: 'turnEnd';
       /** True when the turn ended because the agent went idle waiting on the

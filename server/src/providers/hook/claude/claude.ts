@@ -8,6 +8,7 @@ import {
   SESSION_TITLE_MAX_LENGTH,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
 } from '../../../constants.js';
+import { isShipCommand } from '../../../xp.js';
 import {
   areHooksInstalled as installerAreHooksInstalled,
   installHooks as installerInstallHooks,
@@ -161,13 +162,21 @@ function normalizeHookEvent(
           toolName,
           input: toolInput,
           runInBackground: toolInput.run_in_background === true,
+          // Only the verdict leaves this file: the command text never rides the event.
+          ...(toolName === 'Bash' &&
+          typeof toolInput.command === 'string' &&
+          isShipCommand(toolInput.command)
+            ? { ships: true }
+            : {}),
         },
       };
     }
 
     case 'PostToolUse':
-    case 'PostToolUseFailure':
       return { sessionId, event: { kind: 'toolEnd', toolId: 'current' } };
+
+    case 'PostToolUseFailure':
+      return { sessionId, event: { kind: 'toolEnd', toolId: 'current', failed: true } };
 
     case 'Stop':
       return { sessionId, event: { kind: 'turnEnd' } };

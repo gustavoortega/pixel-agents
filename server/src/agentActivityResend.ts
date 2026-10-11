@@ -1,4 +1,5 @@
 import type { AgentStateStore } from './agentStateStore.js';
+import { rosterMessage } from './rosterAgent.js';
 import { derivedTitle } from './sessionTitle.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 import { tripwireResendMessage } from './tripwires.js';
@@ -14,6 +15,7 @@ import { tripwireResendMessage } from './tripwires.js';
  * 5. Context usage
  * 6. Session title
  * 7. Tripwire alarm
+ * 8. Roster member (only for agents that hold one; mood depends on the alarm, so it follows it)
  */
 export function resendAgentActivity(
   send: (message: Record<string, unknown>) => void,
@@ -96,5 +98,9 @@ export function resendAgentActivity(
     // 7. Tripwire alarm, or a clear for agents without one: a client that was offline
     // during an ack would otherwise keep an alarm the user already dismissed.
     send(tripwireResendMessage(agent));
+
+    // 8. Roster member. Not resent as a clear: an agent without a member simply has none.
+    const roster = rosterMessage(agent, store);
+    if (roster) send(roster);
   }
 }

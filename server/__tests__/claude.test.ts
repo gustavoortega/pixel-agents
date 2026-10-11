@@ -79,20 +79,33 @@ describe('claudeProvider', () => {
       }
     });
 
-    it('normalizes PostToolUse to toolEnd with sentinel toolId', () => {
-      const result = claudeProvider.normalizeHookEvent({
+    it('normalizes PostToolUse to a successful toolEnd and PostToolUseFailure to a failed one', () => {
+      const ok = claudeProvider.normalizeHookEvent({
         hook_event_name: 'PostToolUse',
         session_id: 'sess-1',
       });
-      expect(result?.event.kind).toBe('toolEnd');
-    });
-
-    it('normalizes PostToolUseFailure to toolEnd (same as PostToolUse)', () => {
-      const result = claudeProvider.normalizeHookEvent({
+      const failed = claudeProvider.normalizeHookEvent({
         hook_event_name: 'PostToolUseFailure',
         session_id: 'sess-1',
       });
-      expect(result?.event.kind).toBe('toolEnd');
+      expect(ok?.event).toEqual({ kind: 'toolEnd', toolId: 'current' });
+      expect(failed?.event).toEqual({ kind: 'toolEnd', toolId: 'current', failed: true });
+    });
+
+    it('flags a Bash commit or PR creation as shipping', () => {
+      const ships = (tool_name: string, command: string) => {
+        const result = claudeProvider.normalizeHookEvent({
+          hook_event_name: 'PreToolUse',
+          session_id: 'sess-1',
+          tool_name,
+          tool_input: { command },
+        });
+        return result?.event.kind === 'toolStart' ? result.event : undefined;
+      };
+      expect(ships('Bash', 'git commit -m x')?.ships).toBe(true);
+      expect(ships('Bash', 'git status')?.ships).toBeUndefined();
+      // Only the Bash tool's command is a shell command.
+      expect(ships('Read', 'git commit -m x')?.ships).toBeUndefined();
     });
 
     it('normalizes Stop to turnEnd without awaitingInput (Done, not waiting)', () => {

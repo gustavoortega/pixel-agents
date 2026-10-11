@@ -105,6 +105,9 @@ components:
         # Tripwires
         - $ref: '#/components/schemas/AgentTripwire'
         - $ref: '#/components/schemas/AgentTripwireClear'
+        # Roster + XP
+        - $ref: '#/components/schemas/AgentRoster'
+        - $ref: '#/components/schemas/RosterEvent'
         # Layout
         - $ref: '#/components/schemas/LayoutLoaded'
         # Assets
@@ -513,6 +516,75 @@ components:
           const: agentTripwireClear
         id:
           type: integer
+
+    RosterMood:
+      description: |
+        Derived from the member's state, never stored: `alarmed` while a tripwire is set,
+        else `frustrated` after 3 failed tools in a row, else `happy` on a streak of 3
+        clean tool turns, else `neutral`.
+      type: string
+      enum: [alarmed, frustrated, happy, neutral]
+
+    AgentRoster:
+      description: |
+        The roster member this agent plays: a persistent identity whose XP and look
+        survive restarts. Sent when the member is claimed, whenever XP, streak or mood
+        change, and on reconnect for every agent that holds one. `xp` is the XP earned
+        inside the current `level` and `xpToNext` is the whole span of that level, so
+        the bar fraction is `xp / xpToNext`. Counts only: no titles, commands or paths.
+      type: object
+      additionalProperties: false
+      required: [type, id, memberId, name, level, xp, xpToNext, streak, mood]
+      properties:
+        type:
+          const: agentRoster
+        id:
+          type: integer
+        memberId:
+          type: string
+          maxLength: 32
+        name:
+          type: string
+          maxLength: 40
+        level:
+          type: integer
+          minimum: 1
+        xp:
+          type: integer
+          minimum: 0
+        xpToNext:
+          type: integer
+          minimum: 1
+        streak:
+          type: integer
+          minimum: 0
+        mood:
+          $ref: '#/components/schemas/RosterMood'
+
+    RosterEventKind:
+      type: string
+      enum: [xp, levelUp]
+
+    RosterEvent:
+      description: |
+        Transient hint for animations: this agent just earned `amount` XP (`xp`) or
+        reached `level` (`levelUp`). Not resent on reconnect.
+      type: object
+      additionalProperties: false
+      required: [type, id, kind]
+      properties:
+        type:
+          const: rosterEvent
+        id:
+          type: integer
+        kind:
+          $ref: '#/components/schemas/RosterEventKind'
+        amount:
+          type: integer
+          minimum: 1
+        level:
+          type: integer
+          minimum: 2
 
     LayoutLoaded:
       description: |

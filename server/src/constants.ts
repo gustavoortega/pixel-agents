@@ -98,6 +98,15 @@ export const LAYOUT_REVISION_KEY = 'layoutRevision';
 export const CONFIG_FILE_NAME = 'config.json';
 export const TRIPWIRES_FILE_NAME = 'tripwires.json';
 
+// ── Roster ─────────────────────────────────────────────────
+export const ROSTER_FILE_NAME = 'roster.json';
+/** XP and counters are batched; claims and releases write immediately. */
+export const ROSTER_FLUSH_DEBOUNCE_MS = 2000;
+export const ROSTER_LOCK_RETRIES = 20;
+export const ROSTER_LOCK_RETRY_MS = 50;
+/** Only an unreadable lockfile is broken by age; a readable one is broken when its owner pid is dead. */
+export const ROSTER_LOCK_STALE_MS = 5000;
+
 // ── Avatar Customization ────────────────────────────────────
 /** Number of pre-colored bundled character palettes (char_0.png–char_5.png).
  *  Mirrors `PALETTE_COUNT` in webview-ui/src/constants.ts; kept separate

@@ -17,6 +17,7 @@ import { loadLayout } from '../../server/src/layoutPersistence.js';
 import { assignPaletteIfNeeded } from '../../server/src/paletteAssigner.js';
 import { CLAUDE_TERMINAL_NAME_PREFIX } from '../../server/src/providers/hook/claude/constants.js';
 import { claudeProvider } from '../../server/src/providers/index.js';
+import { claimRosterMember, withRosterLook } from '../../server/src/rosterAgent.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from '../../server/src/timerManager.js';
 import type { AgentState, PersistedAgent } from '../../server/src/types.js';
 
@@ -121,6 +122,7 @@ export async function launchNewTerminal(
     maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS,
   };
 
+  claimRosterMember(agent, agents);
   assignPaletteIfNeeded(agent, agents);
   agents.set(id, agent);
   activeAgentIdRef.current = id;
@@ -294,6 +296,7 @@ export function persistAgents(agents: AgentStateStore, adapter: StateAdapter): v
       teamUsesTmux: agent.teamUsesTmux,
       backgroundAgentToolIds:
         agent.backgroundAgentToolIds.size > 0 ? [...agent.backgroundAgentToolIds] : undefined,
+      rosterId: agent.rosterId,
     });
   }
   adapter.saveAgents(persisted);
@@ -393,8 +396,10 @@ export function restoreAgents(
       teamUsesTmux: p.teamUsesTmux,
       palette: p.palette,
       hueShift: p.hueShift,
+      rosterId: p.rosterId,
     };
 
+    claimRosterMember(agent, store);
     assignPaletteIfNeeded(agent, store);
     store.set(p.id, agent);
     knownJsonlFiles.add(p.jsonlFile);
@@ -535,7 +540,7 @@ export function sendExistingAgents(
   agentIds.sort((a, b) => a - b);
 
   // Include persisted palette/seatId from separate key
-  const agentMeta = adapter.loadSeats();
+  const agentMeta = withRosterLook(adapter.loadSeats(), agents);
 
   // Include folderName and isExternal per agent
   const folderNames: Record<number, string> = {};

@@ -12,6 +12,7 @@ import { test } from 'vitest';
 import {
   compactLabelMaxWidth,
   overlayContent,
+  shouldShowXpPop,
   showOverlay,
   statusGlyph,
 } from '../src/office/toolUtils.js';
@@ -95,4 +96,27 @@ test('showOverlay: sub-agents have no compact label but follow their parent', ()
   for (const [name, patch, expected] of cases) {
     assert.equal(showOverlay({ ...none, ...patch }), expected, name);
   }
+});
+
+test('overlayContent: the level badge rides the label line, and shows without a label', () => {
+  const base = { expanded: false, label: 'Fix login', subCount: 1, maxWidth: 184 };
+  assert.deepEqual(overlayContent({ ...base, level: 7 }), {
+    mode: 'compact',
+    lines: [{ kind: 'label', text: 'Fix login', suffix: ' +1', badge: 'Lv7' }],
+  });
+  assert.deepEqual(overlayContent({ ...base, label: null, subCount: 0, level: 1 }), {
+    mode: 'compact',
+    lines: [{ kind: 'label', text: '', suffix: '', badge: 'Lv1' }],
+  });
+});
+
+test('shouldShowXpPop: only a ship, a level-up or a big bonus, once per cooldown', () => {
+  const t = 1_000_000;
+  assert.equal(shouldShowXpPop({ kind: 'xp', amount: 85 }, undefined, t), false);
+  assert.equal(shouldShowXpPop({ kind: 'xp', amount: 15 }, undefined, t), false);
+  assert.equal(shouldShowXpPop({ kind: 'xp', amount: 100 }, undefined, t), true); // ship
+  assert.equal(shouldShowXpPop({ kind: 'xp', amount: 105 }, undefined, t), true); // 3-streak bonus
+  assert.equal(shouldShowXpPop({ kind: 'levelUp' }, undefined, t), true);
+  assert.equal(shouldShowXpPop({ kind: 'levelUp' }, t - 9_999, t), false);
+  assert.equal(shouldShowXpPop({ kind: 'levelUp' }, t - 10_000, t), true);
 });

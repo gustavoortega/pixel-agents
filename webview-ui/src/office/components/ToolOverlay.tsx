@@ -153,6 +153,7 @@ function CompactLabel({
             className="flex whitespace-nowrap leading-none text-2xs"
             style={{ height: COMPACT_LABEL_LINE_HEIGHT_PX, textShadow: COMPACT_LABEL_TEXT_SHADOW }}
           >
+            {line.badge && <span className="shrink-0 pr-1">{line.badge}</span>}
             <span className="overflow-hidden text-ellipsis">{line.text}</span>
             {line.suffix && <span className="shrink-0">{line.suffix}</span>}
           </span>
@@ -254,6 +255,7 @@ export function ToolOverlay({
         label: agentLabel(officeState.sessionTitles.get(id), ch.folderName),
         subCount: subagentCharacters.filter((s) => s.parentAgentId === id).length,
         tripwire: officeState.tripwires.get(id),
+        level: officeState.rosters.get(id)?.level,
         maxWidth,
       });
       if (content.mode === 'full') continue;

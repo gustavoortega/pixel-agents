@@ -104,7 +104,46 @@ export function compactLabelMaxWidth(zoom: number, dpr: number): number {
 }
 
 export type OverlayLine =
-  { kind: 'label'; text: string; suffix: string } | { kind: 'tripwire'; text: string };
+  | { kind: 'label'; text: string; suffix: string; badge?: string }
+  | { kind: 'tripwire'; text: string };
+
+/** Compact level badge shown before the session label. */
+export function levelBadge(level: number): string {
+  return `Lv${level}`;
+}
+
+/** The roster member an agent plays, as last sent by the server. */
+export interface AgentRosterInfo {
+  memberId: string;
+  name: string;
+  level: number;
+  /** XP earned inside the current level; the bar fraction is xp / xpToNext. */
+  xp: number;
+  xpToNext: number;
+  streak: number;
+  mood: 'alarmed' | 'frustrated' | 'happy' | 'neutral';
+}
+
+export interface RosterEventInfo {
+  kind: 'xp' | 'levelUp';
+  amount?: number;
+}
+
+/** Amount at or above which an XP award is worth a "+N XP" pop: a ship is 100, a clean tool turn
+ *  with a 3-streak bonus is 105. Smaller awards only move the bar. */
+export const XP_POP_MIN_AMOUNT = 100;
+export const XP_POP_COOLDOWN_MS = 10_000;
+
+/** Show "+N XP" for a ship, a level-up or a big bonus, at most once per cooldown per agent. */
+export function shouldShowXpPop(
+  event: RosterEventInfo,
+  lastShownAt: number | undefined,
+  now: number,
+): boolean {
+  const worthy =
+    event.kind === 'levelUp' || (event.amount !== undefined && event.amount >= XP_POP_MIN_AMOUNT);
+  return worthy && (lastShownAt === undefined || now - lastShownAt >= XP_POP_COOLDOWN_MS);
+}
 
 export type OverlayContent =
   { mode: 'full' } | { mode: 'marker' } | { mode: 'compact'; lines: OverlayLine[] };
@@ -119,16 +158,19 @@ export function overlayContent(state: {
   label: string | null;
   subCount: number;
   tripwire?: { ruleName: string; count: number } | null;
+  /** Roster level; the badge shows even when the agent has no label. */
+  level?: number;
   maxWidth: number;
 }): OverlayContent {
   if (state.expanded) return { mode: 'full' };
   if (state.maxWidth < COMPACT_LABEL_MIN_WIDTH_PX) return { mode: 'marker' };
   const lines: OverlayLine[] = [];
-  if (state.label) {
+  if (state.label || state.level !== undefined) {
     lines.push({
       kind: 'label',
-      text: state.label,
+      text: state.label ?? '',
       suffix: state.subCount > 0 ? ` +${state.subCount}` : '',
+      ...(state.level !== undefined ? { badge: levelBadge(state.level) } : {}),
     });
   }
   if (state.tripwire) {
