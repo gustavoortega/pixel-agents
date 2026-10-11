@@ -1,6 +1,6 @@
 /**
- * A repeated palette hue-shifts hair and outfit, never skin: the bundled sheets wear a fixed
- * 5-tone ramp and a shifted skin would turn green.
+ * A repeated palette hue-shifts hair and outfit, never skin: a shifted skin would turn green.
+ * Which locked colors each sheet may wear is the generator's contract (cozyAssets.test.ts).
  */
 import * as path from 'path';
 import { expect, test } from 'vitest';
@@ -12,25 +12,22 @@ import { Direction } from '../src/office/types.js';
 
 const sheets = decodeAllCharacters(path.resolve(__dirname, '..', 'public', 'assets'));
 
-test('every bundled sheet has exactly one skin tone and its mouth shade in HUE_LOCKED', () => {
-  expect(sheets).toHaveLength(12);
-  for (const [n, sheet] of sheets.entries()) {
-    const skin = new Set(sheet.down[1].flat().filter((px) => HUE_LOCKED.has(px)));
-    expect(skin.size, `char_${n}`).toBe(2);
-  }
-});
-
 test('hue shift changes hair and outfit but leaves every HUE_LOCKED pixel unchanged', () => {
-  // The bundled sheets wear only some locked colors; a row of every one of them under the walk
-  // frame makes the whole set reach the hue shift, whatever the art uses today.
+  // Each sheet wears only its own tone's locked colors; rows holding every one of them under the
+  // walk frame make the whole set reach the hue shift, whatever the art uses today.
   const locked = [...HUE_LOCKED];
-  const withLockedRow = sheets.map((sheet) => ({
+  const withLockedRows = sheets.map((sheet) => ({
     ...sheet,
-    down: sheet.down.map((frame, i) =>
-      i === 1 ? [...frame, frame[0].map((_, x) => locked[x % locked.length])] : frame,
-    ),
+    down: sheet.down.map((frame, i) => {
+      if (i !== 1) return frame;
+      const w = frame[0].length;
+      const extra = Array.from({ length: Math.ceil(locked.length / w) }, (_, r) =>
+        Array.from({ length: w }, (_, x) => locked[(r * w + x) % locked.length]),
+      );
+      return [...frame, ...extra];
+    }),
   }));
-  setCharacterTemplates(withLockedRow);
+  setCharacterTemplates(withLockedRows);
   for (let n = 0; n < sheets.length; n++) {
     const base = getCharacterSprites(n, 0).walk[Direction.DOWN][1];
     const shifted = getCharacterSprites(n, 120).walk[Direction.DOWN][1];

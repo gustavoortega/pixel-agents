@@ -1,5 +1,6 @@
 import {
   DEFAULT_MAX_CONTEXT_TOKENS,
+  NAP_BREATH_SEC,
   POSE_SETTLE_SEC,
   POSE_TICK_SEC,
   READING_PAGE_TURN_SEC,
@@ -378,11 +379,19 @@ export type SheetAnimation =
 const WALK_SHEET_FRAMES = [0, 1, 2, 1] as const;
 const TYPING_SHEET_FRAMES = [3, 4] as const;
 const READING_SHEET_FRAMES = [5, 6] as const;
-/** The idle row, appended to `down`: sit-idle, head-down, page-turn A, page-turn B. */
-const IDLE_SHEET_FRAMES = [7, 8, 9, 10] as const;
+/** The idle row, appended to `down`: sit-idle, head-down, page-turn A, page-turn B, head-down
+ *  breathing in, sip. */
+const IDLE_SHEET_FRAMES = [7, 8, 9, 10, 11, 12] as const;
 const IDLE_SIT = 0;
 const IDLE_NAP = 1;
 const IDLE_PAGE_A = 2;
+const IDLE_NAP_BREATH = 4;
+const IDLE_SIP = 5;
+
+/** Which of the two nap frames is up: head-down and breathing in, swapped every NAP_BREATH_SEC. */
+function napFrame(ch: Pick<Character, 'poseClockSec'>): number {
+  return Math.floor(ch.poseClockSec / NAP_BREATH_SEC) % 2 === 0 ? IDLE_NAP : IDLE_NAP_BREATH;
+}
 
 /** Which page-turn frame (0 or 1) of the reading pose is up: it flips every READING_PAGE_TURN_SEC. */
 export function readingPage(ch: Pick<Character, 'poseClockSec'>): number {
@@ -398,10 +407,11 @@ export function characterAnimation(ch: Character): SheetAnimation {
       const front = ch.dir === Direction.DOWN;
       switch (ch.pose) {
         case IdlePose.WAIT_BUBBLE:
-        case IdlePose.COFFEE:
           return front ? { set: 'idle', index: IDLE_SIT } : { set: 'typing', index: 0 };
+        case IdlePose.COFFEE:
+          return front ? { set: 'idle', index: IDLE_SIP } : { set: 'typing', index: 0 };
         case IdlePose.NAPPING:
-          return front ? { set: 'idle', index: IDLE_NAP } : { set: 'typing', index: 0 };
+          return front ? { set: 'idle', index: napFrame(ch) } : { set: 'typing', index: 0 };
         case IdlePose.READING: {
           const page = readingPage(ch);
           return front
@@ -422,7 +432,7 @@ export function characterAnimation(ch: Character): SheetAnimation {
   }
 }
 
-/** Frame of the character sheet currently drawn (0-6, and 7-10 for the idle row); equipment bobs with it. */
+/** Frame of the character sheet currently drawn (0-6, and 7-12 for the idle row); equipment bobs with it. */
 export function sheetFrameIndex(ch: Character): number {
   const anim = characterAnimation(ch);
   switch (anim.set) {

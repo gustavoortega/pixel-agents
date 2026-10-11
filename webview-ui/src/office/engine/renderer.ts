@@ -1,3 +1,4 @@
+import { CHAR_FRAME_H, CHAR_FRAME_W } from '../../../../core/src/assets/constants.js';
 import type { ModelTier } from '../../../../core/src/provider.js';
 import type { ColorValue } from '../../components/ui/types.js';
 import {
@@ -46,9 +47,6 @@ import {
   IDLE_GLYPH_SHADOW_COLOR,
   MONITOR_ON_TYPE_PREFIX,
   MONITOR_SCREEN_RECT,
-  NAP_ZZ_CELL_PX,
-  NAP_ZZ_PERIOD_MS,
-  NAP_ZZ_RISE_CELLS,
   ROTATE_BUTTON_BG,
   SEAT_AVAILABLE_COLOR,
   SEAT_BUSY_COLOR,
@@ -73,7 +71,13 @@ import {
 import type { Companion } from '../flair/companion.js';
 import { companionHoverOffsetPx, getCompanionSprite } from '../flair/companion.js';
 import type { DeskPropKind } from '../flair/deskProps.js';
-import { bookPlacement, mugPlacement } from '../flair/idleProps.js';
+import type { PropPlacement } from '../flair/idleProps.js';
+import {
+  bookPlacement,
+  mugPlacement,
+  napZzPlacements,
+  steamPlacement,
+} from '../flair/idleProps.js';
 import { characterFlair, characterOutline } from '../flair/modelFlair.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
 import { type FxRenderState, renderFx } from '../fx/fxRender.js';
@@ -670,16 +674,18 @@ export function renderScene(
     // What an idle agent holds: the book while reading, the mug on the sofa. Over the body, so the
     // desk or sofa front that sorts in front of the agent still hides whatever sinks behind it.
     if (ch.state === CharacterState.TYPE && ch.dir === Direction.DOWN) {
-      const held =
+      const held: PropPlacement[] =
         ch.pose === IdlePose.READING
-          ? bookPlacement(readingPage(ch), sheetFrameIndex(ch))
+          ? [bookPlacement(readingPage(ch), sheetFrameIndex(ch), ch.id)]
           : ch.pose === IdlePose.COFFEE
-            ? mugPlacement()
-            : null;
-      if (held) {
-        const heldCached = getCachedSprite(held.sprite, zoom);
-        const hx = drawX + Math.round(held.dx * zoom);
-        const hy = drawY + Math.round(held.dy * zoom);
+            ? [mugPlacement(ch.id), steamPlacement(ch.poseClockSec)].filter(
+                (p): p is PropPlacement => p !== null,
+              )
+            : [];
+      for (const prop of held) {
+        const heldCached = getCachedSprite(prop.sprite, zoom);
+        const hx = drawX + Math.round(prop.dx * zoom);
+        const hy = drawY + Math.round(prop.dy * zoom);
         drawables.push({
           zY: charZY + ACCESSORY_FRONT_Z_OFFSET,
           draw: (c) => {
@@ -1112,43 +1118,34 @@ function renderIdleGlyph(
 }
 
 /**
- * Napping "Zz": two z glyphs climbing from the head and fading out, a beat apart. Same 3x5 z as the
- * idle glyph, but moving: a napper is the one idle state worth a little motion.
+ * Napping "Zz": the zz.json glyphs climbing from over the bowed head and fading, a small and a
+ * large one half a cycle apart (napZzPlacements). Placed from the sprite's top-left like the other
+ * idle props, so it follows the seat sink.
  */
 function renderNapZz(
   ctx: CanvasRenderingContext2D,
-  centerX: number,
-  bottomY: number,
+  ch: Character,
+  offsetX: number,
+  offsetY: number,
   zoom: number,
   nowMs: number,
 ): void {
-  const cell = Math.max(1, Math.round(zoom * NAP_ZZ_CELL_PX));
-  const rows: Array<[number, number]> = [
-    [0, 3],
-    [2, 1],
-    [1, 1],
-    [0, 1],
-    [0, 3],
-  ];
+  const { drawX, drawY } = characterDrawOrigin(
+    ch,
+    CHAR_FRAME_W * zoom,
+    CHAR_FRAME_H * zoom,
+    offsetX,
+    offsetY,
+    zoom,
+  );
   ctx.save();
-  for (const [phase, dx] of [
-    [0, 0],
-    [0.5, 4],
-  ] as const) {
-    const t = (nowMs / NAP_ZZ_PERIOD_MS + phase) % 1;
-    const rise = Math.round(t * NAP_ZZ_RISE_CELLS * cell);
-    const left = Math.round(centerX) + (dx - 1) * cell;
-    const top = Math.round(bottomY) - 5 * cell - rise;
-    ctx.globalAlpha = 1 - t * t;
-    for (const [color, sh] of [
-      [IDLE_GLYPH_SHADOW_COLOR, 1],
-      [IDLE_GLYPH_COLOR, 0],
-    ] as const) {
-      ctx.fillStyle = color;
-      rows.forEach(([start, width], r) => {
-        ctx.fillRect(left + start * cell + sh, top + r * cell + sh, width * cell, cell);
-      });
-    }
+  for (const glyph of napZzPlacements(nowMs)) {
+    ctx.globalAlpha = glyph.alpha;
+    ctx.drawImage(
+      getCachedSprite(glyph.sprite, zoom),
+      drawX + Math.round(glyph.dx * zoom),
+      drawY + Math.round(glyph.dy * zoom),
+    );
   }
   ctx.restore();
 }
@@ -1207,7 +1204,7 @@ function renderBubbles(
     // Shares the above-head slot with bubbles and the beacon; statusGlyph yields to both.
     if (statusGlyph(ch, !!tripwire)) {
       if (ch.pose === IdlePose.NAPPING && ch.state === CharacterState.TYPE) {
-        renderNapZz(ctx, offsetX + ch.x * zoom, topY, zoom, nowMs);
+        renderNapZz(ctx, ch, offsetX, offsetY, zoom, nowMs);
       } else {
         renderIdleGlyph(ctx, offsetX + ch.x * zoom, topY, zoom);
       }

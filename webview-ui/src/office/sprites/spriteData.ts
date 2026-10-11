@@ -65,13 +65,16 @@ function flipSpriteHorizontal(sprite: SpriteData): SpriteData {
 // Sprite resolution + caching
 // ════════════════════════════════════════════════════════════════
 
+type IdleFrames = [SpriteData, SpriteData, SpriteData, SpriteData, SpriteData, SpriteData];
+
 export interface CharacterSprites {
   walk: Record<Direction, [SpriteData, SpriteData, SpriteData, SpriteData]>;
   typing: Record<Direction, [SpriteData, SpriteData]>;
   reading: Record<Direction, [SpriteData, SpriteData]>;
-  /** Front-view idle poses (sheet row 3, `down` frames 7..10): sit-idle, head-down (nap),
-   *  page-turn A, page-turn B. A sheet without the row falls back to the typing frames. */
-  idle: [SpriteData, SpriteData, SpriteData, SpriteData];
+  /** Front-view idle poses (sheet row 3, `down` frames 7..12): sit-idle, head-down (nap),
+   *  page-turn A, page-turn B, head-down breathing in, sip. A sheet without the row falls back to
+   *  the typing frames; one without the last two poses repeats the nap and the sit. */
+  idle: IdleFrames;
 }
 
 const spriteCache = new Map<string, CharacterSprites>();
@@ -112,12 +115,7 @@ function mapCharacterSprites(
       [Dir.RIGHT]: shiftPair(sprites.reading[Dir.RIGHT]),
       [Dir.LEFT]: shiftPair(sprites.reading[Dir.LEFT]),
     } as Record<Direction, [SpriteData, SpriteData]>,
-    idle: [
-      shift(sprites.idle[0]),
-      shift(sprites.idle[1]),
-      shift(sprites.idle[2]),
-      shift(sprites.idle[3]),
-    ],
+    idle: sprites.idle.map(shift) as unknown as IdleFrames,
   };
 }
 
@@ -180,7 +178,14 @@ export function getCharacterSprites(
         [Dir.RIGHT]: [rt[5], rt[6]],
         [Dir.LEFT]: [flip(rt[5]), flip(rt[6])],
       },
-      idle: [d[7] ?? d[3], d[8] ?? d[3], d[9] ?? d[5], d[10] ?? d[6]],
+      idle: [
+        d[7] ?? d[3],
+        d[8] ?? d[3],
+        d[9] ?? d[5],
+        d[10] ?? d[6],
+        d[11] ?? d[8] ?? d[3],
+        d[12] ?? d[7] ?? d[3],
+      ],
     };
   } else {
     // Fallback: transparent placeholders of one frame's size
@@ -206,7 +211,7 @@ export function getCharacterSprites(
         [Dir.RIGHT]: pairSet,
         [Dir.LEFT]: pairSet,
       },
-      idle: [e, e, e, e],
+      idle: [e, e, e, e, e, e],
     };
   }
 

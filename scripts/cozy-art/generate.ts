@@ -7,6 +7,7 @@ import { buildCharacterSheet, CHAR_LOOKS, computeAnchors, validateMaps } from '.
 import { buildDecor } from './decor';
 import type { SpriteSet } from './furniture';
 import { buildChairs, buildDesks, buildPcs } from './furniture';
+import { buildFlair, FLAIR_DIR, formatFlairJson } from './flair';
 import { buildPets } from './pets';
 import { encodePng } from './png';
 import { buildCarpets, buildFloors, buildWalls } from './tiles';
@@ -42,5 +43,8 @@ export function buildAssets(): FileMap {
   }
 
   files.set(ANCHORS_PATH, Buffer.from(JSON.stringify(computeAnchors(), null, 2) + '\n', 'utf8'));
+  for (const [name, json] of Object.entries(buildFlair())) {
+    files.set(`${FLAIR_DIR}/${name}`, Buffer.from(formatFlairJson(json), 'utf8'));
+  }
   return files;
 }

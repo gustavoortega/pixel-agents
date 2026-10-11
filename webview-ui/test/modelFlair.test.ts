@@ -11,6 +11,7 @@ import {
   CAPE_OVER_Z_OFFSET,
   CHARACTER_SITTING_OFFSET_PX,
   HOVERED_OUTLINE_ALPHA,
+  NAP_BREATH_SEC,
   OUTLINE_Z_SORT_OFFSET,
   RARITY_COLORS,
   SELECTED_OUTLINE_ALPHA,
@@ -34,7 +35,7 @@ import { getTintedOutlineSprite } from '../src/office/sprites/outlineSprites.js'
 import { getCharacterSprites, setCharacterTemplates } from '../src/office/sprites/spriteData.js';
 import { setProviderCapabilities } from '../src/office/toolUtils.js';
 import type { Character, SpriteData } from '../src/office/types.js';
-import { CharacterState, Direction } from '../src/office/types.js';
+import { CharacterState, Direction, IdlePose } from '../src/office/types.js';
 
 describe('modelFlair', () => {
   it.each([
@@ -146,8 +147,9 @@ describe('accessoryPlacement', () => {
     const neutral = accessoryPlacement(AccessoryKind.CAPE, Direction.DOWN, 1, undefined);
     const crown = accessoryPlacement(AccessoryKind.CROWN, Direction.DOWN, napFrame, undefined);
     const crownNeutral = accessoryPlacement(AccessoryKind.CROWN, Direction.DOWN, 1, undefined);
-    expect(crown.dy - crownNeutral.dy).toBe(6); // the head is 6 rows lower
-    expect(cape.dy - neutral.dy).toBe(2); // the first visible shoulder row is 2 lower
+    // HD art: the bowed head is 4.5 world px lower, the first visible shoulder row 2.5
+    expect(crown.dy - crownNeutral.dy).toBe(4.5);
+    expect(cape.dy - neutral.dy).toBe(2.5);
   });
 });
 
@@ -214,6 +216,28 @@ describe('sheetFrameIndex', () => {
     [CharacterState.TYPE, 1, 'Read', 6],
   ] as const)('%s frame %i tool %s -> sheet frame %i', (state, frameNo, tool, expected) => {
     expect(sheetFrameIndex(makeChar({ state, frame: frameNo, currentTool: tool }))).toBe(expected);
+  });
+
+  it.each([
+    [IdlePose.WAIT_BUBBLE, 0, 7], // sit
+    [IdlePose.COFFEE, 0, 12], // sip
+    [IdlePose.NAPPING, 0, 8], // head down
+    [IdlePose.NAPPING, NAP_BREATH_SEC, 11], // breathing in
+    [IdlePose.NAPPING, 2 * NAP_BREATH_SEC, 8], // and back, on a slow loop
+  ] as const)('front-facing %s at %fs -> idle sheet frame %i', (pose, poseClockSec, expected) => {
+    const ch = makeChar({ state: CharacterState.TYPE, pose, poseClockSec });
+    expect(sheetFrameIndex(ch)).toBe(expected);
+  });
+
+  it('falls back to head-down and sit on a sheet drawn before the breathing and sip poses', () => {
+    const fourIdle = Array.from({ length: 11 }, (_, i) => frame(`d${i}`));
+    const seven = (tag: string) => Array.from({ length: 7 }, (_, i) => frame(`${tag}${i}`));
+    setCharacterTemplates([{ down: fourIdle, up: seven('u'), right: seven('r') }]);
+    const sprites = getCharacterSprites(0, 0);
+    const at = (pose: IdlePose, poseClockSec: number) =>
+      getCharacterSprite(makeChar({ state: CharacterState.TYPE, pose, poseClockSec }), sprites);
+    expect(at(IdlePose.NAPPING, NAP_BREATH_SEC)).toBe(fourIdle[8]);
+    expect(at(IdlePose.COFFEE, 0)).toBe(fourIdle[7]);
   });
 });
 

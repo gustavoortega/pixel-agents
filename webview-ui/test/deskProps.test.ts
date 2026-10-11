@@ -57,6 +57,18 @@ describe('deskSlots', () => {
     });
     expect(slots).toEqual([{ col: 4, row: 3 }]);
   });
+
+  it('never offers the cell in front of a face-on seat (layout v7 pod: seat beside the PC)', () => {
+    // Seat at (4, 3) faces down over the desk; the PC sits one column to its right.
+    const slots = deskSlots({
+      pc,
+      across,
+      deskTiles: desk([3, 4, 5, 6]),
+      electronicsTiles: new Set(['5,3']),
+      seat: { col: 4, row: 3 },
+    });
+    expect(slots).toEqual([{ col: 3, row: 3 }]);
+  });
 });
 
 describe('propPlacements', () => {

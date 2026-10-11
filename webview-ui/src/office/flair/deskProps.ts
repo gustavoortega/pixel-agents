@@ -130,8 +130,10 @@ export function deskSlots(input: {
   electronicsTiles: ReadonlySet<string>;
   /** Cells already spoken for, such as another agent's companion cell. */
   blocked?: ReadonlySet<string>;
+  /** The agent's seat: a prop in its line of sight would be drawn over the agent. */
+  seat?: Tile;
 }): Tile[] {
-  const { pc, across, deskTiles, electronicsTiles, blocked } = input;
+  const { pc, across, deskTiles, electronicsTiles, blocked, seat } = input;
   const companion = companionDeskTile(pc);
   const out: Tile[] = [];
   for (let d = 1; d <= DESK_PROP_REACH_TILES; d++) {
@@ -140,6 +142,8 @@ export function deskSlots(input: {
       if (!deskTiles.has(key(t))) continue;
       if (electronicsTiles.has(key(t)) || key(t) === key(companion) || blocked?.has(key(t)))
         continue;
+      // Slots run along the desk, so the one cell in the seat's own line is right in front of it.
+      if (seat && (across.col !== 0 ? t.col === seat.col : t.row === seat.row)) continue;
       out.push(t);
     }
   }

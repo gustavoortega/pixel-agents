@@ -34,10 +34,15 @@ export const COFFEE_COOLDOWN_SEC = 600;
 export const SOFA_MAX_OCCUPANTS = 2;
 /** Seconds one page of the book stays up before the page-turn frame swaps. */
 export const READING_PAGE_TURN_SEC = 2.5;
-/** Rising "Zz" of a napping agent: one cycle, and how many glyph rows it climbs (cells at zoom 1). */
+/** Rising "Zz" of a napping agent: one cycle, and how far (world px) a glyph climbs and drifts
+ *  right over it before it has faded out. */
 export const NAP_ZZ_PERIOD_MS = 2400;
-export const NAP_ZZ_RISE_CELLS = 5;
-export const NAP_ZZ_CELL_PX = 1;
+export const NAP_ZZ_RISE_PX = 8;
+export const NAP_ZZ_DRIFT_PX = 3;
+/** A napper swaps head-down and head-down breathing in this often: slow, like sleep. */
+export const NAP_BREATH_SEC = 1.8;
+/** One frame of the mug's steam loop. */
+export const IDLE_PROP_STEAM_FRAME_SEC = 0.35;
 
 // ── Matrix Effect ────────────────────────────────────────────
 export const MATRIX_EFFECT_DURATION_SEC = 0.3;

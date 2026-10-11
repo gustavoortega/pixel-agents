@@ -6,6 +6,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { ART_DENSITY, CHAR_FRAME_H, CHAR_FRAME_W } from '../../core/src/assets/constants.js';
 import { decodeCharacterPng } from '../../core/src/assets/pngDecoder.js';
+import { EYE_COLORS, HUE_LOCKED, SKIN_RAMPS } from '../../core/src/assets/skinTones.js';
+import { CHAR_LOOKS, paletteFor } from '../../scripts/cozy-art/characters.js';
 import { buildAssets } from '../../scripts/cozy-art/generate.js';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -47,54 +49,59 @@ describe('cozy art pack', () => {
     }
   });
 
-  it('writes char_0..11 as 112x128 sheets whose 25 frames (21 + the 4-frame idle row) all decode non-empty', () => {
+  it('writes char_0..11 as 224x256 HD sheets whose 27 frames (21 + the 6-frame idle row) all hold a figure', () => {
     for (let i = 0; i < 12; i++) {
       const buf = fs.readFileSync(
         path.join(runA, `webview-ui/public/assets/characters/char_${i}.png`),
       );
       const png = PNG.sync.read(buf);
-      expect([png.width, png.height], `char_${i} size`).toEqual([112, 128]);
+      // Density 2: twice the 112x128 legacy sheet.
+      expect([png.width, png.height], `char_${i} size`).toEqual([224, 256]);
+      // Nothing semi-transparent: the engine draws the shadow, the sheet never bakes one.
+      const alphas = new Set<number>();
+      for (let k = 3; k < png.data.length; k += 4) alphas.add(png.data[k]);
+      expect(
+        [...alphas].sort((a, b) => a - b),
+        `char_${i} alpha levels`,
+      ).toEqual([0, 255]);
       const sheet = decodeCharacterPng(buf);
       for (const dir of ['down', 'up', 'right'] as const) {
-        // The idle row is decoded as frames 7..10 of `down`.
-        expect(sheet[dir]).toHaveLength(dir === 'down' ? 11 : 7);
+        expect(sheet[dir]).toHaveLength(dir === 'down' ? 13 : 7);
         sheet[dir].forEach((frame, f) => {
-          // Decoded frames are art px: the 1x sheet comes back upscaled to ART_DENSITY.
+          // Decoded frames are art px, read straight off the 2x sheet.
           expect(frame).toHaveLength(CHAR_FRAME_H * ART_DENSITY);
           expect(frame[0]).toHaveLength(CHAR_FRAME_W * ART_DENSITY);
           const opaque = frame.flat().filter((px) => px !== '').length;
-          expect(opaque, `char_${i} ${dir} frame ${f}`).toBeGreaterThan(40);
+          expect(opaque, `char_${i} ${dir} frame ${f}`).toBeGreaterThan(400);
         });
       }
     }
   });
 
-  it('gives sheet n the skin tone n mod 5 and a distinct hair and outfit', () => {
-    // The runtime never hue-shifts skin, so the ramp is fixed per sheet.
-    const rgb = [
-      [246, 217, 184],
-      [242, 201, 160],
-      [201, 141, 94],
-      [141, 90, 59],
-      [90, 58, 40],
-    ];
-    const ramp = rgb.map(
-      (c) =>
-        '#' +
-        c
-          .map((v) => v.toString(16).padStart(2, '0'))
-          .join('')
-          .toUpperCase(),
-    );
+  it("paints skin only from sheet n's tone (n mod 5) and keeps every other color out of the hue lock", () => {
+    // The runtime skips HUE_LOCKED pixels when it hue-shifts a repeated palette: a skin pixel outside
+    // the set would turn green, an outfit pixel inside it would never shift.
     const looks = new Set<string>();
     for (let n = 0; n < 12; n++) {
+      const tone = SKIN_RAMPS[n % 5];
+      const allowed = new Set([...Object.values(tone), ...Object.values(EYE_COLORS)]);
       const sheet = decodeCharacterPng(
         fs.readFileSync(path.join(runA, `webview-ui/public/assets/characters/char_${n}.png`)),
       );
-      const colors = new Set(sheet.down[1].flat().filter((px) => px !== ''));
-      for (const [i, tone] of ramp.entries()) {
-        expect(colors.has(tone), `char_${n} skin tone ${tone}`).toBe(i === n % 5);
+      const colors = new Set(
+        [...sheet.down, ...sheet.up, ...sheet.right].flatMap((f) => f.flat()).filter((px) => px),
+      );
+      expect(colors.has(tone.base), `char_${n} wears tone ${tone.base}`).toBe(true);
+      for (const c of colors) {
+        if (HUE_LOCKED.has(c)) expect(allowed.has(c), `char_${n} locked color ${c}`).toBe(true);
       }
+      // Palette entries the frames may not use yet obey the same rule.
+      const locked = Object.values(paletteFor(CHAR_LOOKS[n]))
+        .map((c) => c.toUpperCase())
+        .filter((c) => HUE_LOCKED.has(c));
+      expect(new Set(locked), `char_${n} palette`).toEqual(allowed);
+      // One palette key per locked color: an outfit or hair key equal to this tone's skin also fails.
+      expect(locked, `char_${n} palette keys on locked colors`).toHaveLength(allowed.size);
       // Hair and outfit are the sheet's non-skin, non-shared colors: the whole palette identifies the look.
       looks.add([...colors].sort().join());
     }
@@ -152,7 +159,7 @@ describe('cozy art pack', () => {
     expect(isolated, 'accent pixels with no accent neighbour (weave dots)').toBe(0);
   });
 
-  it('anchors.json head rows match the generated frames', () => {
+  it('anchors.json gives the head and shoulder rows of every frame in world px', () => {
     const anchors = JSON.parse(
       fs.readFileSync(path.join(runA, 'webview-ui/src/office/sprites/flair/anchors.json'), 'utf8'),
     ) as Record<
@@ -171,9 +178,89 @@ describe('cozy art pack', () => {
         // anchors are world px, frames art px
         expect(top / ART_DENSITY, `${dir} frame ${f}`).toBe(a.headTopY + a.bob[f]);
       });
-      expect(a.shoulderY).toBeGreaterThan(a.headTopY);
+      // Same landmarks as the 1x sheet, in world px: the engine's offsets keep lining up.
+      expect([a.headTopY, a.shoulderY], dir).toEqual([3, 15]);
     }
   });
+
+  it('resolves every flair pixel key in its palette, tier variants included', () => {
+    const dir = path.join(runA, 'webview-ui/src/office/sprites/flair');
+    const maps: Array<[string, string[][], Record<string, string>]> = [];
+    for (const name of fs.readdirSync(dir).filter((f) => f !== 'anchors.json')) {
+      const j = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+      const pals = [
+        j.palette,
+        ...Object.values(j.variants ?? {}),
+        ...(j.book ? [...j.book.covers, ...j.mug.bodies] : []),
+      ].map((v) => ({
+        ...j.palette,
+        ...(v as Record<string, string>),
+      }));
+      const all: string[][][] = [
+        ...Object.values(j.directions ?? {}).map((d) => (d as { pixels: string[][] }).pixels),
+        ...(j.frames ? [...j.frames.idle, ...j.frames.move] : []),
+        ...(j.book ? [j.book.a, j.book.b, j.mug.pixels, ...j.steam.frames] : []),
+        ...(j.pixels ? [j.pixels] : []),
+        ...(j.small ? [j.small, j.large] : []),
+      ];
+      expect(all.length, name).toBeGreaterThan(0);
+      for (const px of all) for (const pal of pals) maps.push([name, px, pal]);
+    }
+    for (const [name, px, pal] of maps) {
+      const missing = new Set(px.flat().filter((k) => !(k in pal)));
+      expect([...missing], name).toEqual([]);
+    }
+  });
+
+  describe('idle props read at a glance', () => {
+    const props = JSON.parse(
+      fs.readFileSync(
+        path.join(runA, 'webview-ui/src/office/sprites/flair/idle-props.json'),
+        'utf8',
+      ),
+    );
+    const resolve = (px: string[][]) => px.map((row) => row.map((k) => props.palette[k] ?? ''));
+    const isGray = (c: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+      return Math.max(r, g, b) - Math.min(r, g, b) < 24 && r < 200;
+    };
+    const isCream = (c: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+      return r > 230 && g > 215 && b > 180 && r >= b;
+    };
+
+    it.each(['a', 'b'])(
+      'book %s shows at least two gray text lines on cream on each page',
+      (page) => {
+        const px = resolve(props.book[page]);
+        const half = px[0].length / 2;
+        for (const [from, to] of [
+          [0, half],
+          [half, px[0].length],
+        ]) {
+          const lines = px.filter((row) => {
+            const cells = row.slice(from, to);
+            return cells.some(
+              (c, x) =>
+                c && isGray(c) && isCream(cells[x - 1] ?? '') && cells.slice(x).some(isCream),
+            );
+          });
+          expect(lines.length, `book ${page} page ${from}..${to}`).toBeGreaterThanOrEqual(2);
+        }
+      },
+    );
+
+    it('mug has a handle column outside the body', () => {
+      const px = resolve(props.mug.pixels);
+      const lastOpaque = (row: string[]) => row.reduce((m, c, x) => (c ? x : m), -1);
+      const bodyRight = Math.max(...px.slice(0, 3).map(lastOpaque)); // the rim spans the body only
+      const handleRight = Math.max(...px.map(lastOpaque));
+      expect(handleRight, 'handle sticks out past the rim').toBeGreaterThan(bodyRight + 1);
+      // and a gap (the hole of the handle) between body and handle on some row
+      expect(px.some((row) => row[bodyRight + 1] === '' && row[handleRight] !== '')).toBe(true);
+    });
+  });
+
   it('keeps floor_0 soft: luminance spread of at most 16 levels', () => {
     // The floor is colorized at runtime from its luminance, so the spread IS the contrast.
     const png = PNG.sync.read(
