@@ -3,9 +3,9 @@
  * the office and to the helper lists the overlay reads. DOM-free: the React
  * hook supplies its state setters, tests supply plain ones.
  *
- * Only subagentToolStart may create a helper. Done, permission and clear for a
- * key with no helper do nothing: a batched done that lands after the helper's
- * clear must not bring it back.
+ * Only subagentToolStart and subagentPresent may create a helper. Done,
+ * permission and clear for a key with no helper do nothing: a batched done that
+ * lands after the helper's clear must not bring it back.
  */
 
 import { isCrewParentToolId, type OfficeState } from '../office/engine/officeState.js';
@@ -45,6 +45,9 @@ export function applySubagentMessage(sink: SubagentSink, msg: SubagentMessage): 
     case 'subagentToolStart':
       onToolStart(sink, msg);
       return true;
+    case 'subagentPresent':
+      onPresent(sink, msg);
+      return true;
     case 'subagentToolDone':
       onToolDone(sink, msg);
       return true;
@@ -81,27 +84,40 @@ function onToolStart(sink: SubagentSink, msg: SubagentMessage): void {
   // create it here; addSubagent is idempotent.
   let subId = os.getSubagentId(id, parentToolId);
   if (subId === null) {
-    subId = os.addSubagent(id, parentToolId);
-    const entry: SubagentCharacter = {
-      id: subId,
-      parentAgentId: id,
-      parentToolId,
-      label: '',
-      ...(typeof msg.label === 'string' && msg.label ? { plateLabel: msg.label } : {}),
-      ...(typeof msg.group === 'string' && msg.group ? { group: msg.group } : {}),
-    };
-    sink.updateCharacters((prev) =>
-      prev.some((s) => s.id === entry.id) ? prev : [...prev, entry],
-    );
-    // Only watched background spawns are created lazily: mark the parent tool as background so
-    // agentToolsClear preserves the helper.
-    (sink.background[id] ??= new Set()).add(parentToolId);
+    subId = createHelper(sink, msg);
   } else if (isCrewParentToolId(parentToolId)) {
     // A workflow agent has no parent tool on its lead: it is background whatever the lead's tools say.
     (sink.background[id] ??= new Set()).add(parentToolId);
   }
   os.setAgentTool(subId, extractToolName(status));
   os.setAgentActive(subId, true);
+}
+
+/** A workflow agent is live: its helper shows now, working, before any tool row. An existing
+ *  helper keeps its state. With no rows it never idles: it works until its clear. */
+function onPresent(sink: SubagentSink, msg: SubagentMessage): void {
+  if (sink.os.getSubagentId(msg.id as number, msg.parentToolId as string) !== null) return;
+  sink.os.setAgentActive(createHelper(sink, msg), true);
+}
+
+/** Create the helper a start or presence message names, with its workflow label and group. */
+function createHelper(sink: SubagentSink, msg: SubagentMessage): number {
+  const id = msg.id as number;
+  const parentToolId = msg.parentToolId as string;
+  const subId = sink.os.addSubagent(id, parentToolId);
+  const entry: SubagentCharacter = {
+    id: subId,
+    parentAgentId: id,
+    parentToolId,
+    label: '',
+    ...(typeof msg.label === 'string' && msg.label ? { plateLabel: msg.label } : {}),
+    ...(typeof msg.group === 'string' && msg.group ? { group: msg.group } : {}),
+  };
+  sink.updateCharacters((prev) => (prev.some((s) => s.id === entry.id) ? prev : [...prev, entry]));
+  // Only watched background spawns and workflow agents are created here: mark the parent tool as
+  // background so agentToolsClear preserves the helper.
+  (sink.background[id] ??= new Set()).add(parentToolId);
+  return subId;
 }
 
 function onToolDone(sink: SubagentSink, msg: SubagentMessage): void {

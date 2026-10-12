@@ -136,13 +136,13 @@ describe('a top-level agent outranks a helper for a seat', () => {
   });
 
   it('reload order: a helper recreated before its parent is restored leaves the parent saved seat free', () => {
-    // The helper's lazy creation (subagentToolStart) can land while the parent is still buffered.
+    // The helper's lazy creation (subagentToolStart, subagentPresent) can land while the parent is
+    // still buffered: the parent still gets its saved seat, then the helper sits beside it.
     const os = office([chair('face-on', 3, 3), back('back-view', 4, 3)]);
     const sub = os.characters.get(os.addSubagent(1, 'tool-1'))!;
     os.addAgent(1, 0, 0, 'back-view', true);
     expect(os.characters.get(1)!.seatId).toBe('back-view');
-    expect(sub.seatId).toBeNull();
-    expect(os.seats.get('face-on')!.assigned).toBe(false);
+    expect(sub.seatId).toBe('face-on');
   });
 
   it('takes its saved seat back from a helper that sits in it; the helper moves to the other seat', () => {

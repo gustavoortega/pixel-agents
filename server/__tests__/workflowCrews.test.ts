@@ -21,6 +21,7 @@ vi.mock('vscode', () => ({ window: { terminals: [] } }));
 
 import { restoreAgents } from '../../adapters/vscode/agentManager.js';
 import type { StateAdapter } from '../../core/src/adapter.js';
+import { resendAgentActivity } from '../src/agentActivityResend.js';
 import { AgentRuntime } from '../src/agentRuntime.js';
 import { AgentStateStore } from '../src/agentStateStore.js';
 import {
@@ -220,6 +221,8 @@ function tick(advanceMs = 1000): void {
 const helperId = (agentId: string, runId = RUN): string => `wf:${runId}:${agentId}`;
 const startsFor = (parentToolId: string) =>
   messages.filter((m) => m.type === 'subagentToolStart' && m.parentToolId === parentToolId);
+const presencesFor = (parentToolId: string) =>
+  messages.filter((m) => m.type === 'subagentPresent' && m.parentToolId === parentToolId);
 const clearsFor = (parentToolId: string) =>
   messages.filter((m) => m.type === 'subagentClear' && m.parentToolId === parentToolId);
 /** Shadow-store watches on a transcript: the registry the helpers are streamed from. */
@@ -412,6 +415,8 @@ describe('workflow crews: timing and races', () => {
 
     expect(watchesOf(file)).toBe(1);
     expect(clearsFor(helperId('a1'))).toHaveLength(1);
+    // C43: the clear removed the helper; the new attach announces it again.
+    expect(presencesFor(helperId('a1'))).toHaveLength(2);
     // Same key on both streams: the webview recreates the same helper, never a second one.
     expect(startsFor(helperId('a1')).length).toBeGreaterThan(1);
     expect(new Set(messages.map((m) => m.parentToolId).filter(Boolean))).toEqual(
@@ -589,6 +594,54 @@ describe('workflow crews: timing and races', () => {
     vi.advanceTimersByTime(600); // the shadow's 500 ms poll
 
     expect(startsFor(helperId('long')).map((m) => m.toolId)).toEqual(['toolu_new']);
+  });
+});
+
+describe('workflow crews: presence', () => {
+  it('C41 an agent tailed past 1 MiB that only thinks is announced once, with its label and phase', () => {
+    appendJournal([started('think', 'final:top10', 'Final')]);
+    const file = writeAgent('think');
+    const filler = JSON.stringify({ type: 'file-history-snapshot', pad: 'p'.repeat(1000) }) + '\n';
+    fs.appendFileSync(file, filler.repeat(Math.ceil(WORKFLOW_ATTACH_TAIL_BYTES / filler.length)));
+
+    tick();
+    // No tool call to read: the presence is the only way its helper shows.
+    expect(startsFor(helperId('think'))).toHaveLength(0);
+    expect(presencesFor(helperId('think'))).toEqual([
+      {
+        type: 'subagentPresent',
+        id: 1,
+        parentToolId: helperId('think'),
+        label: 'final:top10',
+        group: 'Final',
+      },
+    ]);
+
+    // C42: once per attach, not once per scan.
+    tick();
+    tick();
+    tick();
+    expect(presencesFor(helperId('think'))).toHaveLength(1);
+  });
+
+  it('C44 a reconnect re-announces every watched workflow agent, and no finished one', () => {
+    appendJournal([started('live', 'scan:docs', 'Ground'), started('done'), result('done')]);
+    writeAgent('live');
+    writeAgent('done');
+    tick();
+
+    const sent: Array<Record<string, unknown>> = [];
+    resendAgentActivity((m) => sent.push(m), store);
+
+    expect(sent.filter((m) => m.type === 'subagentPresent')).toEqual([
+      {
+        type: 'subagentPresent',
+        id: 1,
+        parentToolId: helperId('live'),
+        label: 'scan:docs',
+        group: 'Ground',
+      },
+    ]);
   });
 });
 

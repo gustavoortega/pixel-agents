@@ -542,6 +542,7 @@ export function useExtensionMessages(
         playPermissionSound();
       } else if (
         msg.type === 'subagentToolStart' ||
+        msg.type === 'subagentPresent' ||
         msg.type === 'subagentToolDone' ||
         msg.type === 'subagentClear' ||
         msg.type === 'subagentToolPermission'

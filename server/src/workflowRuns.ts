@@ -312,6 +312,7 @@ function reconcile(leadId: number, lead: AgentState, ctx: WorkflowScanContext, n
     if (!live.has(id)) endWorkflowAgent(lead, leadId, id, endReason(state, id), ctx);
   }
   for (const [id, agent] of live) {
+    const attaching = !state.watched.has(id);
     // Idempotent: an agent already watched keeps its shadow and its stream.
     ctx.watch.watch(lead, leadId, {
       jsonlPath: agent.jsonlPath,
@@ -321,6 +322,9 @@ function reconcile(leadId: number, lead: AgentState, ctx: WorkflowScanContext, n
       startOffset: agent.size <= WORKFLOW_ATTACH_TAIL_BYTES ? 0 : agent.size,
     });
     state.watched.add(id);
+    // A helper otherwise appears only on a tool call the stream reads: never for
+    // an agent that only thinks, nor for one tailed past its earlier tools.
+    if (attaching) ctx.store.broadcast(presenceMessage(leadId, id, agent.label, agent.group));
   }
 
   if (mapsChanged) ctx.store.persist();
@@ -681,6 +685,39 @@ export function endWorkflowSession(
   const runIds = new Set([...(state?.runs.keys() ?? []), ...(state?.completedRunIds ?? [])]);
   disposeWorkflowState(lead, leadId, ctx);
   lead.workflowEnded = { sessionId: lead.sessionId, runIds };
+}
+
+function presenceMessage(
+  leadId: number,
+  id: string,
+  label: string | undefined,
+  group: string | undefined,
+): Record<string, unknown> {
+  return {
+    type: 'subagentPresent',
+    id: leadId,
+    parentToolId: id,
+    ...(label !== undefined ? { label } : {}),
+    ...(group !== undefined ? { group } : {}),
+  };
+}
+
+/** One `subagentPresent` per watched workflow agent of the lead, for a client
+ *  doing the handshake (a page load or panel reload): its helpers come back
+ *  before their next tool call. */
+export function workflowPresenceMessages(
+  leadId: number,
+  lead: AgentState,
+): Record<string, unknown>[] {
+  const state = lead.workflow;
+  if (!state) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const id of state.watched) {
+    const [runId, agentId] = id.slice(WORKFLOW_PARENT_TOOL_ID_PREFIX.length).split(':');
+    const entry = state.runs.get(runId)?.started.get(agentId);
+    out.push(presenceMessage(leadId, id, entry?.label, entry?.group));
+  }
+  return out;
 }
 
 /** What survives a restart: the tool -> run mappings and the completed runs.

@@ -22,6 +22,7 @@ export type ServerMessage =
   | SubagentToolStart
   | SubagentToolDone
   | SubagentClear
+  | SubagentPresent
   | SubagentToolPermission
   | AgentTeamInfo
   | AgentContextUsage
@@ -176,6 +177,14 @@ export interface SubagentClear {
   type: 'subagentClear';
   id: number;
   parentToolId: string;
+}
+
+export interface SubagentPresent {
+  type: 'subagentPresent';
+  id: number;
+  parentToolId: string;
+  label?: string;
+  group?: string;
 }
 
 export interface SubagentToolPermission {
