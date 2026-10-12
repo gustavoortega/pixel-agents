@@ -11,8 +11,15 @@ import assert from 'node:assert/strict';
 import { afterAll, beforeAll, test, vi } from 'vitest';
 
 import { ART_DENSITY } from '../../core/src/assets/constants.js';
+import type { HealthState, TripwireSeverity } from '../../core/src/messages.js';
 import {
   AREA_SIGN_PLATE_COLOR,
+  BUTTON_ICON_COLOR,
+  DEAD_CHARACTER_ALPHA,
+  DEAD_CHARACTER_FILTER,
+  HEALTH_PAUSE_COLOR,
+  HEALTH_SMOKE_COLOR,
+  IDLE_GLYPH_COLOR,
   NIGHT_DARKEN_ALPHA,
   NIGHT_DARKEN_COLOR,
   SHADOW_SIZE_PX,
@@ -44,6 +51,8 @@ interface Recorder {
     op: 'fill' | 'image';
     comp: unknown;
     alpha: unknown;
+    /** The canvas filter in force, undefined on a context that has none. */
+    filter: unknown;
     style: string;
     w: number;
     /** The last rect() path before this op, the clip it was drawn under: [x, y, w, h]. */
@@ -53,12 +62,13 @@ interface Recorder {
   }>;
 }
 
-/** A 2D context that records fillRect and drawImage and swallows everything else. */
-function recorder(): Recorder {
+/** A 2D context that records fillRect and drawImage and swallows everything else. With
+ *  `filter`, it has a `filter` property like a browser canvas; without, like a headless one. */
+function recorder(opts: { filter?: boolean } = {}): Recorder {
   const fills: FillCall[] = [];
   const drawnWidths: number[] = [];
   const ops: Recorder['ops'] = [];
-  const state: Record<string, unknown> = {};
+  const state: Record<string, unknown> = opts.filter ? { filter: 'none' } : {};
   let clip: number[] | null = null;
   const ctx = new Proxy(state, {
     get(target, prop: string) {
@@ -74,6 +84,7 @@ function recorder(): Recorder {
             op: 'fill',
             comp: target.globalCompositeOperation,
             alpha: target.globalAlpha,
+            filter: target.filter,
             style: String(target.fillStyle),
             w,
             clip,
@@ -88,6 +99,7 @@ function recorder(): Recorder {
             op: 'image',
             comp: target.globalCompositeOperation,
             alpha: target.globalAlpha,
+            filter: target.filter,
             style: '',
             w: img.width,
             clip,
@@ -378,4 +390,102 @@ test('renderFrame: half way up the dusk ramp the darkening and the pools are hal
   const multiply = rec.ops.find((o) => o.comp === 'multiply');
   assert.equal(multiply?.alpha, NIGHT_DARKEN_ALPHA / 2);
   assert.equal(rec.ops.find((o) => o.op === 'image' && o.w === LAMP_POOL_W)?.alpha, 0.5);
+});
+
+// ── Agent health: the mark over the head, and a dead agent's gray sprite ──
+
+/** One idle agent on an empty map, drawn with the given health and, optionally, a tripwire. */
+function healthFrame(rec: Recorder, state: HealthState | undefined, tripwire?: TripwireSeverity) {
+  const ch = createCharacter(1, 0, null, null, 0, false);
+  const health = new Map(state ? [[ch.id, { state }]] : []);
+  const tripwires = new Map(tripwire ? [[ch.id, { severity: tripwire }]] : []);
+  renderFrame(
+    rec.ctx,
+    640,
+    480,
+    VOID_MAP,
+    [],
+    [ch],
+    2,
+    0,
+    0,
+    undefined,
+    undefined,
+    undefined,
+    4,
+    4,
+    undefined,
+    [],
+    [],
+    false,
+    null,
+    [],
+    tripwires,
+    undefined,
+    { models: new Map(), companions: [], nowMs: 0 },
+    false,
+    undefined,
+    undefined,
+    [],
+    undefined,
+    health,
+  );
+}
+
+test('renderFrame: smoke over stuck and looping, a pause mark over stalled, and the idle z yields', () => {
+  const cases: Array<[HealthState | undefined, { smoke: number; pause: number; z: boolean }]> = [
+    [undefined, { smoke: 0, pause: 0, z: true }],
+    ['stuck', { smoke: 3, pause: 0, z: false }],
+    ['looping', { smoke: 3, pause: 0, z: false }],
+    ['stalled', { smoke: 0, pause: 2, z: false }],
+    // A dead agent's sprite goes gray; nothing is drawn over its head, not even the z.
+    ['dead', { smoke: 0, pause: 0, z: false }],
+  ];
+  for (const [state, expected] of cases) {
+    const rec = recorder();
+    healthFrame(rec, state);
+    const count = (color: string) => rec.fills.filter((f) => f.fillStyle === color).length;
+    assert.deepEqual(
+      {
+        smoke: count(HEALTH_SMOKE_COLOR),
+        pause: count(HEALTH_PAUSE_COLOR),
+        z: count(IDLE_GLYPH_COLOR) > 0,
+      },
+      expected,
+      `health ${state}`,
+    );
+  }
+});
+
+test('renderFrame: a dead agent is drawn gray where the canvas filters, faded where it cannot', () => {
+  const body = (rec: Recorder) => rec.ops.filter((o) => o.op === 'image').at(-1);
+
+  const filtering = recorder({ filter: true });
+  healthFrame(filtering, 'dead');
+  assert.equal(body(filtering)?.filter, DEAD_CHARACTER_FILTER);
+  assert.equal(body(filtering)?.alpha, 1, 'gray, not faded');
+
+  const headless = recorder();
+  healthFrame(headless, 'dead');
+  assert.equal(body(headless)?.alpha, DEAD_CHARACTER_ALPHA);
+
+  const alive = recorder({ filter: true });
+  healthFrame(alive, 'stuck');
+  assert.equal(body(alive)?.filter, 'none', 'only a dead agent goes gray');
+});
+
+test('renderFrame: a health mark stacks above a tripwire beacon, clear of it', () => {
+  const rec = recorder();
+  healthFrame(rec, 'stuck', 'high');
+  const beacon = rec.fills.filter((f) => f.fillStyle === BUTTON_ICON_COLOR);
+  const smoke = rec.fills.filter((f) => f.fillStyle === HEALTH_SMOKE_COLOR);
+  assert.equal(beacon.length, 2, "the beacon's exclamation mark");
+  assert.equal(smoke.length, 3, 'the smoke puffs');
+  const beaconTop = Math.min(...beacon.map((f) => f.y));
+  for (const puff of smoke) {
+    assert.ok(
+      puff.y + puff.h <= beaconTop,
+      `a puff ends at y ${puff.y + puff.h}, below ${beaconTop}`,
+    );
+  }
 });

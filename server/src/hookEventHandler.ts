@@ -3,6 +3,13 @@ import * as path from 'path';
 import type { AgentEvent, HookProvider } from '../../core/src/provider.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { SESSION_END_GRACE_MS } from './constants.js';
+import {
+  healthOnHook,
+  healthOnHookToolStart,
+  healthOnPermission,
+  healthOnTurnEnd,
+  resetHealth,
+} from './health.js';
 import { bindHookSubRow, releaseHookSubRow } from './hookSubRows.js';
 import { broadcastRoster } from './rosterAgent.js';
 import type { SessionRouter } from './sessionRouter.js';
@@ -193,6 +200,7 @@ export class HookEventHandler {
         const agent = this.agents.get(existingAgentId);
         if (agent) {
           agent.hookDelivered = true;
+          healthOnHook(agent, this.agents, this.provider.turnTraits);
         }
         if (debug)
           console.log(
@@ -205,6 +213,7 @@ export class HookEventHandler {
         if (agent.sessionId === event.session_id) {
           this.registerAgent(agent.sessionId, id);
           agent.hookDelivered = true;
+          healthOnHook(agent, this.agents, this.provider.turnTraits);
           if (debug)
             console.log(
               `[Pixel Agents] Hook: Agent ${id} - SessionStart(source=${source}) auto-discovered`,
@@ -331,6 +340,10 @@ export class HookEventHandler {
     const agent = this.agents.get(agentId);
     if (!agent) return;
 
+    // Every hook is progress, a sub-agent's on the lead's session included: a lead waiting on
+    // its sub-agents is working. Before the sub-agent return below.
+    healthOnHook(agent, this.agents, this.provider.turnTraits);
+
     if (
       subAgentId !== undefined &&
       (normEvent.kind === 'toolStart' || normEvent.kind === 'toolEnd')
@@ -361,6 +374,8 @@ export class HookEventHandler {
       case 'sessionEnd':
         return this.handleSessionEnd(normEvent, agent, agentId);
       case 'toolStart':
+        // Before the inline-teammate return in handlePreToolUse: the lead's turn is open either way.
+        healthOnHookToolStart(agent, this.agents, this.provider.turnTraits);
         return this.handlePreToolUse(normEvent, agent, agentId);
       case 'toolEnd':
         this.feedMood(agent, normEvent.failed === true);
@@ -480,6 +495,8 @@ export class HookEventHandler {
       console.log(
         `[Pixel Agents] Hook: Agent ${agentId} - SessionEnd(reason=${reason ?? 'unknown'})`,
       );
+    // The session is over: its counters mean nothing for whatever comes next on this character.
+    resetHealth(agent, this.agents, this.provider.turnTraits);
 
     // /clear and /resume send SessionEnd then SessionStart. Wait briefly for the follow-up.
     // All other reasons (exit, logout, prompt_input_exit) are final -- despawn immediately.
@@ -756,6 +773,8 @@ export class HookEventHandler {
       for (const [id, a] of inlineTeammates) {
         cancelPermissionTimer(id, this.permissionTimers);
         a.permissionSent = true;
+        // The prompt is the teammate's: its transcript goes quiet until the user answers.
+        healthOnPermission(a, this.agents, this.provider.turnTraits);
         this.agents.broadcast({ type: 'agentToolPermission', id });
       }
       return;
@@ -763,6 +782,7 @@ export class HookEventHandler {
 
     cancelPermissionTimer(agentId, this.permissionTimers);
     agent.permissionSent = true;
+    healthOnPermission(agent, this.agents, this.provider.turnTraits);
     this.agents.broadcast({
       type: 'agentToolPermission',
       id: agentId,
@@ -913,6 +933,8 @@ export class HookEventHandler {
     agent.permissionSent = false;
     agent.hadToolsInTurn = false;
     agent.currentHookToolId = undefined;
+    // Every hook path into waiting ends the turn: Stop, idle prompt, a teammate going idle.
+    healthOnTurnEnd(agent, this.agents, this.provider.turnTraits);
     this.agents.broadcast({
       type: 'agentStatus',
       id: agentId,

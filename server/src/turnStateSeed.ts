@@ -3,6 +3,7 @@ import * as path from 'path';
 
 import type { HookProvider } from '../../core/src/provider.js';
 import { CONTEXT_SEED_TAIL_BYTES } from './constants.js';
+import { seedHealth } from './health.js';
 import { type DerivedTurnState, deriveTurnState } from './turnState.js';
 import type { AgentState } from './types.js';
 
@@ -10,6 +11,8 @@ import type { AgentState } from './types.js';
 export interface TurnDerivation {
   state: DerivedTurnState;
   hookSeq: number;
+  /** Newest write to the transcript or its sub-agents' transcripts at the time. */
+  clockMs: number;
 }
 
 /** mtimes of `<dir of the transcript>/<session>/subagents/*.jsonl`, [] when absent. */
@@ -29,6 +32,21 @@ function subagentMtimes(jsonlFile: string): number[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * The newest write to an agent's transcript or one of its sub-agents' (0 when none can be
+ * read). A lead blocked on a sub-agent writes nothing itself while the sub-agent works, so
+ * its own mtime alone would read as silence.
+ */
+export function transcriptClockMs(jsonlFile: string): number {
+  let lead = 0;
+  try {
+    lead = fs.statSync(jsonlFile).mtimeMs;
+  } catch {
+    // Unreadable: only the sub-agents speak for it.
+  }
+  return Math.max(lead, ...subagentMtimes(jsonlFile));
 }
 
 /**
@@ -88,14 +106,15 @@ export function deriveAgentTurnState(
 
   agent.fileOffset = size;
   agent.lineBuffer = partial;
+  const subagentMtimesMs = subagentMtimes(agent.jsonlFile);
   const state = deriveTurnState(
     lines,
     now,
-    { leadMtimeMs: mtimeMs, subagentMtimesMs: subagentMtimes(agent.jsonlFile) },
+    { leadMtimeMs: mtimeMs, subagentMtimesMs },
     provider.turnSignal.bind(provider),
     provider.turnTraits,
   );
-  return { state, hookSeq };
+  return { state, hookSeq, clockMs: Math.max(mtimeMs, ...subagentMtimesMs) };
 }
 
 /**
@@ -108,6 +127,13 @@ export function applyTurnDerivation(agent: AgentState, derivation: TurnDerivatio
   agent.isWaiting = state.kind === 'waiting' || state.kind === 'awaitingInput';
   agent.awaitingInput = state.kind === 'awaitingInput';
   agent.derivedActive = state.kind === 'active';
+  seedHealth(agent, {
+    active: state.kind === 'active',
+    atMs: state.kind === 'active' ? state.atMs : undefined,
+    clockMs: derivation.clockMs,
+    pendingTools:
+      state.kind === 'active' || state.kind === 'awaitingInput' ? state.pendingTools : [],
+  });
   return true;
 }
 

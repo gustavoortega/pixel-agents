@@ -49,13 +49,23 @@ export interface SignalHit {
   key?: string;
 }
 
-/** Tool names a provider needs the tail walk to treat specially. */
+/** Tool names a provider needs the tail walk and the health detectors to treat specially. */
 export interface TurnTraits {
   /** Tools that legitimately run for minutes without writing to the transcript. */
   longRunningTools: ReadonlySet<string>;
   /** Tools that block on an answer from the user. */
   userQuestionTools: ReadonlySet<string>;
+  /** Shell tools: their results are where a test runner's summary shows up. */
+  shellTools: ReadonlySet<string>;
+  /** Tools that change files. A successful one means the agent acted on a failing run. */
+  editTools: ReadonlySet<string>;
+  /** Tools that wait on the user (a question, a plan to approve): silence there is not a stall. */
+  userInputTools: ReadonlySet<string>;
 }
+
+/** Whether the process behind a session still runs. `unknown` means the CLI left nothing to
+ *  check, which must never read as dead. */
+export type SessionLiveness = 'alive' | 'dead' | 'unknown';
 
 // ── Normalized Events (all provider types produce these) ──────
 
@@ -207,6 +217,9 @@ export interface HookProvider {
   turnSignal?(record: unknown): TurnSignal;
   /** Tool names the tail walk treats specially. See `TurnTraits`. */
   readonly turnTraits?: TurnTraits;
+  /** Liveness of the processes behind these sessions, one entry per id. Without it no agent
+   *  ever reads dead. Async: telling a live session from a reused pid may ask the OS. */
+  liveness?(sessionIds: string[]): Promise<Map<string, SessionLiveness>>;
 
   /** What a tool call may prove (a commit, a PR, a test run, an edit), read at
    *  its tool_use. The input stays inside the provider: only verdicts and hashed

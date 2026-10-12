@@ -105,6 +105,26 @@ export const TRIPWIRE_FLASH_PERIOD_MS = 700;
 /** Beacon radius in sprite pixels (scaled by zoom). */
 export const TRIPWIRE_BEACON_RADIUS_PX = 3;
 
+// ── Agent health marks (above the head, in the beacon's slot) ──
+/** Smoke over a stuck or looping agent: grey, so it never reads as an alarm color. */
+export const HEALTH_SMOKE_COLOR = '#a0a0a0';
+/** One smoke cycle: each of the three puffs rises through the slot once per period. */
+export const HEALTH_SMOKE_PERIOD_MS = 900;
+/** Side of one smoke puff, in world px. */
+export const HEALTH_SMOKE_PUFF_PX = 2;
+/** Pause mark over a stalled agent: warm amber, distinct from the alarm yellows above. */
+export const HEALTH_PAUSE_COLOR = '#e0b84a';
+/** One pause bar, and the gap between the two, in world px. */
+export const HEALTH_PAUSE_BAR_WIDTH_PX = 2;
+export const HEALTH_PAUSE_BAR_HEIGHT_PX = 6;
+export const HEALTH_PAUSE_BAR_GAP_PX = 2;
+/** Puffs in the smoke, a third of a cycle apart. */
+export const HEALTH_SMOKE_PUFFS = 3;
+/** A dead agent's sprite: the canvas filter that grays it, and the fade used where the
+ *  canvas has no filter. */
+export const DEAD_CHARACTER_FILTER = 'grayscale(1)';
+export const DEAD_CHARACTER_ALPHA = 0.55;
+
 // ── Rendering - Overlay Colors (canvas, not CSS) ─────────────
 export const SEAT_OWN_COLOR = 'rgba(0, 127, 212, 0.35)';
 export const SEAT_AVAILABLE_COLOR = 'rgba(0, 200, 80, 0.35)';

@@ -84,8 +84,9 @@ export function agentStatus(ch: {
 
 /**
  * Glyph drawn above an agent's head. Only an idle agent with nothing else in
- * the above-head slot gets one: a speech bubble or a tripwire beacon owns that
- * slot, and an active agent shows its typing animation instead. The idle
+ * the above-head slot gets one: a speech bubble, a tripwire beacon or a health
+ * state owns that slot (a dead agent too: a z over its gray sprite would read
+ * as a nap), and an active agent shows its typing animation instead. The idle
  * "waiting for input" state draws no bubble, so it counts as bubble-free.
  */
 export function statusGlyph(
@@ -96,9 +97,10 @@ export function statusGlyph(
     state?: string;
     pose?: string;
   },
-  hasTripwire = false,
+  /** A tripwire beacon or a health state holds the slot. */
+  slotTaken = false,
 ): 'z' | null {
-  if (ch.isActive || hasTripwire) return null;
+  if (ch.isActive || slotTaken) return null;
   // A seated reader or coffee drinker already shows "idle" with the book or mug; a z over it reads
   // as napping.
   if (

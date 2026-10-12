@@ -34,6 +34,8 @@ export type ServerMessage =
   | AgentShells
   | AgentTripwire
   | AgentTripwireClear
+  | AgentHealth
+  | AgentHealthClear
   | AgentRoster
   | RosterEvent
   | LayoutLoaded
@@ -269,6 +271,24 @@ export type TripwireSeverity = 'high' | 'medium' | 'low';
 
 export interface AgentTripwireClear {
   type: 'agentTripwireClear';
+  id: number;
+}
+
+export interface AgentHealth {
+  type: 'agentHealth';
+  id: number;
+  state: HealthState;
+  reason: HealthReason;
+  count: number;
+}
+
+export type HealthState = 'stuck' | 'stalled' | 'looping' | 'dead';
+
+export type HealthReason =
+  'tests_failing_no_edits' | 'no_progress' | 'same_call_repeated' | 'process_gone';
+
+export interface AgentHealthClear {
+  type: 'agentHealthClear';
   id: number;
 }
 

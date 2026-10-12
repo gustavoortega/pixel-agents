@@ -26,6 +26,8 @@ This is a fork of [pixel-agents](https://github.com/pixel-agents-hq/pixel-agents
 
 **Tripwires.** 14 rules flag risky tool calls with an alarm on the agent: credential and key reads, `curl | sh`, force pushes, `rm -rf ~`, cloud and cluster writes, tampering with the hooks. Matched text never leaves the local server. See [docs/tripwires.md](docs/tripwires.md).
 
+**Who needs a look.** A character smokes when its tests keep failing with no edit in between, or when it repeats the same call four times; a pause mark means its turn has been silent for 10 minutes; it goes gray when its Claude Code process is gone. Hover it for the reason. Gray external sessions leave after 5 minutes and come back if resumed.
+
 **Day and night.** Light follows your clock: window light in the morning, a darker room at night lit by the lamp, the active monitors and the fairy lights.
 
 **Security fixes over upstream.** The standalone WebSocket requires the session token. On a loopback bind the server refuses any `Host` that is not `127.0.0.1`, `localhost` or `::1`, which blocks DNS rebinding. Bash activity shows the program name, not the full command line.

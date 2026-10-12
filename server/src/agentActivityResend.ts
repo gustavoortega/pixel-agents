@@ -1,5 +1,6 @@
 import type { AgentStateStore } from './agentStateStore.js';
 import { cacheMessage } from './contextUsage.js';
+import { healthResendMessage } from './health.js';
 import { rosterMessage } from './rosterAgent.js';
 import { modeMessage, shellsMessage } from './sessionSignals.js';
 import { derivedTitle } from './sessionTitle.js';
@@ -43,7 +44,8 @@ export function agentStatusMessage(id: number, agent: AgentState): Record<string
  * 7. Session title
  * 7b. Session signals: cache clock, permission mode, background shells
  * 8. Tripwire alarm
- * 9. Roster member (only for agents that hold one; mood depends on the alarm, so it follows it)
+ * 9. Health mark
+ * 10. Roster member (only for agents that hold one; mood depends on the alarm, so it follows it)
  *
  * Tool starts carry permissionActive while a permission prompt is pending: a client takes
  * a start without it as the prompt answered and drops the bubble.
@@ -140,7 +142,11 @@ export function resendAgentActivity(
     // during an ack would otherwise keep an alarm the user already dismissed.
     send(tripwireResendMessage(agent));
 
-    // 8. Roster member. Not resent as a clear: an agent without a member simply has none.
+    // 9. Health mark, or a clear for a healthy agent: a client that was offline when a mark
+    // cleared would otherwise keep showing it.
+    send(healthResendMessage(agent));
+
+    // 10. Roster member. Not resent as a clear: an agent without a member simply has none.
     const roster = rosterMessage(agent, store);
     if (roster) send(roster);
   }

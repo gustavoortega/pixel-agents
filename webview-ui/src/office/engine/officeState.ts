@@ -40,6 +40,7 @@ import { type HeroCandidate, heroPerRoom } from '../flair/hero.js';
 import { modelFlair } from '../flair/modelFlair.js';
 import { FxEngine } from '../fx/fxEngine.js';
 import { MoodWeather } from '../fx/moodWeather.js';
+import type { AgentHealthView } from '../health.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
   createDefaultLayout,
@@ -105,6 +106,9 @@ export class OfficeState {
   /** Tripwire alarms by agent id. Keyed by id for the same reason as sessionTitles:
    *  an alarm can arrive before the (buffered) agentCreated does. */
   tripwires: Map<number, TripwireAlarm> = new Map();
+  /** Health by agent id (stuck, stalled, looping, dead), as the server last sent it. Only for
+   *  agents that have a character: the handshake resends it after the layout creates them. */
+  health: Map<number, AgentHealthView> = new Map();
   /** World px each agent's bubble/beacon/glyph rises above its default slot so it clears the plate
    *  and tripwire chip below it. Written by the overlay stack every frame, read by the renderer. */
   bubbleLift: Map<number, number> = new Map();
@@ -794,6 +798,7 @@ export class OfficeState {
   private forgetAgentData(id: number): void {
     this.sessionTitles.delete(id);
     this.tripwires.delete(id);
+    this.health.delete(id);
     this.rosters.delete(id);
     this.rosterEvents.delete(id);
     this.fx.forget(id);
@@ -1728,6 +1733,13 @@ export class OfficeState {
   setTripwire(id: number, alarm: TripwireAlarm | undefined): void {
     if (alarm) this.tripwires.set(id, alarm);
     else this.tripwires.delete(id);
+  }
+
+  /** Undefined clears it. A mark for an id with no character is dropped: kept, it would
+   *  outlive an agent whose close this client already handled. */
+  setHealth(id: number, health: AgentHealthView | undefined): void {
+    if (health && this.characters.has(id)) this.health.set(id, health);
+    else this.health.delete(id);
   }
 
   update(dt: number): void {
