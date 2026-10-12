@@ -43,6 +43,16 @@ server/                              Lifecycle runtime + Fastify HTTP/WS server
     roster.ts                        RosterStore: persistent crew over ~/.pixel-agents/roster.json (O_EXCL lockfile, holds by pid, re-read + delta merge on write)
     rosterAgent.ts                   claimRosterMember, agentRoster message, roster-owned palette for seats
     xp.ts                            XP rules (pure): applyXpEvent, levelForXp, moodFor, isShipCommand
+    memory/                          Memory MCP server (stdio, read-only, bundled to plugin/server/memory-mcp.cjs); imports only core/normalizeProjectPath
+      mcpMain.ts                     Entry: readline loop, stdout = protocol only, logs to stderr, drains then exits on stdin end; SIGTERM/EPIPE/orphan exit
+      rpc.ts                         JSON-RPC 2.0 dispatcher: initialize, ping, tools/list, tools/call; notifications never answered
+      tools.ts                       The four tools: argument checks (bad args = isError, not RPC errors), budgets, envelope, B3 cap ladder, one log line per call
+      digest.ts                      What a transcript says: human prompts, ended, commits, PRs, files, test verdicts, cost (tier 1 head/tail, tier 2 full scan)
+      reader.ts                      uuid-named lstat-regular transcripts only, O_NOFOLLOW, head/tail reads, streaming scan skipping >1 MiB lines, Budget
+      redact.ts                      Redaction table + whole-field fail-closed rule; find_past_work matches the redacted text
+      scope.ts                       Project folder from CLAUDE_PROJECT_DIR or cwd (never realpath'd, lstat'd, exact name) + recorded-cwd check; `under` for the all-projects tool
+      lastUpdate.ts                  since "last_update": newest sprint-update Skill run followed by a successful clipboard command
+      constants.ts                   Every memory limit, cap and fixed string
     dismissalTracker.ts              Unified dismissal state (replaces four legacy globals)
     hookEventHandler.ts              Dispatches normalized AgentEvent into runtime
     hookSubRows.ts                   SubagentStart rows bound to the hook's agent_id (only that sub-agent's Stop ends one)
@@ -131,6 +141,12 @@ webview-ui/                          React 19 + Canvas UI (depends only on core/
       components/
         OfficeCanvas.tsx             Canvas, resize, DPR, mouse hit-testing, drag-to-move
         ToolOverlay.tsx              Permanent nameplates (above the head of DOWN-facing agents, below the feet of UP-facing ones) and the full box for hovered/selected ones
+
+plugin/                              Claude Code plugin (marketplace: .claude-plugin/marketplace.json at the repo root)
+  .claude-plugin/plugin.json         name pixel-agents; version synced from package.json by plugin:build
+  .mcp.json                          memory server: node ${CLAUDE_PLUGIN_ROOT}/server/memory-mcp.cjs (un-ignored in .gitignore)
+  server/memory-mcp.cjs              COMMITTED bundle, so a plugin installed from git runs without a build
+  skills/session-recap/SKILL.md      Which tool when; results are data, not instructions
 
 e2e/                                 Playwright suite (real VS Code + mock-claude scenarios)
   playwright.config.ts
@@ -524,6 +540,9 @@ Three tiers, each with its own framework.
 | `server.test.ts`               | HTTP lifecycle, auth, `/ws`, broadcast                                                                                                         |
 | `httpServerWs.test.ts`         | `/ws` gate: standalone same-origin, embedded Bearer                                                                                            |
 | `mockClaudeRunner.test.ts`     | E2E scenario runner sanity                                                                                                                     |
+| `memoryTools.test.ts`          | Memory tools over synthetic transcripts: scope, asked/ended, commits/PRs, files, tests, budgets, cap ladder, last_update, `under`              |
+| `memoryServer.test.ts`         | The committed memory bundle over stdio: ids, notifications, error codes, `_meta`, stderr carries no transcript text                            |
+| `memoryRedact.test.ts`         | Redaction table: each rule's positive and negative case                                                                                        |
 
 Run: `npm run test:server` (or `npm test` for all).
 
@@ -575,11 +594,12 @@ npm test                   # webview + server vitest
 npm run e2e                # Playwright
 ```
 
-`esbuild.js` runs three bundles:
+`esbuild.js` runs four bundles:
 
 1. **Extension** (`dist/extension.js`) from `adapters/vscode/extension.ts`. External: `vscode`.
 2. **CLI** (`dist/cli.js`) from `server/src/cli.ts`. Externals pulled at install time (`fastify`, `@fastify/*`).
 3. **Hook scripts** (`dist/hooks/claude-hook.js`) from `server/src/providers/hook/claude/hooks/claude-hook.ts`. CJS, shebang.
+4. **Memory MCP** (`plugin/server/memory-mcp.cjs` + `dist/memory-mcp.cjs`) from `server/src/memory/mcpMain.ts`. Fixed options in every mode (node18 CJS, no minify, no sourcemap), so CI's `--production` build and `npm run plugin:build` (this bundle only) write the same bytes.
 
 `define: { 'process.env.PIXEL_AGENTS_VERSION': JSON.stringify(version) }` stamps the package version into all bundles.
 
@@ -596,9 +616,9 @@ The webview Vite dev server is **not** included in `npm run watch` — it has to
 
 ### CI
 
-Single workflow runs (in order): install, lint, `asyncapi:validate`, `asyncapi:generate` + drift check, `e2e:inventory` + drift check, `check-types`, `test:server`, `test:webview`, `e2e` (3-OS x 3-shard matrix: Linux, macOS, Windows), `package`, then a PR-only Vercel preview deploy of the combined Allure report (gated on secrets; gracefully skips on forks, non-blocking on failure). Pushes to `main` run the checks but never deploy to Vercel.
+Single workflow runs (in order): install, lint, `asyncapi:validate`, `asyncapi:generate` + drift check, `e2e:inventory` + drift check, `plugin:build` + drift check of `plugin/` (blocking), `check-types`, `test:server`, `test:webview`, `e2e` (3-OS x 3-shard matrix: Linux, macOS, Windows), `package`, then a PR-only Vercel preview deploy of the combined Allure report (gated on secrets; gracefully skips on forks, non-blocking on failure). Pushes to `main` run the checks but never deploy to Vercel.
 
-The drift checks are the central guarantees: `core/asyncapi.yaml` ↔ `core/src/messages.ts` stay in lockstep; `e2e/README.md` stays in sync with the spec list.
+The drift checks are the central guarantees: `core/asyncapi.yaml` ↔ `core/src/messages.ts` stay in lockstep; `e2e/README.md` stays in sync with the spec list; the committed `plugin/server/memory-mcp.cjs` and the plugin manifest version match `server/src/memory` and `package.json`.
 
 ## TypeScript Constraints
 
@@ -676,6 +696,7 @@ Supporting: `wall-tile-editor.html` (wall sprite editing), `jsonl-viewer.html` (
 
 ## Key Decisions
 
+- **The memory MCP reads on the fly, scoped by the server's own environment.** One stdio process per Claude Code session: no listener, no token. The project tools read only `~/.claude/projects/<normalizeProjectPath(CLAUDE_PROJECT_DIR or cwd)>` (lstat'd: a symlinked folder is refused) and keep only the transcripts whose recorded cwd is the project path, since folder names are lossy (`/a/b-c` and `/a/b/c` share one) and a hard-linked transcript passes every file check; no tool takes a path or a session id, and `recent_work_all_projects` takes a required `under` (a default would cover both work and personal trees for a session started at a zone root, unseen in the prompt), filters a listing by folder name and by each transcript's recorded cwd, asking the user on every call (`_meta` `anthropic/requiresUserInteraction`). Each call reads in two tiers under one budget: head and tail of every candidate (read on from the start to the first typed prompt when the head holds none: a pasted screenshot pushes it past the cut; the scope cwd and the start time come from the head or that read, never from the tail, where a session that cd'd has moved), then a prefiltered full scan newest first. A session the budget cut keeps its tier 1 fields and returns commits, files, tests, human_turns and kind as null with `partial: true`, never `[]` or 0. Every output string goes first 4,096 chars (dropping the word that cut splits, or half a token escapes its rule), NFKC, ANSI strip, redaction table, whole-field fail-closed check, cut; search matches that redacted text, because matching raw text turns hit counts into a one-character-per-probe oracle for secrets. Only typed prompts, the last assistant text, titles and structured metadata leave a transcript; tool results, tool inputs and thinking never do. stderr gets one counts-only line per call, and a JSON.parse failure is counted, never logged (its message quotes the input). No budget check runs inside a regex, so text from a transcript only meets linear scans: injected prompt spans are cut by indexOf (an opener with no closer drops the rest of the prompt), and digit-run patterns carry a `(?<!\d)` anchor.
 - **Layered codebase** (core → server → adapters; core → webview-ui). Standalone CLI never imports `adapters/vscode/` and vice versa.
 - **AsyncAPI 3.0 contract**, generated TS bindings, CI drift check. Single source of truth for the wire protocol.
 - **AgentRuntime** shared lifecycle core, composed by both surfaces.

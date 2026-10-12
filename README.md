@@ -56,6 +56,45 @@ mv ~/.pixel-agents/layout.json ~/.pixel-agents/layout.json.bak
 
 Click **Layout** to edit rooms, furniture, rugs and Areas.
 
+## Memory for Claude (MCP)
+
+The plugin in `plugin/` gives Claude Code a read-only memory of your past sessions on this machine. Claude can answer "what did I do this week" for a sprint update, "did I already look into X", and "is another session editing this file right now", with four tools: `recent_work`, `find_past_work`, `active_now` and `recent_work_all_projects`.
+
+How it treats your transcripts:
+
+- It reads `~/.claude/projects` when a tool is called and keeps nothing. One stdio process per session, no network, no listener.
+- The project tools read only the transcripts of the working directory. The all-projects tool asks you on every call.
+- It returns prompts you typed, final answers, titles, commits, PRs, file paths and test verdicts. Tool output, tool inputs and thinking never leave the transcript.
+- Every string is redacted for secrets before it is returned, and search runs on the redacted text.
+- Its log on stderr carries counts only.
+
+Install:
+
+```bash
+claude plugin marketplace add gustavoortega/pixel-agents
+claude plugin install pixel-agents@pixel-agents-cozy
+```
+
+From a clone, for one session: `claude --plugin-dir ./plugin`.
+
+Plugins cannot ship permission rules, so every call prompts until you allow the three project tools in `~/.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_pixel-agents_memory__recent_work",
+      "mcp__plugin_pixel-agents_memory__find_past_work",
+      "mcp__plugin_pixel-agents_memory__active_now"
+    ]
+  }
+}
+```
+
+Never allow `recent_work_all_projects`: it reads every project under a directory, and the prompt is the point.
+
+The office app is separate in v1: the plugin neither starts it nor installs its hooks.
+
 ## Development
 
 ```bash

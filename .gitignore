@@ -33,7 +33,11 @@ allure-report/
 
 # Project-specific
 .claude
+# Memory MCP test fixtures (HOME dirs outside temp; see server/__tests__/helpers/memoryFixtures.ts).
+/server/.test-homes/
 .mcp.json
+# The plugin ships its MCP declaration.
+!/plugin/.mcp.json
 /sprites-export
 .vercel/
 agent-orchestrator.yaml
