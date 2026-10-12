@@ -18,6 +18,8 @@ export interface ActiveFx {
   startedAt: number;
   /** Pop only. */
   amount: number;
+  /** Pop only: the work the XP paid for, which the pop names. */
+  signal?: RosterEventInfo['signal'];
   /** Level-up only. */
   level: number;
 }
@@ -44,7 +46,14 @@ export class FxEngine {
     if (!shouldShowXpPop(event, this.lastPopAt.get(agentId), now)) return;
     if (this.active.length >= FX_MAX_CONCURRENT) return;
     this.lastPopAt.set(agentId, now);
-    this.active.push({ kind: 'pop', agentId, startedAt: now, amount: event.amount ?? 0, level: 0 });
+    this.active.push({
+      kind: 'pop',
+      agentId,
+      startedAt: now,
+      amount: event.amount ?? 0,
+      signal: event.signal,
+      level: 0,
+    });
   }
 
   private levelUp(agentId: number, level: number, now: number): void {
@@ -93,4 +102,3 @@ export class FxEngine {
 export function durationOf(a: Pick<ActiveFx, 'kind'>): number {
   return a.kind === 'levelUp' ? FX_LEVEL_UP_MS : FX_POP_MS;
 }
-

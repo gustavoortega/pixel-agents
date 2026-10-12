@@ -21,7 +21,7 @@ export interface OverlayStackInput {
   headTop: number;
   plate: BoxSize | null;
   chip: BoxSize | null;
-  /** The "+N XP" / "Level N!" text: above the plate and chip, never over the face. */
+  /** The "+60 commit" / "Level N!" text: above the plate and chip, never over the face. */
   fx?: BoxSize | null;
   bubble: BoxSize | null;
   /** Gap between neighbouring items; defaults to OVERLAY_STACK_GAP_PX. */
@@ -79,13 +79,7 @@ export function stackAbove(input: OverlayStackInput): OverlayStack {
     const h = input.head;
     return !!h && r.x < h.x + h.w && h.x < r.x + r.w && r.y < h.y + h.h && h.y < r.y + r.h;
   };
-  if (
-    items.length > 0 &&
-    !input.noFlip &&
-    input.floor &&
-    input.head &&
-    input.feetY !== undefined
-  ) {
+  if (items.length > 0 && !input.noFlip && input.floor && input.head && input.feetY !== undefined) {
     const stillAbove = items.some((r) => overlapsHead({ ...r, x: r.x + dx, y: r.y + dy }));
     if (stillAbove) {
       const below = stackBelow(input, [plate, chip, fx, bubble], gap, input.feetY);

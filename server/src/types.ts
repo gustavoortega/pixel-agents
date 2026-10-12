@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode';
 
-import type { ModelTier } from '../../core/src/provider.js';
+import type { ModelTier, ToolVerdict } from '../../core/src/provider.js';
 import type { HookSubRow } from './hookSubRows.js';
 import type { LeadWorkflowState } from './workflowRuns.js';
 
@@ -141,13 +141,22 @@ export interface AgentState {
   // -- Roster + XP (server/src/roster.ts, server/src/xp.ts) --
   /** Roster member this agent holds. Palette and hueShift come from the member. */
   rosterId?: string;
-  /** Per-turn XP bookkeeping. Transient, never persisted. */
-  xpTurn?: {
-    xpToolsInTurn: boolean;
-    turnFailed: boolean;
-    pendingShip: boolean;
-    shipped: boolean;
+  /** Real-work signals read from this agent's own transcript (transcriptParser.ts). `keys` are
+   *  hashed identities already paid (capped, oldest dropped); the turn counters reset on each
+   *  user prompt. Transient, never persisted: nothing re-appends a paid signal. */
+  signals?: {
+    keys: Set<string>;
+    editSinceGreen: boolean;
+    turnCommits: number;
+    turnTests: number;
   };
+  /** What each tool call in flight may prove, from its tool_use to its tool_result. Holds
+   *  verdicts only, never the command text. Transient. */
+  toolVerdicts?: Map<string, ToolVerdict[]>;
+  /** Set when the reader starts this transcript from offset 0, to that moment less
+   *  TRANSCRIPT_FRESHNESS_WINDOW_MS. A tool result stamped earlier was written before the agent
+   *  was watched and pays no XP: a young file can open with copied history. Transient. */
+  historyBefore?: number;
 }
 
 export interface PersistedAgent {

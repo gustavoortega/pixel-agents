@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -7,6 +8,8 @@ import type {
   AgentEvent,
   HookProvider,
   ModelTier,
+  SignalHit,
+  ToolVerdict,
   TurnSignal,
   TurnTraits,
 } from '../../../../../core/src/provider.js';
@@ -14,7 +17,6 @@ import {
   SESSION_TITLE_MAX_LENGTH,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
 } from '../../../constants.js';
-import { isShipCommand } from '../../../xp.js';
 import {
   areHooksInstalled as installerAreHooksInstalled,
   installHooks as installerInstallHooks,
@@ -195,12 +197,6 @@ function normalizeSessionEvent(
           toolName,
           input: toolInput,
           runInBackground: toolInput.run_in_background === true,
-          // Only the verdict leaves this file: the command text never rides the event.
-          ...(toolName === 'Bash' &&
-          typeof toolInput.command === 'string' &&
-          isShipCommand(toolInput.command)
-            ? { ships: true }
-            : {}),
         },
       };
     }
@@ -487,6 +483,295 @@ export function turnSignal(record: unknown): TurnSignal {
   return stamp('ignore');
 }
 
+// ── Real-work signals (what XP pays for) ──
+
+const EDIT_TOOLS: ReadonlySet<string> = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+const TEST_RUNNERS: ReadonlySet<string> = new Set(['vitest', 'jest', 'pytest']);
+const PACKAGE_MANAGERS: ReadonlySet<string> = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+/** git options before the subcommand that take the next word as their value. */
+const GIT_VALUE_OPTIONS: ReadonlySet<string> = new Set(['-C', '-c']);
+/** One segment is one simple command, cut once heredoc bodies, quoted spans and comments are
+ *  blanked. They hold text such as a commit message or a PR body, and a merge pays on its exit
+ *  code alone, so a command named in text must never read as one that ran. */
+const SHELL_SEPARATORS = /\n|&&|\|\||;|\|/;
+/** A heredoc operator and its delimiter: `<<EOF`, `<<-EOF`, `<<'EOF'`, `<< "EOF"`, `<<\EOF`.
+ *  A here-string (`<<<`) is not one. Read with matchAll only. */
+const HEREDOC_START = /(?<!<)<<(?!<)(-?)[ \t]*\\?(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/g;
+/** A `#` that starts a word opens a comment, which can hold an apostrophe. */
+const COMMENT_START = /[\s;&|()]/;
+/** A help page runs nothing and exits 0. */
+const HELP_FLAGS: ReadonlySet<string> = new Set(['-h', '--help']);
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const PR_URL = /https?:\/\/[^\s/]+\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/;
+/** What git prints for a new commit: `[main abc1234]`, `[main (root-commit) abc1234]`,
+ *  `[detached HEAD abc1234]`. Read with matchAll only, so the /g state never leaks. */
+const COMMIT_LINE = /^\[[^\]\n]*\b([0-9a-f]{7,40})\]/gm;
+const TESTS_LINE = /^\s*Tests:?\s+(.+)$/m;
+const JS_FAILED_FILES = /^\s*Test (?:Files|Suites):?\s+.*\d+ failed/m;
+const PYTEST_SUMMARY = /^=+ (.+?) in [\d.]+s.*=+$/gm;
+const GO_OK = /^ok\s+\S+/m;
+const GO_FAIL = /^(?:FAIL|--- FAIL:)/m;
+/** A failed TAP test (node --test, tap, tape, mocha's TAP reporter). */
+const TAP_NOT_OK = /^\s*not ok\b/m;
+/** What gh prints, with exit code 0 and no terminal, for a PR that is merged already. */
+const ALREADY_MERGED = /was already merged/;
+const PASSED = /(\d+) passed/;
+const FAILED = /(\d+) failed/;
+const ERRORS = /(\d+) errors?/;
+
+/** Hashed identity of a signal: dedupes without keeping repo names, PR numbers or shas. */
+function signalKey(raw: string): string {
+  return createHash('sha256').update(raw).digest('hex').slice(0, 16);
+}
+
+/** The command without its heredoc bodies. A body runs from the line after its operator through
+ *  the line holding only its delimiter (leading tabs dropped for `<<-`), or to the end. */
+function stripHeredocs(command: string): string {
+  const lines = command.split('\n');
+  const kept: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i++];
+    kept.push(line);
+    for (const [, dash, , word] of line.matchAll(HEREDOC_START)) {
+      while (i < lines.length) {
+        const body = lines[i++];
+        if ((dash ? body.replace(/^\t+/, '') : body) === word) break;
+      }
+    }
+  }
+  return kept.join('\n');
+}
+
+/** The command with each quoted span reduced to an empty quoted word and each comment dropped.
+ *  The empty word keeps option values in place (`git -c "user.name=A B" commit`). An unclosed
+ *  quote runs to the end. */
+function blankQuotesAndComments(command: string): string {
+  let out = '';
+  let i = 0;
+  while (i < command.length) {
+    const c = command[i];
+    if (c === '\\') {
+      out += command.slice(i, i + 2);
+      i += 2;
+    } else if (c === "'" || c === '"') {
+      // Only a plain single quote takes no escapes: `$'...'` does, like a double quote.
+      const escapes = c === '"' || command[i - 1] === '$';
+      let j = i + 1;
+      while (j < command.length && command[j] !== c) j += escapes && command[j] === '\\' ? 2 : 1;
+      out += "''";
+      i = j + 1;
+    } else if (c === '#' && (i === 0 || COMMENT_START.test(command[i - 1]))) {
+      const end = command.indexOf('\n', i);
+      i = end < 0 ? command.length : end;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
+/** A shell segment's words, leading `VAR=value` assignments dropped. */
+function commandWords(segment: string): string[] {
+  const words = segment.trim().split(/\s+/);
+  let first = 0;
+  while (first < words.length && ENV_ASSIGNMENT.test(words[first])) first++;
+  return words.slice(first);
+}
+
+/** The git subcommand, past global options such as `-C repo` or `-c key=value`. */
+function gitSubcommand(words: string[]): string | undefined {
+  let i = 1;
+  while (i < words.length && words[i].startsWith('-')) {
+    i += GIT_VALUE_OPTIONS.has(words[i]) ? 2 : 1;
+  }
+  return words[i];
+}
+
+function isTestRun(words: string[]): boolean {
+  if (words.some((w) => TEST_RUNNERS.has(w.slice(w.lastIndexOf('/') + 1)))) return true;
+  if (words[0] === 'go' && words[1] === 'test') return true;
+  return (
+    PACKAGE_MANAGERS.has(words[0]) &&
+    (words[1] === 'test' || (words[1] === 'run' && (words[2] ?? '').startsWith('test')))
+  );
+}
+
+/** The PR a `gh pr merge` segment names: a URL gives repo and number, a bare number only the
+ *  number. Undefined for a branch name or the current branch. */
+function mergeKey(segment: string, words: string[]): string | undefined {
+  const url = PR_URL.exec(segment);
+  if (url) return signalKey(`merge:${url[1]}#${url[2]}`);
+  const n = words.slice(3).find((w) => /^\d+$/.test(w));
+  return n ? signalKey(`merge:#${n}`) : undefined;
+}
+
+/**
+ * What a Claude tool call may prove. An edit is the change a later green test run must
+ * follow; a Bash command is read segment by segment for commits, PRs and test runs. Only
+ * verdicts and hashed keys leave this function, never the command text.
+ */
+export function toolVerdicts(name: string, input: unknown): ToolVerdict[] {
+  if (EDIT_TOOLS.has(name)) return [{ kind: 'edit' }];
+  if (name !== 'Bash') return [];
+  const command = (input as { command?: unknown } | null)?.command;
+  if (typeof command !== 'string') return [];
+  const found = new Map<ToolVerdict['kind'], ToolVerdict>();
+  const add = (verdict: ToolVerdict): void => {
+    if (!found.has(verdict.kind)) found.set(verdict.kind, verdict);
+  };
+  for (const segment of blankQuotesAndComments(stripHeredocs(command)).split(SHELL_SEPARATORS)) {
+    const words = commandWords(segment);
+    if (words.some((w) => HELP_FLAGS.has(w))) continue;
+    if (words[0] === 'git') {
+      const sub = gitSubcommand(words);
+      if (sub === 'commit') add({ kind: words.includes('--amend') ? 'commit-amend' : 'commit' });
+      else if (sub === 'cherry-pick') add({ kind: 'commit' });
+    } else if (words[0] === 'gh' && words[1] === 'pr') {
+      if (words[2] === 'create') {
+        add({ kind: 'pr-create' });
+      } else if (
+        words[2] === 'merge' &&
+        // --auto only queues the merge on GitHub: nothing is merged when the command returns.
+        !words.includes('--auto') &&
+        !words.includes('--disable-auto')
+      ) {
+        const key = mergeKey(segment, words);
+        add(key ? { kind: 'pr-merge', key } : { kind: 'pr-merge' });
+      }
+    } else if (isTestRun(words)) {
+      add({ kind: 'test' });
+    }
+  }
+  return [...found.values()];
+}
+
+/** The output a result carries. Both streams, since jest prints its summary to stderr. */
+function resultText(toolUseResult: unknown, content: unknown): string {
+  const out = toolUseResult as { stdout?: unknown; stderr?: unknown } | null;
+  if (out !== null && typeof out === 'object' && typeof out.stdout === 'string') {
+    return `${out.stdout}\n${typeof out.stderr === 'string' ? out.stderr : ''}`;
+  }
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const texts: string[] = [];
+  for (const block of content as Array<{ type?: unknown; text?: unknown } | null>) {
+    if (block?.type === 'text' && typeof block.text === 'string') texts.push(block.text);
+  }
+  return texts.join('\n');
+}
+
+/** The number a summary gives for one outcome, 0 when it names none. */
+function summaryCount(summary: string, outcome: RegExp): number {
+  const match = outcome.exec(summary);
+  return match ? Number(match[1]) : 0;
+}
+
+type SuiteVerdict = 'green' | 'red' | undefined;
+
+function jsSuite(text: string): SuiteVerdict {
+  const line = TESTS_LINE.exec(text);
+  const failedFiles = JS_FAILED_FILES.test(text);
+  if (!line && !failedFiles) return undefined;
+  return line &&
+    summaryCount(line[1], PASSED) >= 1 &&
+    summaryCount(line[1], FAILED) === 0 &&
+    !failedFiles
+    ? 'green'
+    : 'red';
+}
+
+function pytestSuite(text: string): SuiteVerdict {
+  const summary = [...text.matchAll(PYTEST_SUMMARY)].at(-1)?.[1];
+  if (summary === undefined) return undefined;
+  return summaryCount(summary, PASSED) >= 1 &&
+    summaryCount(summary, FAILED) === 0 &&
+    summaryCount(summary, ERRORS) === 0
+    ? 'green'
+    : 'red';
+}
+
+function goSuite(text: string): SuiteVerdict {
+  const ok = GO_OK.test(text);
+  const failed = GO_FAIL.test(text);
+  if (!ok && !failed) return undefined;
+  return ok && !failed ? 'green' : 'red';
+}
+
+/** TAP's `ok` lines read as a green go summary, so its failures must read red. */
+function tapSuite(text: string): SuiteVerdict {
+  return TAP_NOT_OK.test(text) ? 'red' : undefined;
+}
+
+/** A runner's own summary says the suite passed, and no other runner's says it failed. No
+ *  summary pays nothing: a background start, a quiet run and a truncated log all exit 0. */
+function testsGreen(text: string): boolean {
+  const suites = [jsSuite(text), pytestSuite(text), goSuite(text), tapSuite(text)];
+  return suites.includes('green') && !suites.includes('red');
+}
+
+/**
+ * The work a Claude tool result proves for its tool_use's verdicts. A failed result proves
+ * nothing, an edit included. Commits, PRs and test runs are read from the command's own
+ * output; a merge is proven by the command succeeding, since gh prints nothing on a merge
+ * without a terminal, unless it says the PR was merged already.
+ */
+export function resultSignals(verdicts: ToolVerdict[], record: unknown): SignalHit[] {
+  const r = (record ?? {}) as {
+    message?: { content?: unknown };
+    content?: unknown;
+    toolUseResult?: unknown;
+  };
+  const content = r.message?.content ?? r.content;
+  if (!Array.isArray(content)) return [];
+  const block = (
+    content as Array<{
+      type?: unknown;
+      tool_use_id?: unknown;
+      is_error?: unknown;
+      content?: unknown;
+    } | null>
+  ).find((b) => b?.type === 'tool_result');
+  if (!block || block.is_error === true) return [];
+  const text = resultText(r.toolUseResult, block.content);
+  const hits: SignalHit[] = [];
+  for (const verdict of verdicts) {
+    switch (verdict.kind) {
+      case 'edit':
+        hits.push({ kind: 'edit' });
+        break;
+      case 'commit':
+        // An amend in the same command prints a line too, and no line says which one it is.
+        if (verdicts.some((v) => v.kind === 'commit-amend')) break;
+        for (const match of text.matchAll(COMMIT_LINE)) {
+          hits.push({ kind: 'commit', key: signalKey(`commit:${match[1]}`) });
+        }
+        break;
+      case 'commit-amend':
+        // An amend rewrites a commit that already paid.
+        break;
+      case 'pr-create': {
+        const url = PR_URL.exec(text);
+        if (url) hits.push({ kind: 'pr', key: signalKey(`pr:${url[1]}#${url[2]}`) });
+        break;
+      }
+      case 'pr-merge':
+        // Its success is the only proof, and a re-run on a merged PR succeeds too.
+        if (ALREADY_MERGED.test(text)) break;
+        hits.push({
+          kind: 'merge',
+          key: verdict.key ?? signalKey(`merge:${String(block.tool_use_id)}`),
+        });
+        break;
+      case 'test':
+        if (testsGreen(text)) hits.push({ kind: 'tests' });
+        break;
+    }
+  }
+  return hits;
+}
+
 // ── The provider ──
 
 export const claudeProvider: HookProvider = {
@@ -512,6 +797,8 @@ export const claudeProvider: HookProvider = {
   extractSessionTitle,
   turnSignal,
   turnTraits: TURN_TRAITS,
+  toolVerdicts,
+  resultSignals,
   transcriptUsage: createClaudeTranscriptUsage(extractSessionTitle),
 
   getSessionDirs,

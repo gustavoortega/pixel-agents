@@ -31,6 +31,9 @@ export function clearAgentActivity(
     agent.activeSubagentToolNames.clear();
   }
 
+  // Callers run in transcript order (a prompt, an interrupt, a file switch): every result
+  // before this point was read, so a verdict left belongs to a call that never finished.
+  agent.toolVerdicts?.clear();
   agent.isWaiting = false;
   agent.permissionSent = false;
   cancelPermissionTimer(agentId, permissionTimers);

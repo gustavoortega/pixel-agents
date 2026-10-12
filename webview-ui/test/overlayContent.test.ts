@@ -162,15 +162,13 @@ test('nameplateHeight reserves the real box: plate lines, border, shadow and the
   assert.equal(nameplateHeight({ ...full, badge: null, name: '', sub: null }), 0);
 });
 
-test('shouldShowXpPop: only a ship, a level-up or a big bonus, once per cooldown', () => {
+test('shouldShowXpPop: every award and level-up pops, once per cooldown', () => {
   const t = 1_000_000;
-  assert.equal(shouldShowXpPop({ kind: 'xp', amount: 85 }, undefined, t), false);
-  assert.equal(shouldShowXpPop({ kind: 'xp', amount: 15 }, undefined, t), false);
-  assert.equal(shouldShowXpPop({ kind: 'xp', amount: 100 }, undefined, t), true); // ship
-  assert.equal(shouldShowXpPop({ kind: 'xp', amount: 105 }, undefined, t), true); // 3-streak bonus
+  assert.equal(shouldShowXpPop({ kind: 'xp', amount: 40, signal: 'tests' }, undefined, t), true);
+  assert.equal(shouldShowXpPop({ kind: 'xp', amount: 0 }, undefined, t), false);
   assert.equal(shouldShowXpPop({ kind: 'levelUp' }, undefined, t), true);
-  assert.equal(shouldShowXpPop({ kind: 'levelUp' }, t - 9_999, t), false);
-  assert.equal(shouldShowXpPop({ kind: 'levelUp' }, t - 10_000, t), true);
+  assert.equal(shouldShowXpPop({ kind: 'xp', amount: 60 }, t - 1_499, t), false);
+  assert.equal(shouldShowXpPop({ kind: 'xp', amount: 60 }, t - 1_500, t), true);
 });
 
 test('nameplateStyle: the tier colors the Lv badge only; the border is the same for every agent', () => {

@@ -12,7 +12,7 @@ This is a fork of [pixel-agents](https://github.com/pixel-agents-hq/pixel-agents
 
 **Art.** Every sprite is drawn by code in `scripts/cozy-art` at 2x density: 12 characters, 41 furniture sprites, floors, walls, rugs, pets. No paid asset pack. `npm run cozy:assets` regenerates them byte for byte.
 
-**A crew that remembers.** Sessions claim a member from `~/.pixel-agents/roster.json` and keep its name, look and XP across restarts. XP per turn: tool turn +50, clean turn +25 (plus a streak bonus up to 50), text-only turn +10, finished sub-agent +15, a commit or PR +100. Level N to N+1 costs `round(100 * N^1.5)`.
+**A crew that remembers.** Sessions claim a member from `~/.pixel-agents/roster.json` and keep its name, look and XP across restarts. XP pays for real work, read from the session's own transcript: a commit +60 (at most 3 per turn, an amend pays nothing), a PR created +120, a PR merged +200, tests going green after an edit +40 (at most once per turn). Turns, tool calls and sub-agents pay nothing, and a session without a transcript (a hooks-only provider) stays at its level. Level N to N+1 costs `round(100 * N^1.5)`.
 
 **Idle looks idle.** Status comes from the tail of the transcript, so a session that finished an hour ago does not sit there typing. Waiting agents read a book, nap after 10 minutes, or walk to the lounge for coffee. Sub-agents show up as gray helpers next to their parent.
 

@@ -259,9 +259,12 @@ export interface RosterEvent {
   kind: RosterEventKind;
   amount?: number;
   level?: number;
+  signal?: RosterEventSignal;
 }
 
 export type RosterEventKind = 'xp' | 'levelUp';
+
+export type RosterEventSignal = 'commit' | 'pr' | 'merge' | 'tests';
 
 export interface LayoutLoaded {
   type: 'layoutLoaded';

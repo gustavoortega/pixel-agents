@@ -1,26 +1,18 @@
 /**
- * XP rules (pure). The hook handler feeds normalized events in; the result says what the
- * roster member earned. No I/O and no clock, so the whole table is unit-testable.
+ * XP rules (pure). XP pays for real work only: a commit, a PR created or merged, tests going
+ * green after a change. Activity (turns, tools, sub-agents) pays nothing, so a crew of 50 agents
+ * levels its lead up no faster than one agent doing the same work. No I/O and no clock, so the
+ * whole table is unit-testable.
  */
 
-import type { AgentState } from './types.js';
-
-export const XP_TURN_WITH_TOOLS = 50;
-export const XP_CLEAN_TURN = 25;
-export const XP_TEXT_ONLY_TURN = 10;
-export const XP_SUBAGENT = 15;
-export const XP_SHIP = 100;
-export const XP_STREAK_STEP = 10;
-export const XP_STREAK_BONUS_CAP = 50;
-export const MOOD_HAPPY_STREAK = 3;
+export const SIGNAL_XP = { commit: 60, pr: 120, merge: 200, tests: 40 } as const;
+export type SignalKind = keyof typeof SIGNAL_XP;
+/** A turn that commits more than this is splitting work to farm XP, not shipping more of it. */
+export const MAX_COMMITS_PER_TURN = 3;
+/** Re-running a green suite proves nothing new. */
+export const MAX_TESTS_PER_TURN = 1;
+export const MOOD_HAPPY_STREAK = 1;
 export const MOOD_FRUSTRATED_FAILURES = 3;
-
-/** Per-turn bookkeeping kept on the agent between hook events. */
-export type XpTurnState = NonNullable<AgentState['xpTurn']>;
-
-export function newXpTurnState(): XpTurnState {
-  return { xpToolsInTurn: false, turnFailed: false, pendingShip: false, shipped: false };
-}
 
 /** The member counters the rules read. */
 export interface XpMember {
@@ -29,22 +21,15 @@ export interface XpMember {
   consecutiveFailures: number;
 }
 
-/** What a rule changes on the member. xp/turns/cleanTurns/ships are added, the rest are set. */
+/** What a rule changes on the member. `xp` is added, the rest are set. */
 export interface MemberChange {
   xp?: number;
-  turns?: number;
-  cleanTurns?: number;
-  ships?: number;
   streak?: number;
-  bestStreak?: number;
   consecutiveFailures?: number;
 }
 
 export type XpEvent =
-  | { kind: 'toolStart'; ships?: boolean }
-  | { kind: 'toolEnd'; failed?: boolean }
-  | { kind: 'turnEnd'; awaitingInput?: boolean }
-  | { kind: 'subagentEnd' };
+  { type: 'signal'; signal: SignalKind } | { type: 'toolEnd'; failed?: boolean };
 
 export interface XpResult {
   xpDelta: number;
@@ -69,7 +54,8 @@ export function levelForXp(xp: number): { level: number; xpIntoLevel: number; xp
   return { level, xpIntoLevel: rest, xpToNext: xpForLevel(level) };
 }
 
-/** The member's mood, derived and never stored: an alarm beats a failure streak beats a win streak. */
+/** The member's mood, derived and never stored: an alarm beats a failure streak beats real work
+ *  earned since the last failed tool. */
 export function moodFor(state: {
   tripwire: boolean;
   consecutiveFailures: number;
@@ -87,95 +73,32 @@ export function moodFor(state: {
   return 'neutral';
 }
 
-// A segment is one simple command: shell separators cut the line first, so a quoted
-// "git commit" inside an echo never starts a segment.
-const SEGMENT_SPLIT = /[;&|\n]/;
-const LEADING_ASSIGNMENTS = /^(?:[A-Za-z_]\w*=\S*\s+)+/;
-const SHIP_COMMAND = /^git\s+((-[cC]\s+\S+|-\S+)\s+){0,4}commit\b|^gh\s+pr\s+create\b/;
-
-/** Does this shell command commit or open a PR? Only the command text is read, never kept. */
-export function isShipCommand(command: string): boolean {
-  for (const raw of command.split(SEGMENT_SPLIT)) {
-    const segment = raw.trim().replace(LEADING_ASSIGNMENTS, '');
-    if (SHIP_COMMAND.test(segment)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /**
- * Apply one event. Mutates `turn` (the agent's per-turn state) and returns what the member
- * earned; the caller applies `change` to the roster. Awards happen only for hook events.
+ * Apply one event and return what the member earned; the caller applies `change` to the roster.
+ * Awards come only from the lead's own transcript tool results; hooks feed the mood only;
+ * sidechain records, teammates, sub-agents and hooks-only providers never award.
  */
-export function applyXpEvent(member: XpMember, turn: XpTurnState, event: XpEvent): XpResult {
+export function applyXpEvent(member: XpMember, event: XpEvent): XpResult {
   const change: MemberChange = {};
   let xpDelta = 0;
 
-  switch (event.kind) {
-    case 'toolStart':
-      turn.xpToolsInTurn = true;
-      // One ship per turn: a second commit in the same turn earns nothing.
-      if (event.ships && !turn.shipped) {
-        turn.pendingShip = true;
-      }
-      break;
-
-    case 'toolEnd':
-      if (event.failed) {
-        turn.turnFailed = true;
-        turn.pendingShip = false;
-        change.consecutiveFailures = member.consecutiveFailures + 1;
-      } else {
-        if (member.consecutiveFailures !== 0) {
-          change.consecutiveFailures = 0;
-        }
-        if (turn.pendingShip) {
-          // The award waits for the tool to succeed: a commit that errored shipped nothing.
-          turn.pendingShip = false;
-          turn.shipped = true;
-          xpDelta += XP_SHIP;
-          change.ships = 1;
-        }
-      }
-      break;
-
-    case 'turnEnd': {
-      // idle_prompt is the CLI waiting on the user, not a finished turn.
-      if (event.awaitingInput) {
-        break;
-      }
-      change.turns = 1;
-      if (turn.xpToolsInTurn) {
-        xpDelta += XP_TURN_WITH_TOOLS;
-        if (!turn.turnFailed) {
-          const streak = member.streak + 1;
-          xpDelta += XP_CLEAN_TURN + Math.min(XP_STREAK_STEP * streak, XP_STREAK_BONUS_CAP);
-          change.streak = streak;
-          change.bestStreak = streak;
-          change.cleanTurns = 1;
-        } else {
-          change.streak = 0;
-        }
-      } else {
-        // Chatting earns a little and leaves the streak alone, so talking cannot be farmed.
-        xpDelta += XP_TEXT_ONLY_TURN;
-      }
-      turn.xpToolsInTurn = false;
-      turn.turnFailed = false;
-      turn.pendingShip = false;
-      turn.shipped = false;
-      break;
+  if (event.type === 'signal') {
+    xpDelta = SIGNAL_XP[event.signal];
+    change.xp = xpDelta;
+    // streak counts awards since the last failed tool: it is what makes the member happy.
+    change.streak = member.streak + 1;
+  } else if (event.failed) {
+    change.consecutiveFailures = member.consecutiveFailures + 1;
+    if (member.streak !== 0) {
+      change.streak = 0;
     }
-
-    case 'subagentEnd':
-      xpDelta += XP_SUBAGENT;
-      break;
+  } else if (member.consecutiveFailures !== 0) {
+    // Only a real change: an empty one skips the roster write and the broadcast on every tool.
+    change.consecutiveFailures = 0;
   }
 
   const result: XpResult = { xpDelta, change };
   if (xpDelta > 0) {
-    change.xp = xpDelta;
     const before = levelForXp(member.xp).level;
     const after = levelForXp(member.xp + xpDelta).level;
     if (after > before) {

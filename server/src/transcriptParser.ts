@@ -1,8 +1,8 @@
 const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
 
-import type { HookProvider } from '../../core/src/provider.js';
+import type { HookProvider, SignalHit } from '../../core/src/provider.js';
 import type { AgentStateStore } from './agentStateStore.js';
-import { TEXT_IDLE_DELAY_MS, TOOL_DONE_DELAY_MS } from './constants.js';
+import { SIGNAL_KEYS_MAX, TEXT_IDLE_DELAY_MS, TOOL_DONE_DELAY_MS } from './constants.js';
 import { updateContextUsage } from './contextUsage.js';
 import { applySessionTitle } from './sessionTitle.js';
 import { hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
@@ -15,6 +15,8 @@ import {
 } from './timerManager.js';
 import type { AgentState } from './types.js';
 import { hasWorkflowTool, noteWorkflowRun } from './workflowRuns.js';
+import { MAX_COMMITS_PER_TURN, MAX_TESTS_PER_TURN } from './xp.js';
+import { awardSignal } from './xpAward.js';
 
 /** Empty set used as safe fallback when no HookProvider is registered. */
 const EMPTY_EXEMPT_TOOLS: ReadonlySet<string> = new Set();
@@ -177,6 +179,7 @@ export function processTranscriptLine(
             agent.activeToolIds.add(block.id);
             agent.activeToolStatuses.set(block.id, status);
             agent.activeToolNames.set(block.id, toolName);
+            noteToolVerdicts(agent, agents, record, block.id, toolName, block.input);
             if (!exemptTools().has(toolName)) {
               hasNonExemptTool = true;
             }
@@ -452,12 +455,16 @@ export function processTranscriptLine(
           if (agent.activeToolIds.size === 0) {
             agent.hadToolsInTurn = false;
           }
+          // Last on purpose: the parse swallows any throw, and a bug here must not
+          // skip the tool bookkeeping above.
+          readToolSignals(agentId, agent, agents, record, blocks, turn?.timestampMs);
         } else {
           // New user text prompt — new turn starting
           cancelWaitingTimer(agentId, waitingTimers);
           clearAgentActivity(agent, agentId, agents, permissionTimers);
           agents.broadcast({ type: 'agentStatus', id: agentId, status: 'active' });
           agent.hadToolsInTurn = false;
+          startSignalTurn(agent);
         }
       } else if (typeof content === 'string' && content.trim()) {
         // New user text prompt — new turn starting
@@ -465,6 +472,7 @@ export function processTranscriptLine(
         clearAgentActivity(agent, agentId, agents, permissionTimers);
         agents.broadcast({ type: 'agentStatus', id: agentId, status: 'active' });
         agent.hadToolsInTurn = false;
+        startSignalTurn(agent);
       }
     } else if (record.type === 'queue-operation' && record.operation === 'enqueue') {
       // Background agent completed — parse tool-use-id from XML content
@@ -510,6 +518,8 @@ export function processTranscriptLine(
     } else if (record.type === 'system' && record.subtype === 'turn_duration') {
       cancelWaitingTimer(agentId, waitingTimers);
       cancelPermissionTimer(agentId, permissionTimers);
+      // Every result of the turn was read before this record: a verdict left is a dead call.
+      agent.toolVerdicts?.clear();
 
       // Definitive turn-end: clean up any stale tool state, but preserve background agents.
       // When hooks are active, the Stop hook already handled the status change,
@@ -589,6 +599,9 @@ export function processTranscriptLine(
         'queue-operation',
         'custom-title',
         'ai-title',
+        // Re-appended many times per PR, including PRs this session did not open: never
+        // evidence of work, and logging it would repeat for every one.
+        'pr-link',
       ]);
       if (!knownSkippableTypes.has(record.type)) {
         agent.seenUnknownRecordTypes.add(record.type);
@@ -602,6 +615,127 @@ export function processTranscriptLine(
     }
   } catch {
     // Ignore malformed lines
+  }
+}
+
+// ── Real-work signals (XP) ──
+
+/** Only the lead's own work pays. A sidechain record is a sub-agent's turn written inline, an
+ *  agent with a lead is a teammate, and a store without a roster (the shadow store) has no
+ *  member to pay; a provider without the signal seam earns nothing. */
+function earnsXp(
+  agent: AgentState,
+  agents: AgentStateStore,
+  record: { isSidechain?: unknown },
+): boolean {
+  return (
+    record.isSidechain !== true &&
+    agent.leadAgentId === undefined &&
+    agents.roster !== undefined &&
+    hookProvider?.toolVerdicts !== undefined &&
+    hookProvider.resultSignals !== undefined
+  );
+}
+
+/** Keep what a tool call may prove until its result is read. */
+function noteToolVerdicts(
+  agent: AgentState,
+  agents: AgentStateStore,
+  record: { isSidechain?: unknown },
+  toolId: string,
+  toolName: string,
+  input: unknown,
+): void {
+  if (!earnsXp(agent, agents, record)) return;
+  try {
+    const verdicts = hookProvider?.toolVerdicts?.(toolName, input ?? {}) ?? [];
+    if (verdicts.length > 0) (agent.toolVerdicts ??= new Map()).set(toolId, verdicts);
+  } catch {
+    // Runs mid-record: a verdict bug must not cost the tool start that follows.
+    console.warn(`[Pixel Agents] JSONL: Agent ${agent.id} - tool verdict failed`);
+  }
+}
+
+/** A new user prompt opens a turn: the per-turn caps start over. */
+function startSignalTurn(agent: AgentState): void {
+  if (agent.signals) {
+    agent.signals.turnCommits = 0;
+    agent.signals.turnTests = 0;
+  }
+}
+
+function rememberSignal(signals: NonNullable<AgentState['signals']>, key: string): void {
+  signals.keys.add(key);
+  if (signals.keys.size > SIGNAL_KEYS_MAX) {
+    const oldest = signals.keys.values().next().value;
+    if (oldest !== undefined) signals.keys.delete(oldest);
+  }
+}
+
+/** A result stamped before the agent's from-0 read began was history when it was read. A record
+ *  without a timestamp is not proven old. */
+function isHistory(agent: AgentState, timestampMs: number | undefined): boolean {
+  return (
+    agent.historyBefore !== undefined &&
+    timestampMs !== undefined &&
+    timestampMs < agent.historyBefore
+  );
+}
+
+/**
+ * Pay the work a tool result proves. A result whose tool_use was never read (before the
+ * adoption offset) has no verdict and pays nothing, and neither does one read back from history.
+ * toolUseResult describes the record's tool_result, so it is trusted only when there is exactly
+ * one.
+ */
+function readToolSignals(
+  agentId: number,
+  agent: AgentState,
+  agents: AgentStateStore,
+  record: { isSidechain?: unknown },
+  blocks: Array<{ type: string; tool_use_id?: string }>,
+  timestampMs: number | undefined,
+): void {
+  if (!agent.toolVerdicts) return;
+  const results = blocks.filter((b) => b.type === 'tool_result');
+  const ids = results.map((b) => b.tool_use_id);
+  const verdicts = ids.length === 1 && ids[0] ? agent.toolVerdicts.get(ids[0]) : undefined;
+  for (const id of ids) if (id) agent.toolVerdicts.delete(id);
+  if (!verdicts || !earnsXp(agent, agents, record) || isHistory(agent, timestampMs)) return;
+  const hits: SignalHit[] = hookProvider?.resultSignals?.(verdicts, record) ?? [];
+  if (hits.length === 0) return;
+  const signals = (agent.signals ??= {
+    keys: new Set(),
+    editSinceGreen: false,
+    turnCommits: 0,
+    turnTests: 0,
+  });
+  for (const hit of hits) {
+    switch (hit.kind) {
+      case 'edit':
+        signals.editSinceGreen = true;
+        break;
+      case 'commit':
+        if (!hit.key || signals.keys.has(hit.key)) break;
+        if (signals.turnCommits >= MAX_COMMITS_PER_TURN) break;
+        rememberSignal(signals, hit.key);
+        signals.turnCommits++;
+        awardSignal(agents, agentId, 'commit');
+        break;
+      case 'pr':
+      case 'merge':
+        if (!hit.key || signals.keys.has(hit.key)) break;
+        rememberSignal(signals, hit.key);
+        awardSignal(agents, agentId, hit.kind);
+        break;
+      case 'tests':
+        // Green tests pay only after a change since the last paid green run.
+        if (!signals.editSinceGreen || signals.turnTests >= MAX_TESTS_PER_TURN) break;
+        signals.turnTests++;
+        signals.editSinceGreen = false;
+        awardSignal(agents, agentId, 'tests');
+        break;
+    }
   }
 }
 
