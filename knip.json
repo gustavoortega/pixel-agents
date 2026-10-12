@@ -10,6 +10,7 @@
     "@fastify/websocket"
   ],
   "ignoreExportsUsedInFile": true,
+  "ignoreBinaries": ["mkfifo"],
   "ignore": [
     "core/src/index.ts",
     "server/src/providers/hook/claude/hooks/claude-hook.ts",
@@ -36,6 +37,7 @@
       "entry": [
         "src/server.ts",
         "src/cli.ts",
+        "src/memory/mcpMain.ts",
         "__tests__/**/*.ts"
       ],
       "project": [

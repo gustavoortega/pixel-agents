@@ -4,6 +4,8 @@ const path = require('path');
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
+/** `npm run plugin:build`: only the memory MCP bundle. */
+const memoryMcpOnly = process.argv.includes('--memory-mcp');
 
 /** Extension version read from package.json at build time, inlined via esbuild `define`. */
 const pkgVersion = JSON.parse(
@@ -83,6 +85,10 @@ const esbuildProblemMatcherPlugin = {
 };
 
 async function main() {
+  if (memoryMcpOnly) {
+    await buildMemoryMcp();
+    return;
+  }
   const ctx = await esbuild.context({
     entryPoints: ['adapters/vscode/extension.ts'],
     bundle: true,
@@ -110,6 +116,7 @@ async function main() {
     buildHooks();
     await buildCli();
     await buildUninstall();
+    await buildMemoryMcp();
   }
 }
 
@@ -126,6 +133,40 @@ async function buildUninstall() {
     define: versionDefine,
     logLevel: 'silent',
   });
+}
+
+/**
+ * Bundle the memory MCP stdio server into the plugin (committed, so a plugin installed from git runs without a
+ * build) and into dist/. Fixed options in every mode, `--production` included, so CI's build and
+ * `npm run plugin:build` write the same bytes and the drift check stays meaningful. The plugin manifest's
+ * version follows package.json.
+ */
+async function buildMemoryMcp() {
+  const result = await esbuild.build({
+    entryPoints: ['server/src/memory/mcpMain.ts'],
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    target: 'node18',
+    minify: false,
+    sourcemap: false,
+    absWorkingDir: __dirname,
+    define: versionDefine,
+    write: false,
+    logLevel: 'silent',
+  });
+  const bundle = result.outputFiles[0].contents;
+  for (const outfile of ['plugin/server/memory-mcp.cjs', 'dist/memory-mcp.cjs']) {
+    fs.mkdirSync(path.dirname(path.join(__dirname, outfile)), { recursive: true });
+    fs.writeFileSync(path.join(__dirname, outfile), bundle);
+  }
+  const manifestPath = path.join(__dirname, 'plugin', '.claude-plugin', 'plugin.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+  if (manifest.version !== pkgVersion) {
+    manifest.version = pkgVersion;
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+  }
+  console.log('✓ Built memory MCP → plugin/server/memory-mcp.cjs, dist/memory-mcp.cjs');
 }
 
 /** Bundle the standalone CLI entry point. */

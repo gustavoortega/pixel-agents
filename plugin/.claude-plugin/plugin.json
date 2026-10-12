@@ -1,0 +1,8 @@
+{
+  "name": "pixel-agents",
+  "version": "1.4.1",
+  "description": "Memory for Claude Code: ask what your past sessions on this machine asked, concluded, committed and edited.",
+  "author": {
+    "name": "gustavoortega"
+  }
+}
