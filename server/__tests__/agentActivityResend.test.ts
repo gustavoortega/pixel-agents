@@ -46,8 +46,8 @@ const SENT_FOR_EVERY_AGENT = new Set([
   'agentShells',
 ]);
 
-/** Resend minus the model, title, session-signal and tripwire messages, which every agent
- *  gets, so the tests below can assert the other messages without restating them each time. */
+/** Resend minus the model, title, session-signal, tripwire and health messages, which every
+ *  agent gets, so the tests below can assert the other messages without restating them each time. */
 function resendActivityWithoutTitlesOrAlarms(
   sent: Array<Record<string, unknown>>,
   store: AgentStateStore,
@@ -55,7 +55,8 @@ function resendActivityWithoutTitlesOrAlarms(
   resendAgentActivity((msg) => {
     if (
       !SENT_FOR_EVERY_AGENT.has(String(msg.type)) &&
-      !String(msg.type).startsWith('agentTripwire')
+      !String(msg.type).startsWith('agentTripwire') &&
+      !String(msg.type).startsWith('agentHealth')
     ) {
       sent.push(msg);
     }
@@ -63,7 +64,7 @@ function resendActivityWithoutTitlesOrAlarms(
 }
 
 describe('resendAgentActivity roster', () => {
-  it('replays agentRoster for rostered agents only, after the tripwire message', () => {
+  it('replays agentRoster for rostered agents only, after the tripwire and health messages', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-resend-roster-'));
     const store = new AgentStateStore();
     const roster = new RosterStore({ filePath: path.join(dir, 'roster.json') });
@@ -87,6 +88,7 @@ describe('resendAgentActivity roster', () => {
       'agentMode',
       'agentShells',
       'agentTripwireClear',
+      'agentHealthClear',
       'agentRoster',
     ]);
     expect(forAgent(2)).toEqual([
@@ -97,6 +99,7 @@ describe('resendAgentActivity roster', () => {
       'agentMode',
       'agentShells',
       'agentTripwireClear',
+      'agentHealthClear',
     ]);
     expect(sent.find((m) => m.type === 'agentRoster')).toMatchObject({
       id: 1,
@@ -109,7 +112,7 @@ describe('resendAgentActivity roster', () => {
 });
 
 describe('resendAgentActivity', () => {
-  it('sends messages in order: team info, tools, waiting, context, model, title, session signals, tripwire', () => {
+  it('sends messages in order: team info, tools, waiting, context, model, title, session signals, tripwire, health', () => {
     const store = new AgentStateStore();
     store.set(
       1,
@@ -136,6 +139,7 @@ describe('resendAgentActivity', () => {
       'agentMode',
       'agentShells',
       'agentTripwireClear',
+      'agentHealthClear',
     ]);
   });
 
@@ -428,7 +432,7 @@ describe('resendAgentActivity', () => {
     expect(titles[1]).toEqual({ type: 'agentSessionTitle', id: 2, title: undefined });
   });
 
-  it('sends the alarm of an alarmed agent and a clear for one without', () => {
+  it('sends the alarm and health mark of a flagged agent, and clears for one without, alarm first', () => {
     const store = new AgentStateStore();
     store.set(
       1,
@@ -440,13 +444,23 @@ describe('resendAgentActivity', () => {
           severity: 'medium',
           count: 3,
         },
+        health: {
+          redRuns: 0,
+          lastCall: null,
+          turnOpenAt: 1,
+          progressAt: 1,
+          permissionPendingAt: null,
+          deadAt: null,
+          lastSent: { state: 'stalled', reason: 'no_progress', count: 12 },
+        },
       }),
     );
     store.set(2, createTestAgent({ id: 2 }));
     const sent: Array<Record<string, unknown>> = [];
     resendAgentActivity((msg) => sent.push(msg), store);
 
-    expect(sent.filter((m) => String(m.type).startsWith('agentTripwire'))).toEqual([
+    const alarmsAndHealth = sent.filter((m) => /^agent(Tripwire|Health)/.test(String(m.type)));
+    expect(alarmsAndHealth).toEqual([
       {
         type: 'agentTripwire',
         id: 1,
@@ -455,7 +469,9 @@ describe('resendAgentActivity', () => {
         severity: 'medium',
         count: 3,
       },
+      { type: 'agentHealth', id: 1, state: 'stalled', reason: 'no_progress', count: 12 },
       { type: 'agentTripwireClear', id: 2 },
+      { type: 'agentHealthClear', id: 2 },
     ]);
   });
 });

@@ -47,6 +47,7 @@ import {
 import { seedContextUsage } from './contextUsage.js';
 import type { DismissalTracker } from './dismissalTracker.js';
 import { folderNameFromProjectDir } from './folderName.js';
+import { beginHealthCatchUp, endHealthCatchUp, resetHealth } from './health.js';
 import { assignPaletteIfNeeded } from './paletteAssigner.js';
 import { pathsMatch } from './pathKey.js';
 import { claimRosterMember } from './rosterAgent.js';
@@ -123,6 +124,16 @@ export function startFileWatching(
   seedContextUsage(agentId, agents, getHookProvider());
   seedSessionTitle(agentId, agents, getHookProvider());
   seedPermissionMode(agentId, agents, getHookProvider());
+  // Lines already in the file replay as history: health compares wait until they are read,
+  // so a loop that history shows ending never flashes on and off.
+  const watched = agents.get(agentId);
+  if (watched) {
+    try {
+      beginHealthCatchUp(watched, fs.statSync(watched.jsonlFile).size);
+    } catch {
+      // No file yet: everything it gets is live.
+    }
+  }
 
   // Single polling approach: reliable on all platforms (macOS, Linux, WSL2, Windows).
   // Previously used triple-redundant fs.watch + fs.watchFile + setInterval, but
@@ -218,9 +229,13 @@ export function readNewLines(
 ): void {
   const agent = agents.get(agentId);
   if (!agent) return;
+  const traits = getHookProvider()?.turnTraits;
   try {
     const stat = fs.statSync(agent.jsonlFile);
-    if (stat.size <= agent.fileOffset) return;
+    if (stat.size <= agent.fileOffset) {
+      endHealthCatchUp(agent, agents, traits, stat.size);
+      return;
+    }
     // A read from the start replays work that was done before this agent was watched.
     if (agent.fileOffset === 0) agent.historyBefore = Date.now() - TRANSCRIPT_FRESHNESS_WINDOW_MS;
 
@@ -256,6 +271,7 @@ export function readNewLines(
       if (!line.trim()) continue;
       processTranscriptLine(agentId, line, agents, waitingTimers, permissionTimers);
     }
+    endHealthCatchUp(agent, agents, traits, stat.size);
   } catch (e) {
     // ENOENT is expected for hook-detected agents where the JSONL file hasn't been created yet
     if (e instanceof Error && 'code' in e && (e as NodeJS.ErrnoException).code === 'ENOENT') return;
@@ -705,6 +721,8 @@ export function scanForTeammateFiles(
       existingTeammate.jsonlFile = file;
       existingTeammate.fileOffset = 0;
       existingTeammate.lineBuffer = '';
+      // A restarted teammate is a new run: its old counters say nothing about it.
+      resetHealth(existingTeammate, agents, getHookProvider()?.turnTraits);
       existingTeammate.lastDataAt = Date.now();
       existingTeammate.linesProcessed = 0;
       existingTeammate.isWaiting = false;
@@ -1649,6 +1667,8 @@ export function reassignAgentToFile(
   // The cache clock and the shells belong to the old transcript; the mode is the
   // CLI process's and stays. The new file's seed may set the clock right back.
   resetSessionSignals(agentId, agent, agents, { keepMode: true });
+  // A new session on the same character: start health over, clearing any mark still shown.
+  resetHealth(agent, agents, getHookProvider()?.turnTraits);
 
   // Permanently dismiss old file so scanners never re-adopt it as external
   dismissalTracker!.permanentlyDismiss(agent.jsonlFile);

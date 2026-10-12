@@ -5,9 +5,20 @@ import {
   TURN_WAITING_STALE_MS,
 } from './constants.js';
 
-/** What an adopted or restored agent should look like, read from its transcript. */
+/** A tool call the tail left without a result: still running, or waiting on the user. */
+export interface PendingTool {
+  id: string;
+  name: string;
+}
+
+/** What an adopted or restored agent should look like, read from its transcript. A turn in
+ *  progress also says which calls are open and when its newest record was written, which the
+ *  health detectors start from (health.ts seedHealth). */
 export type DerivedTurnState =
-  { kind: 'active' } | { kind: 'waiting' } | { kind: 'awaitingInput' } | { kind: 'idle' };
+  | { kind: 'active'; pendingTools: PendingTool[]; atMs: number }
+  | { kind: 'waiting' }
+  | { kind: 'awaitingInput'; pendingTools: PendingTool[] }
+  | { kind: 'idle' };
 
 /** Last-write times of the files that prove an agent is alive. */
 export interface TurnClocks {
@@ -41,7 +52,7 @@ export function deriveTurnState(
   traits: TurnTraits,
 ): DerivedTurnState {
   const answered = new Set<string>();
-  const pendingNames: string[] = [];
+  const pending: PendingTool[] = [];
   let decision: 'active' | 'waiting' | undefined;
   let decidedAt: number | undefined;
 
@@ -69,7 +80,7 @@ export function deriveTurnState(
       const ids = sig.toolUseIds ?? [];
       const names = sig.toolNames ?? [];
       ids.forEach((id, n) => {
-        if (!answered.has(id)) pendingNames.push(names[n] ?? '');
+        if (!answered.has(id)) pending.push({ id, name: names[n] ?? '' });
       });
       // A tool_use ends the search for older pending calls only at a turn
       // boundary; keep walking so parallel calls split across records pair up.
@@ -91,13 +102,17 @@ export function deriveTurnState(
     return age > TURN_WAITING_STALE_MS ? { kind: 'idle' } : { kind: 'waiting' };
   }
 
-  const askedUser = pendingNames.some((n) => traits.userQuestionTools.has(n));
+  const askedUser = pending.some((t) => traits.userQuestionTools.has(t.name));
   if (askedUser) {
     const age = now - (decidedAt ?? clocks.leadMtimeMs);
-    return age > TURN_WAITING_STALE_MS ? { kind: 'idle' } : { kind: 'awaitingInput' };
+    return age > TURN_WAITING_STALE_MS
+      ? { kind: 'idle' }
+      : { kind: 'awaitingInput', pendingTools: pending };
   }
   const clock = Math.max(clocks.leadMtimeMs, ...(clocks.subagentMtimesMs ?? []));
-  const longRunner = pendingNames.some((n) => traits.longRunningTools.has(n));
+  const longRunner = pending.some((t) => traits.longRunningTools.has(t.name));
   const limit = longRunner ? TURN_LONG_TOOL_STALE_MS : TURN_ACTIVE_STALE_MS;
-  return now - clock > limit ? { kind: 'idle' } : { kind: 'active' };
+  return now - clock > limit
+    ? { kind: 'idle' }
+    : { kind: 'active', pendingTools: pending, atMs: decidedAt ?? clocks.leadMtimeMs };
 }

@@ -5,6 +5,13 @@ import type { AgentStateStore } from './agentStateStore.js';
 import { SIGNAL_KEYS_MAX, TEXT_IDLE_DELAY_MS, TOOL_DONE_DELAY_MS } from './constants.js';
 import { updateContextUsage } from './contextUsage.js';
 import {
+  healthOnLine,
+  healthOnPrompt,
+  healthOnToolResult,
+  healthOnToolUse,
+  healthOnTurnEnd,
+} from './health.js';
+import {
   applyPermissionMode,
   noteShellEnded,
   noteShellLaunched,
@@ -112,6 +119,9 @@ export function processTranscriptLine(
   if (!agent) return;
   agent.lastDataAt = Date.now();
   agent.linesProcessed++;
+  const traits = hookProvider?.turnTraits;
+  // Any line is progress for the stall detector, whatever it parses to.
+  healthOnLine(agent, agents, traits);
   try {
     const record = JSON.parse(line);
 
@@ -196,6 +206,9 @@ export function processTranscriptLine(
             agent.activeToolStatuses.set(block.id, status);
             agent.activeToolNames.set(block.id, toolName);
             noteToolVerdicts(agent, agents, record, block.id, toolName, block.input);
+            // Above every hooks-mode gate below: the transcript is the one place a call is
+            // counted for health, so hooks mode cannot count it twice.
+            healthOnToolUse(agent, agents, traits, block.id, toolName, block.input);
             if (!exemptTools().has(toolName)) {
               hasNonExemptTool = true;
             }
@@ -302,6 +315,7 @@ export function processTranscriptLine(
       agent.isWaiting = true;
       agent.awaitingInput = false;
       agent.hadToolsInTurn = false;
+      healthOnTurnEnd(agent, agents, traits);
       agents.broadcast({
         type: 'agentStatus',
         id: agentId,
@@ -311,7 +325,12 @@ export function processTranscriptLine(
     } else if (record.type === 'user') {
       const content = record.message?.content ?? record.content;
       if (Array.isArray(content)) {
-        const blocks = content as Array<{ type: string; tool_use_id?: string; content?: unknown }>;
+        const blocks = content as Array<{
+          type: string;
+          tool_use_id?: string;
+          content?: unknown;
+          is_error?: unknown;
+        }>;
         const hasToolResult = blocks.some((b) => b.type === 'tool_result');
         if (hasToolResult) {
           // toolUseResult describes the record's tool_result: trusted only when
@@ -324,6 +343,12 @@ export function processTranscriptLine(
             if (block.type === 'tool_result' && block.tool_use_id) {
               const completedToolId = block.tool_use_id;
               const completedToolName = agent.activeToolNames.get(completedToolId);
+              // Before the background-launch `continue` below: every result counts for health.
+              healthOnToolResult(agent, agents, traits, {
+                tool_use_id: completedToolId,
+                content: block.content,
+                is_error: block.is_error,
+              });
 
               // Workflow tool: the run id rides on toolUseResult, which a lead
               // restored at end of file still reads without its tool_use.
@@ -497,6 +522,7 @@ export function processTranscriptLine(
           agents.broadcast({ type: 'agentStatus', id: agentId, status: 'active' });
           agent.hadToolsInTurn = false;
           startSignalTurn(agent);
+          healthOnPrompt(agent, agents, traits);
         }
       } else if (typeof content === 'string' && content.trim()) {
         // New user text prompt — new turn starting
@@ -505,6 +531,7 @@ export function processTranscriptLine(
         agents.broadcast({ type: 'agentStatus', id: agentId, status: 'active' });
         agent.hadToolsInTurn = false;
         startSignalTurn(agent);
+        healthOnPrompt(agent, agents, traits);
       }
     } else if (record.type === 'queue-operation' && record.operation === 'enqueue') {
       // Background agent completed — parse tool-use-id from XML content
@@ -616,6 +643,7 @@ export function processTranscriptLine(
       agent.awaitingInput = false;
       agent.permissionSent = false;
       agent.hadToolsInTurn = false;
+      healthOnTurnEnd(agent, agents, traits);
       // Skip status post when hooks already handled it
       if (!agent.hookDelivered) {
         agents.broadcast({

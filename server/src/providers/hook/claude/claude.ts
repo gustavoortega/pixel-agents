@@ -33,6 +33,7 @@ import {
   CLAUDE_SMALL_CONTEXT_WINDOW,
   CLAUDE_TERMINAL_NAME_PREFIX,
 } from './constants.js';
+import { claudeSessionLiveness } from './sessionFiles.js';
 
 // ── formatToolStatus: moved from src/transcriptParser.ts ──
 
@@ -421,6 +422,9 @@ const META_TEXT_PREFIXES = [
 const TURN_TRAITS: TurnTraits = {
   longRunningTools: new Set(['Bash', 'Agent', 'Task', 'Monitor', 'WebFetch']),
   userQuestionTools: new Set(['AskUserQuestion']),
+  shellTools: new Set(['Bash']),
+  editTools: new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']),
+  userInputTools: new Set(['AskUserQuestion', 'ExitPlanMode']),
 };
 
 /**
@@ -815,6 +819,7 @@ export const claudeProvider: HookProvider = {
   turnTraits: TURN_TRAITS,
   toolVerdicts,
   resultSignals,
+  liveness: claudeSessionLiveness,
   transcriptUsage: createClaudeTranscriptUsage(extractSessionTitle),
 
   getSessionDirs,

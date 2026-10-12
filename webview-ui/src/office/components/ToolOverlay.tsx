@@ -44,6 +44,7 @@ import { ANCHORS } from '../flair/accessories.js';
 import { characterFlair, Rarity } from '../flair/modelFlair.js';
 import { fullBoxRows, fullBoxTopOffsetPx } from '../fullBox.js';
 import { fxTextBox } from '../fx/fxTextBox.js';
+import { type AgentHealthView, healthLabel, healthMark } from '../health.js';
 import {
   areaSignRect,
   clampPlate,
@@ -337,10 +338,20 @@ function CompactLabel({
   );
 }
 
-/** Something is drawn on the canvas right above the head (bubble, idle glyph, Zz, beacon). */
-function headSlotTaken(ch: Character, hasTripwire: boolean): boolean {
+/** Something is drawn on the canvas right above the head (bubble, idle glyph, Zz, beacon,
+ *  health mark). A dead agent draws nothing there. */
+function headSlotTaken(
+  ch: Character,
+  hasTripwire: boolean,
+  health: AgentHealthView | undefined,
+): boolean {
   const bubble = ch.bubbleType && !(ch.bubbleType === 'waiting' && ch.waitingAwaitingInput);
-  return !!bubble || hasTripwire || statusGlyph(ch, hasTripwire) !== null;
+  return (
+    !!bubble ||
+    hasTripwire ||
+    healthMark(health?.state) !== null ||
+    statusGlyph(ch, hasTripwire || health !== undefined) !== null
+  );
 }
 
 /** A napping agent's head is lowered onto the desk: the plate follows it down. Walkers and typists do not bob it. */
@@ -528,7 +539,11 @@ export function ToolOverlay({
     };
     const pdy = placements.get(it.id)?.dy ?? 0;
     if (it.grow === 'up') {
-      const hasCanvasItem = headSlotTaken(ch, officeState.tripwires.has(it.id));
+      const hasCanvasItem = headSlotTaken(
+        ch,
+        officeState.tripwires.has(it.id),
+        officeState.health.get(it.id),
+      );
       const stack = stackAbove({
         x: it.x,
         headTop: it.y + it.h,
@@ -709,7 +724,8 @@ export function ToolOverlay({
                 },
         });
         const group = sub?.group;
-        const hasExtraLines = !!(label || teamRoleLabel || tripwire || group);
+        const health = officeState.health.get(id);
+        const hasExtraLines = !!(label || teamRoleLabel || tripwire || group || health);
 
         // Context gauge. Every agent gets one — lead, teammate, adopted,
         // headless — as soon as it has taken a turn. Sub-agents never do: they
@@ -783,6 +799,14 @@ export function ToolOverlay({
                     }}
                   >
                     {tripwireLabel(tripwire.ruleName, tripwire.count)}
+                  </span>
+                )}
+                {health && (
+                  <span
+                    className="text-2xs leading-none overflow-hidden text-ellipsis block"
+                    data-testid="agent-health"
+                  >
+                    {healthLabel(health)}
                   </span>
                 )}
                 {label && (

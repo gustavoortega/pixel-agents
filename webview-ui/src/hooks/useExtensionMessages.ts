@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
   CacheTtlSeconds,
+  HealthReason,
+  HealthState,
   HooksConsentRequest,
   PermissionMode,
   TokenUsage,
@@ -659,6 +661,14 @@ export function useExtensionMessages(
         applyAgentTripwireMessage(os, msg, playAlarmSound);
       } else if (msg.type === 'agentTripwireClear') {
         os.setTripwire(msg.id as number, undefined);
+      } else if (msg.type === 'agentHealth') {
+        os.setHealth(msg.id as number, {
+          state: msg.state as HealthState,
+          reason: msg.reason as HealthReason,
+          count: msg.count as number,
+        });
+      } else if (msg.type === 'agentHealthClear') {
+        os.setHealth(msg.id as number, undefined);
       } else if (msg.type === 'agentRoster') {
         os.setRoster(msg.id, {
           memberId: msg.memberId,

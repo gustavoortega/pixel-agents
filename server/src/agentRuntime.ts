@@ -34,6 +34,8 @@ import {
   startFileWatching,
   startStaleExternalAgentCheck,
 } from './fileWatcher.js';
+import { forgetHealth, resetHealth } from './health.js';
+import { type HealthTickDeps, startHealthTick } from './healthTick.js';
 import type { HookEvent } from './hookEventHandler.js';
 import { HookEventHandler } from './hookEventHandler.js';
 import { assignPaletteIfNeeded } from './paletteAssigner.js';
@@ -85,6 +87,7 @@ export class AgentRuntime {
   readonly activeAgentId = { current: null as number | null };
   private externalScanTimer: ReturnType<typeof setInterval> | null = null;
   private staleCheckTimer: ReturnType<typeof setInterval> | null = null;
+  private healthTickTimer: ReturnType<typeof setInterval> | null = null;
 
   // Configuration refs (mutable, shared with scanners)
   readonly watchAllSessions = { current: false };
@@ -96,6 +99,9 @@ export class AgentRuntime {
   readonly subagentWatch: SubagentWatch;
   private hookEventHandler: HookEventHandler;
   private lifecycleCallbacks: RuntimeLifecycleCallbacks = {};
+  /** What the health tick works with (healthTick.ts): this store, this provider, and the
+   *  removal of a dead external agent. */
+  readonly healthDeps: HealthTickDeps;
   private readonly workflowCtx: WorkflowScanContext;
   /** Leads with a workflow scan already queued for this turn of the event loop. */
   private readonly workflowKicks = new Set<number>();
@@ -106,6 +112,11 @@ export class AgentRuntime {
     /** Detection rules for tool calls. Callers load them once at startup; tests get the defaults. */
     tripwireRules?: readonly TripwireRule[],
   ) {
+    this.healthDeps = {
+      store,
+      provider,
+      removeDeadAgent: (id) => this.removeDeadAgent(id),
+    };
     // Wire module-level dependencies
     setDismissalTracker(this.dismissalTracker);
     setHookProvider(provider);
@@ -258,6 +269,8 @@ export class AgentRuntime {
           agent.sessionId = newSessionId;
           this.store.roster?.rebindSession(agent.id, newSessionId);
           this.registerAgent(agent.sessionId, agent.id);
+          // reassignAgentToFile already started over when there is a transcript to follow.
+          if (!newTranscriptPath) resetHealth(agent, this.store, provider.turnTraits);
         }
       },
       onSessionResume: (transcriptPath) => {
@@ -292,18 +305,49 @@ export class AgentRuntime {
         if (!agent) return;
         this.dismissalTracker.clearSeededMtime(agent.jsonlFile);
         this.dismissalTracker.dismiss(agent.jsonlFile);
-        // Covers real team leads AND leads of background teammates (which
-        // have children but no teamName). No-op when childless.
-        this.removeTeammates(agentId);
-        // Unnamed background spawns die with their lead's session too.
-        this.subagentWatch.removeByLead(agentId);
-        endWorkflowSession(agent, agentId, this.workflowCtx);
-        if (agent.isExternal) {
-          this.unregisterAgent(agent.sessionId);
-          this.removeAgent(agentId);
-        }
+        this.endAgentSession(agentId, agent);
       },
     });
+  }
+
+  /** What ending a session does to its agent: its teammates, sub-agents and workflow go with
+   *  it, and an external agent leaves the office (a terminal agent stays with its terminal). */
+  private endAgentSession(agentId: number, agent: AgentState): void {
+    // Covers real team leads AND leads of background teammates (which
+    // have children but no teamName). No-op when childless.
+    this.removeTeammates(agentId);
+    // Unnamed background spawns die with their lead's session too.
+    this.subagentWatch.removeByLead(agentId);
+    endWorkflowSession(agent, agentId, this.workflowCtx);
+    if (agent.isExternal) {
+      this.unregisterAgent(agent.sessionId);
+      this.removeAgent(agentId);
+    }
+  }
+
+  /**
+   * An external agent whose process has been gone for HEALTH_DEAD_REMOVE_MS: ended like a
+   * session that sent SessionEnd. Not dismissed, and dropped from the known files, because the
+   * user did not close it: a resume writing to the same transcript brings it back.
+   *
+   * A teammate in its lead's session is the lead's process, so it follows the lead: it goes
+   * with an external lead and stays gray beside a terminal one. Removing it alone would
+   * unregister the lead's session, and the scan would seat a background teammate again.
+   */
+  private removeDeadAgent(agentId: number): void {
+    const agent = this.store.get(agentId);
+    if (agent && this.inLeadSession(agent)) return;
+    if (!agent?.isExternal) return;
+    console.log(`[Pixel Agents] Agent ${agentId} - process gone, removing`);
+    this.knownJsonlFiles.delete(agent.jsonlFile);
+    this.dismissalTracker.clearSeededMtime(agent.jsonlFile);
+    this.endAgentSession(agentId, agent);
+  }
+
+  /** A teammate running in its lead's session: an inline or a background teammate. */
+  private inLeadSession(agent: AgentState): boolean {
+    if (agent.leadAgentId === undefined) return false;
+    return this.store.get(agent.leadAgentId)?.sessionId === agent.sessionId;
   }
 
   /** Register adapter-specific lifecycle callbacks. */
@@ -375,6 +419,7 @@ export class AgentRuntime {
     // Cancel timers
     cancelWaitingTimer(id, this.waitingTimers);
     cancelPermissionTimer(id, this.permissionTimers);
+    forgetHealth(id);
 
     // Notify adapter before deleting from store
     this.lifecycleCallbacks.onAgentRemoved?.(id, agent);
@@ -485,7 +530,9 @@ export class AgentRuntime {
     );
   }
 
-  /** Start stale external agent check (removes agents whose JSONL files are deleted). */
+  /** Start stale external agent check (removes agents whose JSONL files are deleted), and the
+   *  health tick beside it. The stale check stands down while hooks flow; health runs in both
+   *  modes, since a dead process sends no SessionEnd. */
   startStaleCheck(): void {
     if (this.staleCheckTimer) return;
 
@@ -494,6 +541,7 @@ export class AgentRuntime {
       this.knownJsonlFiles,
       this.hooksEnabled,
     );
+    this.healthTickTimer = startHealthTick(this.healthDeps);
   }
 
   // ── Restore persisted external agents (standalone) ──
@@ -630,6 +678,10 @@ export class AgentRuntime {
     if (this.staleCheckTimer) {
       clearInterval(this.staleCheckTimer);
       this.staleCheckTimer = null;
+    }
+    if (this.healthTickTimer) {
+      clearInterval(this.healthTickTimer);
+      this.healthTickTimer = null;
     }
 
     for (const id of [...this.store.keys()]) {

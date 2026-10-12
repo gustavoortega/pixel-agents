@@ -393,6 +393,7 @@ export function OfficeCanvas({
           },
           officeState.deskProps,
           officeState.bubbleLift,
+          officeState.health,
         );
         offsetRef.current = { x: offsetX, y: offsetY };
 

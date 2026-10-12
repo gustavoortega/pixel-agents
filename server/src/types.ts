@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode';
 
-import type { CacheTtlSeconds, PermissionMode } from '../../core/src/messages.js';
+import type { AgentHealth, CacheTtlSeconds, PermissionMode } from '../../core/src/messages.js';
 import type { ModelTier, ToolVerdict } from '../../core/src/provider.js';
 import type { HookSubRow } from './hookSubRows.js';
 import type { LeadWorkflowState } from './workflowRuns.js';
@@ -153,6 +153,11 @@ export interface AgentState {
     count: number;
   };
 
+  // -- Health (server/src/health.ts) --
+  /** Stuck, stalled, looping and dead detection for this agent. Transient: never persisted,
+   *  rebuilt at restore and when the character moves to a new session. */
+  health?: HealthTracking;
+
   // -- Avatar customization --
   /** Preferred character palette (0-11). If undefined, auto-assigned for diversity. */
   palette?: number;
@@ -178,6 +183,27 @@ export interface AgentState {
    *  TRANSCRIPT_FRESHNESS_WINDOW_MS. A tool result stamped earlier was written before the agent
    *  was watched and pays no XP: a young file can open with copied history. Transient. */
   historyBefore?: number;
+}
+
+/** What a client is shown for an agent's health: the wire message minus its envelope. */
+export type HealthView = Pick<AgentHealth, 'state' | 'reason' | 'count'>;
+
+/** The detectors' per-agent state. Holds counters, clocks and a hash, never session text. */
+export interface HealthTracking {
+  /** Red test runs since the last green run, successful edit or prompt. */
+  redRuns: number;
+  /** The newest tool call, as a hash of its input, and how many times in a row it was made. */
+  lastCall: { name: string; hash: string; repeats: number } | null;
+  /** Epoch ms the current turn opened; null between turns. Stalls are only judged inside one. */
+  turnOpenAt: number | null;
+  /** Epoch ms of the newest transcript line, hook or file write seen for the agent. */
+  progressAt: number;
+  /** Epoch ms a permission prompt went up and has not been answered; silence there is the user's. */
+  permissionPendingAt: number | null;
+  /** Epoch ms the tick first found the session's process gone; null while it runs. */
+  deadAt: number | null;
+  /** What clients were last told, so only a change goes on the wire. */
+  lastSent: HealthView | null;
 }
 
 export interface PersistedAgent {

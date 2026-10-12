@@ -23,17 +23,11 @@
 import type * as fs from 'fs';
 
 import { AgentStateStore } from './agentStateStore.js';
-import { DEFAULT_MAX_CONTEXT_TOKENS } from './constants.js';
+import { DEFAULT_MAX_CONTEXT_TOKENS, SHADOW_ID_BASE } from './constants.js';
 import { readNewLines, startFileWatching } from './fileWatcher.js';
 import { pathsMatch } from './pathKey.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import type { AgentState } from './types.js';
-
-/** Shadow ids start far above any real agent id. The transcript parser's
- *  module-level callbacks (background detected/completed, team switch) fire
- *  with shadow ids too; the offset guarantees they miss the main store and
- *  no-op instead of touching an unrelated real agent. */
-const SHADOW_ID_BASE = 1_000_000;
 
 /** A sub-agent transcript adoption request: an unnamed sidecar-backed spawn,
  *  or a workflow agent keyed by its synthetic `wf:<runId>:<agentId>` id. */

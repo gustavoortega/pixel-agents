@@ -113,6 +113,9 @@ components:
         # Tripwires
         - $ref: '#/components/schemas/AgentTripwire'
         - $ref: '#/components/schemas/AgentTripwireClear'
+        # Agent health
+        - $ref: '#/components/schemas/AgentHealth'
+        - $ref: '#/components/schemas/AgentHealthClear'
         # Roster + XP
         - $ref: '#/components/schemas/AgentRoster'
         - $ref: '#/components/schemas/RosterEvent'
@@ -684,6 +687,58 @@ components:
       properties:
         type:
           const: agentTripwireClear
+        id:
+          type: integer
+
+    HealthState:
+      description: |
+        What the server's detectors see wrong with an agent: `stuck` (the same
+        tests keep failing and nothing is edited), `stalled` (an open turn with
+        no transcript record and no hook for minutes), `looping` (the same tool
+        call over and over) or `dead` (its process is gone).
+      type: string
+      enum: [stuck, stalled, looping, dead]
+
+    HealthReason:
+      description: |
+        Why, from a fixed vocabulary. Never text from the session: a command,
+        a tool input or a test log cannot reach the wire through it.
+      type: string
+      enum: [tests_failing_no_edits, no_progress, same_call_repeated, process_gone]
+
+    AgentHealth:
+      description: |
+        The agent needs a look. `count` is the failing runs (`stuck`), whole
+        minutes of silence (`stalled`) or repeats (`looping`), and 0 for
+        `dead`. The server computes it, so a client clock never matters; a
+        stalled agent's count is re-sent as the minutes grow. Resent on
+        reconnect while set.
+      type: object
+      additionalProperties: false
+      required: [type, id, state, reason, count]
+      properties:
+        type:
+          const: agentHealth
+        id:
+          type: integer
+        state:
+          $ref: '#/components/schemas/HealthState'
+        reason:
+          $ref: '#/components/schemas/HealthReason'
+        count:
+          type: integer
+          minimum: 0
+
+    AgentHealthClear:
+      description: |
+        The agent is healthy again. Sent on reconnect for every healthy agent,
+        so a client that missed a clear does not keep a stale mark.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: agentHealthClear
         id:
           type: integer
 

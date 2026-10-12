@@ -83,6 +83,35 @@ export const TURN_LONG_TOOL_STALE_MS = 15 * 60_000;
 /** A finished turn older than this no longer deserves a "Done" bubble. */
 export const TURN_WAITING_STALE_MS = 2 * 60 * 60_000;
 
+// ── Agent health (health.ts, healthTick.ts) ────────────────
+/** Liveness, stalls and dead removal are re-checked this often: a stall is counted in minutes. */
+export const HEALTH_TICK_MS = 30_000;
+/** An open turn with no transcript record and no hook for this long is stalled: far past any
+ *  think time between tool calls. A long-running tool gets TURN_LONG_TOOL_STALE_MS instead. */
+export const HEALTH_STALLED_MS = 600_000;
+/** Red test runs with no successful edit between them that make an agent stuck: two can be a
+ *  deliberate re-run to confirm a failure. */
+export const HEALTH_STUCK_RUNS = 3;
+/** Identical calls in a row that read as a loop: three can be a deliberate retry. */
+export const HEALTH_LOOP_REPEATS = 4;
+/** A dead external agent stays gray this long so the user sees it go, then it is removed. */
+export const HEALTH_DEAD_REMOVE_MS = 300_000;
+/** A stalled agent's count is whole minutes of silence. */
+export const HEALTH_MINUTE_MS = 60_000;
+/** Tool calls remembered per agent to name a later result. Results come back within a few
+ *  calls; the cap keeps a long session's memory flat. */
+export const HEALTH_TOOL_MEMORY = 64;
+/** Lines from the end of a shell result searched for a test runner summary: runners print it
+ *  last, and stack traces above it must not be read as one. */
+export const TEST_SUMMARY_TAIL_LINES = 40;
+/** A hung `ps` must not hold the health tick: past this its answer is dropped and every pid
+ *  stays alive. */
+export const HEALTH_PS_TIMEOUT_MS = 2_000;
+/** Shadow store ids (subagentWatch.ts) start far above any real agent id, so a shadow agent is
+ *  told apart by id alone: the parser's module-level callbacks miss the main store, and the
+ *  health detectors skip it. */
+export const SHADOW_ID_BASE = 1_000_000;
+
 // ── Global Session Scanning ─────────────────────────────────
 /** Only adopt global JSONL files larger than this (filters out empty/init-only sessions) */
 export const GLOBAL_SCAN_ACTIVE_MIN_SIZE = 3_072; // 3KB

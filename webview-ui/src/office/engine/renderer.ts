@@ -1,4 +1,5 @@
 import { ART_DENSITY, CHAR_FRAME_H, CHAR_FRAME_W } from '../../../../core/src/assets/constants.js';
+import type { HealthState } from '../../../../core/src/messages.js';
 import type { ModelTier } from '../../../../core/src/provider.js';
 import type { ColorValue } from '../../components/ui/types.js';
 import {
@@ -30,6 +31,8 @@ import {
   CHARACTER_Z_SORT_OFFSET,
   COMPANION_DESK_Z_OFFSET,
   COMPANION_FEET_INSET_PX,
+  DEAD_CHARACTER_ALPHA,
+  DEAD_CHARACTER_FILTER,
   DELETE_BUTTON_BG,
   DESK_PROP_FEET_INSET_PX,
   DESK_PROP_Z_OFFSET,
@@ -43,6 +46,14 @@ import {
   GHOST_VALID_TINT,
   GRID_LINE_COLOR,
   HEADLESS_CHARACTER_ALPHA,
+  HEALTH_PAUSE_BAR_GAP_PX,
+  HEALTH_PAUSE_BAR_HEIGHT_PX,
+  HEALTH_PAUSE_BAR_WIDTH_PX,
+  HEALTH_PAUSE_COLOR,
+  HEALTH_SMOKE_COLOR,
+  HEALTH_SMOKE_PERIOD_MS,
+  HEALTH_SMOKE_PUFF_PX,
+  HEALTH_SMOKE_PUFFS,
   IDLE_GLYPH_COLOR,
   IDLE_GLYPH_SHADOW_COLOR,
   MONITOR_ON_TYPE_PREFIX,
@@ -85,6 +96,7 @@ import {
 import { characterFlair, characterOutline } from '../flair/modelFlair.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
 import { type FxRenderState, renderFx } from '../fx/fxRender.js';
+import { healthMark } from '../health.js';
 import { areaSignRect } from '../labelLayout.js';
 import type { FixturePoint, GlowDraw, GlowFixtures, GlowSource, Lighting } from '../lighting.js';
 import { glowDraws, nightLightDraws } from '../lighting.js';
@@ -508,6 +520,8 @@ export function renderScene(
   pets: Pet[] = [],
   look?: ModelLookRenderState,
   deskProps: readonly DeskPropDraw[] = [],
+  /** Agent health by id: a dead agent's character is drawn gray. */
+  health?: ReadonlyMap<number, { state: HealthState }>,
 ): void {
   const drawables: ZDrawable[] = [];
   const view = { offsetX, offsetY, zoom };
@@ -588,6 +602,8 @@ export function renderScene(
     // Headless agents (adopted, no terminal to focus) render translucent while
     // the "Display headless as ghosts" setting is on.
     const alpha = ch.isHeadless && ghostHeadlessAgents ? HEADLESS_CHARACTER_ALPHA : 1;
+    // A dead agent keeps its place until it is acknowledged or removed, drawn gray.
+    const dead = health?.get(ch.id)?.state === 'dead';
 
     // Matrix spawn/despawn effect — skip outline, use per-pixel rendering
     if (ch.matrixEffect) {
@@ -663,6 +679,7 @@ export function renderScene(
           draw: (c) => {
             c.save();
             c.globalAlpha = alpha;
+            if (dead) applyDeadLook(c);
             c.drawImage(accCached, drawX, accY);
             c.restore();
           },
@@ -709,6 +726,7 @@ export function renderScene(
           draw: (c) => {
             c.save();
             c.globalAlpha = alpha;
+            if (dead) applyDeadLook(c);
             c.drawImage(heldCached, hx, hy);
             c.restore();
           },
@@ -719,12 +737,13 @@ export function renderScene(
     drawables.push({
       zY: charZY,
       draw: (c) => {
-        if (alpha === 1) {
+        if (alpha === 1 && !dead) {
           c.drawImage(cached, drawX, drawY);
           return;
         }
         c.save();
         c.globalAlpha = alpha;
+        if (dead) applyDeadLook(c);
         c.drawImage(cached, drawX, drawY);
         c.restore();
       },
@@ -1070,6 +1089,14 @@ function renderRotateButton(
   return { cx, cy, radius };
 }
 
+/** A dead agent's look: gray where the canvas can filter, faded where it cannot (the headless
+ *  test contexts have no filter). Call between save() and restore(). */
+function applyDeadLook(c: CanvasRenderingContext2D): void {
+  // The DOM typings say every context filters; contexts without one exist at runtime.
+  if ('filter' in (c as object)) c.filter = DEAD_CHARACTER_FILTER;
+  else c.globalAlpha *= DEAD_CHARACTER_ALPHA;
+}
+
 // ── Speech bubbles ──────────────────────────────────────────────
 
 /**
@@ -1098,6 +1125,54 @@ function renderTripwireBeacon(
   const cy = Math.round(bottomY - radius);
   ctx.fillRect(cx, Math.round(cy - radius * 0.55), mark, Math.round(radius * 0.7));
   ctx.fillRect(cx, Math.round(cy + radius * 0.3), mark, mark);
+  ctx.restore();
+}
+
+/**
+ * Smoke over a stuck or looping agent: grey puffs rising through the beacon's slot a third of
+ * a cycle apart, fading as they go. `bottomY` is the bottom of the slot.
+ */
+function renderHealthSmoke(
+  ctx: CanvasRenderingContext2D,
+  centerX: number,
+  bottomY: number,
+  zoom: number,
+  nowMs: number,
+): void {
+  const puff = Math.max(1, Math.round(HEALTH_SMOKE_PUFF_PX * zoom));
+  const rise = 2 * TRIPWIRE_BEACON_RADIUS_PX * zoom - puff;
+  ctx.save();
+  ctx.fillStyle = HEALTH_SMOKE_COLOR;
+  for (let i = 0; i < HEALTH_SMOKE_PUFFS; i++) {
+    const phase = (nowMs / HEALTH_SMOKE_PERIOD_MS + i / HEALTH_SMOKE_PUFFS) % 1;
+    ctx.globalAlpha = 1 - phase;
+    const column = i - (HEALTH_SMOKE_PUFFS - 1) / 2;
+    ctx.fillRect(
+      Math.round(centerX + column * puff - puff / 2),
+      Math.round(bottomY - puff - phase * rise),
+      puff,
+      puff,
+    );
+  }
+  ctx.restore();
+}
+
+/** Pause mark over a stalled agent: two bars in the beacon's slot, bottom at `bottomY`. */
+function renderHealthPause(
+  ctx: CanvasRenderingContext2D,
+  centerX: number,
+  bottomY: number,
+  zoom: number,
+): void {
+  const width = Math.max(1, Math.round(HEALTH_PAUSE_BAR_WIDTH_PX * zoom));
+  const height = Math.max(1, Math.round(HEALTH_PAUSE_BAR_HEIGHT_PX * zoom));
+  const gap = Math.max(1, Math.round(HEALTH_PAUSE_BAR_GAP_PX * zoom));
+  const left = Math.round(centerX - width - gap / 2);
+  const top = Math.round(bottomY - height);
+  ctx.save();
+  ctx.fillStyle = HEALTH_PAUSE_COLOR;
+  ctx.fillRect(left, top, width, height);
+  ctx.fillRect(left + width + gap, top, width, height);
   ctx.restore();
 }
 
@@ -1178,6 +1253,7 @@ function renderBubbles(
   nowMs = 0,
   /** World px each character's bubble stack rises, to clear its plate and tripwire chip. */
   lifts?: ReadonlyMap<number, number>,
+  health?: ReadonlyMap<number, { state: HealthState }>,
 ): void {
   for (const ch of characters) {
     // Character is anchored bottom-center at (ch.x, ch.y), sprite is 16x24.
@@ -1217,10 +1293,21 @@ function renderBubbles(
     const tripwire = tripwires?.get(ch.id);
     if (tripwire) {
       renderTripwireBeacon(ctx, offsetX + ch.x * zoom, topY, zoom, tripwire.severity);
+      // A health mark stacks above the beacon: an alarm outranks it.
+      topY -= (2 * TRIPWIRE_BEACON_RADIUS_PX + 1) * zoom;
     }
 
-    // Shares the above-head slot with bubbles and the beacon; statusGlyph yields to both.
-    if (statusGlyph(ch, !!tripwire)) {
+    const healthState = health?.get(ch.id)?.state;
+    const mark = healthMark(healthState);
+    if (mark === 'smoke') {
+      renderHealthSmoke(ctx, offsetX + ch.x * zoom, topY, zoom, nowMs);
+    } else if (mark === 'pause') {
+      renderHealthPause(ctx, offsetX + ch.x * zoom, topY, zoom);
+    }
+
+    // Shares the above-head slot with bubbles, the beacon and the health mark; statusGlyph
+    // yields to all of them, and to a dead agent, which draws no mark.
+    if (statusGlyph(ch, !!tripwire || healthState !== undefined)) {
       if (ch.pose === IdlePose.NAPPING && ch.state === CharacterState.TYPE) {
         renderNapZz(ctx, ch, offsetX, offsetY, zoom, nowMs);
       } else {
@@ -1456,6 +1543,7 @@ export function renderFrame(
   fx?: FxRenderState,
   deskProps?: readonly DeskPropDraw[],
   bubbleLifts?: ReadonlyMap<number, number>,
+  health?: ReadonlyMap<number, { state: HealthState }>,
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -1534,6 +1622,7 @@ export function renderFrame(
     pets ?? [],
     look,
     deskProps,
+    health,
   );
 
   // Night: one multiply darkens the whole scene, then the pools and glows light it back up.
@@ -1549,7 +1638,17 @@ export function renderFrame(
   }
 
   // Speech bubbles (always on top of characters)
-  renderBubbles(ctx, characters, offsetX, offsetY, zoom, tripwires, look?.nowMs, bubbleLifts);
+  renderBubbles(
+    ctx,
+    characters,
+    offsetX,
+    offsetY,
+    zoom,
+    tripwires,
+    look?.nowMs,
+    bubbleLifts,
+    health,
+  );
   // XP pops, level-ups and mood weather ride above the bubbles
   if (fx) renderFx(ctx, fx, characters, offsetX, offsetY, zoom);
   // Pet heart bubbles (same overlay pass)

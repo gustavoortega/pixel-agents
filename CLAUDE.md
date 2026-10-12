@@ -29,6 +29,7 @@ server/                              Lifecycle runtime + Fastify HTTP/WS server
       claudeTeamProvider.ts          TeamProvider: reads ~/.claude/teams/<name>/config.json
       claudeHookInstaller.ts         Consent-gated install/uninstall in ~/.claude/settings.json (abort on unparseable file or non-array hooks.<Event>; one-time .pixel-agents.backup, exclusive-create, no backup ⇒ no write — but skipped when the replaced content is entirely our own install's output, since backing up our own file masquerades as the user's original (`settingsHoldOnlyOurs`, compared against makeHookEntry — the WRITER — so a field added to what we write can't silently revive the bug; only `command`/`timeout` may differ, they vary across installs; a `statusLine` counts as ours only as makeTeeOnlyStatusLine(), the wrapper with no argument); every write failure THROWS; mode preserved, 0600 on create; re-read verify immediately before rename + retry; hook identity = `/.pixel-agents/hooks/claude-hook.js` suffix anchored at both ends of the command's first token, case-insensitive; `areHooksInstalled` = ANY of our commands on ANY event)
       consentCopy.ts                 Consent disclosure text (scope/data/undo) for the hooks and for the status line wrapper, served through consentDisclosure()
+      sessionFiles.ts                Session liveness from ~/.claude/sessions/<pid>.json: kill(pid, 0), then one `ps` name check for reused pids
       constants.ts                   Claude hook event names, bundled script names, the wrapper's stdin cap and POST budget
       hooks/claude-hook.ts           Hook script (CJS+shebang, bundled to dist/hooks/claude-hook.js)
       hooks/statusline-tee.ts        Status line wrapper (bundled to dist/hooks/statusline-tee.js): runs the user's statusLine command untouched, POSTs only rate_limits.five_hour/seven_day
@@ -46,6 +47,9 @@ server/                              Lifecycle runtime + Fastify HTTP/WS server
     tripwires.ts                     Tripwire engine (pure): evaluateTripwires, applyTripwireHit, ackTripwire
     tripwireDefaults.ts              Built-in tripwire rule pack (14 rules)
     tripwireConfig.ts                Loads ~/.pixel-agents/tripwires.json over the defaults (validated, once at startup)
+    health.ts                        Health detectors (stuck, stalled, looping, dead): per-agent counters and clocks, compare-and-broadcast
+    healthTick.ts                    30 s health tick: provider liveness, the stall clock, removal of dead external agents
+    testSummary.ts                   parseTestSummary: a test runner's pass/fail counts from shell output (the stuck detector; XP reads its green run in claude.ts)
     roster.ts                        RosterStore: persistent crew over ~/.pixel-agents/roster.json (O_EXCL lockfile, holds by pid, re-read + delta merge on write)
     rosterAgent.ts                   claimRosterMember, agentRoster message, roster-owned palette for seats
     xp.ts                            XP rules (pure): SIGNAL_XP, per-turn caps, applyXpEvent, levelForXp, moodFor
@@ -128,6 +132,7 @@ webview-ui/                          React 19 + Canvas UI (depends only on core/
     office/
       types.ts                       OfficeLayout, Character, etc. + re-exports constants
       toolUtils.ts                   STATUS_TO_TOOL mapping, extractToolName (DOM-free; defaultZoom lives in useEditorActions)
+      health.ts                      Health labels for the full box and which mark each state draws
       projection.ts                  World→screen math shared by renderer + DOM overlays (mapOffset, overlayProjection, mapRectCss)
       lighting.ts                    Pure light pass: lightingFor(h, m) phases, glowDraws placement, glow cache
       camera.ts                      Pure fit-to-activity: fitView, refitView hysteresis, AutoFit controller
@@ -243,8 +248,8 @@ Adding a new CLI integration is one subdirectory under `server/src/providers/hoo
 
 `core/asyncapi.yaml` is the contract. Pinned to **3.0.0** because `@asyncapi/modelina@5.10.1` declares `supportedVersions: ['3.0.0']` only; bumping to 3.1.0 produces `export type Root = any`. Revisit when Modelina ships 3.1.0 support.
 
-- **44 ServerMessage variants** (server → client): agent lifecycle (incl. `handshakeDone`, the end of a standalone handshake's catch-up), agent activity, sub-agent activity (incl. `subagentPresent`), team + context usage + model look (`agentModel`) + session title + session signals (`agentCache`, `agentMode`, `agentShells`) + tripwire (`agentTripwire`, `agentTripwireClear`), assets, settings + workspace, token ledger (`tokenUsage`) + official limits (`usageLimits`), diagnostics.
-- **21 ClientMessage variants** (client → server): tripwire ack (`ackTripwire`), lifecycle (`webviewReady`, `launchAgent`, `focusAgent`, `closeAgent`), layout (`saveAgentSeats`, `saveLayout`, `exportLayout`, `importLayout`), settings (`setSoundEnabled`, `setShowModelFlair`, `setCozyLighting`, `setHooksEnabled`, `setWatchAllSessions`, `setAlwaysShowLabels`, `setHooksInfoShown`, `setLastSeenVersion`), discovery + assets, diagnostics.
+- **46 ServerMessage variants** (server → client): agent lifecycle (incl. `handshakeDone`, the end of a standalone handshake's catch-up), agent activity, sub-agent activity (incl. `subagentPresent`), team + context usage + model look (`agentModel`) + session title + session signals (`agentCache`, `agentMode`, `agentShells`) + tripwire (`agentTripwire`, `agentTripwireClear`) + health (`agentHealth`, `agentHealthClear`), roster, assets, settings + workspace, token ledger (`tokenUsage`) + official limits (`usageLimits`), diagnostics.
+- **26 ClientMessage variants** (client → server): tripwire ack (`ackTripwire`), lifecycle (`webviewReady`, `launchAgent`, `focusAgent`, `closeAgent`), layout (`saveAgentSeats`, `saveLayout`, `exportLayout`, `importLayout`), settings (`setSoundEnabled`, `setShowModelFlair`, `setCozyLighting`, `setHooksEnabled`, `setWatchAllSessions`, `setAlwaysShowLabels`, `setHooksInfoShown`, `setLastSeenVersion`), discovery + assets, diagnostics.
 
 Both unions use `oneOf` with `discriminator: type`. Every concrete message sets `additionalProperties: false`.
 
@@ -293,6 +298,8 @@ The standalone server keeps its token in `~/.pixel-agents/server-token` (0600, m
 - **Optional team extension**: `team?: TeamProvider` for Lead + Teammates support.
 - **Optional XP signals**: `toolVerdicts(name, input)` at a tool_use and `resultSignals(verdicts, record)` at its single tool_result. Only verdicts and hashed keys leave the provider. A provider without both earns no XP.
 - **Optional default**: `defaultEnabled` (absent = true). An off-by-default provider (the status line wrapper) is never asked about at startup; only a Settings toggle-on asks.
+- **Optional liveness**: `liveness(sessionIds)` → `Promise<Map<sessionId, 'alive' | 'dead' | 'unknown'>>`. `unknown` (no evidence) never reads dead. Without it no agent is ever dead.
+- **Turn traits** (`turnTraits`): `longRunningTools`, `userQuestionTools`, and for health `shellTools`, `editTools`, `userInputTools`. The runtime classifies tools only through these sets.
 
 `AgentEvent.kind` values: `toolStart`, `toolEnd`, `turnEnd`, `subagentStart`, `subagentEnd`, `subagentTurnEnd`, `progress`, `permissionRequest`, `sessionStart`, `sessionEnd`. The runtime dispatches on `kind`, never on CLI-specific tool names.
 
@@ -357,7 +364,7 @@ export class AgentRuntime {
 }
 ```
 
-Owns timer Maps (waiting, permission, text-idle, stale), scanners (project-dir 1 s, external 3 s, stale 30 s), `HookEventHandler`, `SessionRouter`, `DismissalTracker`. Scanners are skipped entirely while hooks are flowing (`hookDelivered` is set on every agent). `RuntimeLifecycleCallbacks` is the only seam between runtime and host.
+Owns timer Maps (waiting, permission, text-idle, stale), scanners (project-dir 1 s, external 3 s, stale 30 s), the health tick (30 s, both hooks modes), `HookEventHandler`, `SessionRouter`, `DismissalTracker`. Scanners are skipped entirely while hooks are flowing (`hookDelivered` is set on every agent). `RuntimeLifecycleCallbacks` is the only seam between runtime and host.
 
 ### AgentStateStore
 
@@ -489,6 +496,18 @@ Detection rules over each agent's tool calls, evaluated in `HookEventHandler.han
 - `resendAgentActivity` sends `agentTripwire` or `agentTripwireClear` for every agent on reconnect.
 - **Regex idioms are load-bearing** (see `tripwireDefaults.ts`): atomic first-occurrence prefix for "keyword, then X on the same line", bounded `{0,6}` option skipping. The backtracking budget test guards them.
 
+### Agent health (server/src/health.ts)
+
+The office names agents that need a look: `stuck`, `stalled`, `looping`, `dead`, by precedence dead > stalled > looping > stuck. Shadow agents (sub-agent mirrors, ids from `SHADOW_ID_BASE`) are never tracked.
+
+- **Calls and results come from the agent's own transcript only**, in hooks and heuristic mode alike, counted in `processTranscriptLine` above every hooks-mode gate. A PreToolUse next to its transcript record would count a call twice; hooks only move the clocks. A tool_result is named through the detector's own `toolUseId -> {name, inputHash}` memory (last `HEALTH_TOOL_MEMORY` calls), never through `activeToolNames`.
+- **stuck**: `HEALTH_STUCK_RUNS` red runs (a shell result whose runner summary, `parseTestSummary`, has a failure) with no green run, successful edit (`is_error !== true`) or prompt between them. A shell result with no summary neither counts nor resets: an exit code is not evidence. A failed edit does not reset.
+- **looping**: the same tool name and input hash `HEALTH_LOOP_REPEATS` times in a row. The hash is sha256 over the input with keys sorted at every depth and the top-level `description` dropped; only the hash is kept. A prompt or a turn end starts over. Polling loops count too.
+- **stalled**: a turn is open (`turnOpenAt`, set by a prompt or the first tool_use/PreToolUse, cleared at every turn end, SessionEnd and the tick that first finds the process dead) and nothing moved for `HEALTH_STALLED_MS` (`TURN_LONG_TOOL_STALE_MS` while ANY open call is a long-running tool). The clock is the newest of every transcript line, every hook (a sub-agent's included) and, at the tick, the lead + sub-agent transcript mtimes. Never while the agent waits on the user: `isWaiting`, an open user-input tool, or a pending permission prompt (cleared only by a later hook, a prompt or a tool_result that leaves no call open; never by the tool_use line that can be read after the prompt, nor by a parallel call's result). `count` is whole minutes, re-sent as it grows.
+- **dead**: the tick asks `provider.liveness` (Claude: `sessionFiles.ts`); `dead` sets it and ends the turn the process was in (open calls and repeats too), a later `alive` (a resume under a new pid) clears it, so a resumed session idles at its prompt. After `HEALTH_DEAD_REMOVE_MS` an external agent is removed the way SessionEnd removes one, but not dismissed and dropped from the known files, so a resume writing to the transcript is adopted again. Terminal agents stay gray until closed: the server never disposes a terminal on a timer. A teammate in its lead's session (inline or background) is the lead's process and follows it, never removed on its own: that would unregister the lead's session, and the scan would seat a background teammate again.
+- **Wire**: every mutation and every tick recomputes the state and broadcasts only a change (`agentHealth {state, reason, count}` or `agentHealthClear`). `reason` is an enum: no session text can reach the wire through it. A new session on the character (SessionEnd, /clear, reassign) resets everything but what clients were last shown, so a visible mark is cleared. History replayed at adoption holds compares until it is read, then compares once. `resendAgentActivity` sends the mark or a clear for every agent, after the tripwire message and before the roster.
+- **Webview**: smoke over stuck and looping, a pause mark over stalled, in the beacon's slot above it; a dead agent's sprite is drawn gray (`ctx.filter`, faded where a context has none) with no mark. The full box shows the reason as a plain line; its × is the acknowledgement for a dead agent. `officeState.health` ignores ids with no character.
+
 ### XP (server/src/xp.ts, server/src/xpAward.ts)
 
 XP pays for real work only; activity (turns, tool calls, sub-agents) pays nothing. User guide: README, "A crew that remembers".
@@ -533,7 +552,7 @@ Custom ESLint rules (`eslint-rules/pixel-agents-rules.mjs`) enforce: `no-inline-
 
 **Workflow crew helpers** (parentToolId `wf:...`, `subagentMessages.ts`): only `subagentToolStart` and `subagentPresent` create a helper (a presence draws it working with no tool row, so it never idles before its clear) (done, permission and clear for an unknown key are no-ops, so a batched done after a clear never revives one), and a `wf:` helper is always background whatever the lead's tool list says. The plate reads `<label> · <parent>` (label cut at 24 code points, inside a bidi isolate so it never reorders the parent's name), the full box the full label with the group on a second line. The plate's helper fields (a lead's count, a helper's parent name and label) come from `helperPlateInput` (toolUtils.ts) over the overlay's helper list. A top-level agent never takes a crew helper's seat (Task/Agent helpers still yield theirs). At most `WORKFLOW_MAX_VISIBLE_HELPERS` (12) crew helpers per lead are drawn; the rest exist without a character, count in the lead's "+N helpers", and the oldest is drawn, with its last tool and active state, as soon as a drawn one leaves.
 
-**Speech bubbles**: Permission ("..." amber dots) stays until clicked/cleared. Waiting (green checkmark) auto-fades 2 s. Sprites in `spriteData.ts`.
+**Speech bubbles**: Permission ("..." amber dots) stays until clicked/cleared. Waiting (green checkmark) auto-fades 2 s. Sprites in `spriteData.ts`. Above the head, bottom up: the bubble, the tripwire beacon, the health mark; the idle z only when none of them (nor a dead state) holds the slot.
 
 **Sound notifications**: Ascending two-note chime (E5 → E6) via Web Audio API plays when waiting bubble appears (`agentStatus: 'waiting'`), except inside a reconnect's resync window, whose resend restates every status. `notificationSound.ts` manages AudioContext lifecycle; `unlockAudio()` on canvas mousedown resumes the context (webviews start suspended). Toggled via Settings modal. Persisted per-namespace in `~/.pixel-agents/config.json`.
 
