@@ -718,6 +718,14 @@ export class OfficeState {
     }
     this.characters.set(id, ch);
     if (yielding) this.placeHelper(yielding);
+    // A helper announced before its lead (a broadcast between the socket's connect and the
+    // handshake) was spawned with no parent: no seat, the default palette. Its lead is here now.
+    for (const helper of this.characters.values()) {
+      if (!helper.isSubagent || helper.parentAgentId !== id) continue;
+      helper.palette = palette;
+      helper.hueShift = hueShift;
+      this.placeHelper(helper);
+    }
   }
 
   // ── Greeter ───────────────────────────────────────────────────

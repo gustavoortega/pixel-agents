@@ -4,6 +4,7 @@ import { derivedTitle } from './sessionTitle.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 import { tripwireResendMessage } from './tripwires.js';
 import type { AgentState } from './types.js';
+import { workflowPresenceMessages } from './workflowRuns.js';
 
 /**
  * The agentStatus an agent should be shown with, read from its state right now.
@@ -34,6 +35,7 @@ export function agentStatusMessage(id: number, agent: AgentState): Record<string
  * 2. Regular tools
  * 3. Background tools with runInBackground + isTeammateSpawn flags, skipping promoted spawns
  * 4. Status (active, waiting or idle; one per agent)
+ * 4b. Workflow agents watched for the agent (subagentPresent)
  * 5. Context usage
  * 6. Model look
  * 7. Session title
@@ -97,6 +99,10 @@ export function resendAgentActivity(
 
     // 4. Status: exactly one per agent, never left to a client default.
     send(agentStatusMessage(id, agent));
+
+    // 4b. Workflow agents being watched for this lead: their helpers come back now,
+    // not on their next tool call (an agent that only thinks may never make one).
+    for (const message of workflowPresenceMessages(id, agent)) send(message);
 
     // 5. Context usage
     if (agent.contextTokens > 0) {

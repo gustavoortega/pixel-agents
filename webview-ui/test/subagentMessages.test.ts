@@ -1,6 +1,6 @@
 /**
  * Sub-agent messages applied to the office and the helper lists: only a start
- * creates a helper, a workflow helper is named on its plate by the label its
+ * or a presence creates a helper, a workflow helper is named on its plate by the label its
  * start carried, and every crew helper of a lead counts on the lead's plate.
  * Plates are read through helperPlateInput, the same input the overlay uses.
  */
@@ -116,6 +116,51 @@ describe('subagent messages', () => {
       plateLabel: 'probe:kappa',
       group: 'scout',
     });
+  });
+
+  it('C45 a presence draws a working helper named by its label; its first tool joins that helper', () => {
+    const os = officeWithLead();
+    os.sessionTitles.set(1, 'Ada');
+    const sink = sinkFor(os);
+    applySubagentMessage(sink, {
+      type: 'subagentPresent',
+      id: 1,
+      parentToolId: HELPER,
+      label: 'final:top10',
+      group: 'Final',
+    });
+    const helper = os.getSubagentId(1, HELPER)!;
+
+    // Working before any tool row: an agent that only thinks still shows.
+    expect(os.characters.get(helper)?.isActive).toBe(true);
+    expect(plateOf(os, sink, helper)?.name).toBe('\u2068final:top10\u2069 · Ada');
+
+    applySubagentMessage(sink, start('final:top10'));
+    expect([...os.characters.values()].filter((ch) => ch.isSubagent)).toHaveLength(1);
+    expect(sink.tools()[1][HELPER].map((t) => t.toolId)).toEqual(['toolu_r1']);
+  });
+
+  it('C46 a helper announced before its lead joins the lead when the lead arrives', () => {
+    const os = new OfficeState({
+      version: 1,
+      cols: 10,
+      rows: 6,
+      tiles: new Array(60).fill(TileType.FLOOR_1),
+      furniture: [],
+    } as OfficeLayout);
+    const sink = sinkFor(os);
+    applySubagentMessage(sink, { type: 'subagentPresent', id: 1, parentToolId: HELPER });
+    const helper = os.characters.get(os.getSubagentId(1, HELPER)!)!;
+
+    os.addAgent(1, 7, 90, undefined, true);
+    const lead = os.characters.get(1)!;
+
+    // Its lead's look, and placed from the lead: never a clone on the lead's own column.
+    expect([helper.palette, helper.hueShift]).toEqual([7, 90]);
+    expect(helper.tileCol).not.toBe(lead.tileCol);
+    expect(
+      Math.abs(helper.tileCol - lead.tileCol) + Math.abs(helper.tileRow - lead.tileRow),
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it('C19 every crew helper of a lead counts on its plate, drawn or not', () => {

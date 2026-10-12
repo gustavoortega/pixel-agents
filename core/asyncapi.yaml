@@ -95,6 +95,7 @@ components:
         - $ref: '#/components/schemas/SubagentToolStart'
         - $ref: '#/components/schemas/SubagentToolDone'
         - $ref: '#/components/schemas/SubagentClear'
+        - $ref: '#/components/schemas/SubagentPresent'
         - $ref: '#/components/schemas/SubagentToolPermission'
         # Agent Teams
         - $ref: '#/components/schemas/AgentTeamInfo'
@@ -404,6 +405,31 @@ components:
           type: string
         toolId:
           type: string
+
+    SubagentPresent:
+      description: >-
+        A workflow agent is live under its lead (`parentToolId` is its synthetic
+        `wf:<runId>:<agentId>`). Sent when the server starts watching it and again
+        on every handshake (webviewReady), so its helper shows before, or
+        without, any tool call.
+      type: object
+      additionalProperties: false
+      required: [type, id, parentToolId]
+      properties:
+        type:
+          const: subagentPresent
+        id:
+          type: integer
+        parentToolId:
+          type: string
+        label:
+          description: Workflow agent label from the run journal, single-spaced, without control or format characters.
+          type: string
+          maxLength: 60
+        group:
+          description: Workflow phase of the agent, single-spaced, without control or format characters. Absent when the journal has none.
+          type: string
+          maxLength: 40
 
     SubagentClear:
       description: A sub-agent task completed.
