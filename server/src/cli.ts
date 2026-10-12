@@ -31,6 +31,7 @@ import { FileStateAdapter } from './fileStateAdapter.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
 import { RosterStore } from './roster.js';
 import { PixelAgentsServer } from './server.js';
+import { isValidServerToken } from './serverToken.js';
 import { TokenLedger } from './tokenLedger.js';
 import { loadTripwireRules } from './tripwireConfig.js';
 
@@ -41,6 +42,8 @@ export interface CliArgs {
    *  can run at once without a collision. --port picks a fixed one. */
   port?: number;
   host: string;
+  /** --token: the server token to use instead of the saved one. */
+  token?: string;
 }
 
 /** Thrown by parseArgs on an invalid --port. Kept separate from process.exit so
@@ -69,6 +72,16 @@ export function parseArgs(argv: string[]): CliArgs {
     } else if (argv[i] === '--host' && argv[i + 1]) {
       args.host = argv[i + 1];
       i++;
+    } else if (argv[i] === '--token') {
+      const raw = argv[i + 1];
+      // The value is a secret: never echo it back.
+      if (raw === undefined || !isValidServerToken(raw)) {
+        throw new CliArgsError(
+          'invalid --token: expected 16 to 128 characters of A-Z, a-z, 0-9, ".", "_" or "-".',
+        );
+      }
+      args.token = raw;
+      i++;
     } else if (argv[i] === '--help') {
       console.log(`Usage: pixel-agents [options]
 
@@ -76,6 +89,9 @@ Options:
   --port, -p <number>   Port to listen on (default: OS-assigned ephemeral port)
   --host <string>       Host to bind to (default: 127.0.0.1; loopback binds only
                         accept loopback Host headers, use 0.0.0.0 behind a tunnel)
+  --token <token>       Server token for this run (16-128 characters of A-Z a-z
+                        0-9 . _ -). Default: the one saved in
+                        ~/.pixel-agents/server-token, created on first run
   --help                Show this help message`);
       process.exit(0);
     }
@@ -262,6 +278,7 @@ async function main(): Promise<void> {
       onSetHooksEnabled,
       onReloadAssets,
       tokenLedger,
+      token: args.token,
     });
     currentConfig = { port: config.port, token: config.token };
 

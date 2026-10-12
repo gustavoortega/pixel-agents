@@ -3,6 +3,8 @@ import {
   TRANSPORT_STATE_CONNECTING,
   TRANSPORT_STATE_DISCONNECTED,
   TRANSPORT_STATE_RECONNECTING,
+  TRANSPORT_STATE_REJECTED,
+  WS_CLOSE_UNAUTHORIZED,
 } from '../../../core/src/constants.js';
 import type { ClientMessage, ServerMessage } from '../../../core/src/messages.js';
 import type { MessageTransport, TransportState } from './types.js';
@@ -11,15 +13,21 @@ import type { MessageTransport, TransportState } from './types.js';
  * WebSocket transport for standalone browser mode.
  * Connects to the Pixel Agents server via WebSocket for bidirectional messaging.
  * Includes automatic reconnection with exponential backoff and message queuing.
+ * A close with WS_CLOSE_UNAUTHORIZED is terminal (`rejected`): the server refused the
+ * token, and every retry would send the same one.
  */
 export class WebSocketTransport implements MessageTransport {
   private ws: WebSocket | null = null;
   private handlers: Array<(msg: ServerMessage) => void> = [];
   private stateHandlers: Array<(state: TransportState) => void> = [];
+  private reconnectHandlers: Array<() => void> = [];
   private url: string;
   private reconnectAttempts = 0;
+  /** Opens in this page session: every one after the first is a reconnect. */
+  private openCount = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
+  private warnedDroppedSend = false;
   private pendingMessages: ClientMessage[] = [];
   private _state: TransportState = TRANSPORT_STATE_CONNECTING;
   private readonly _ready: Promise<void>;
@@ -57,15 +65,20 @@ export class WebSocketTransport implements MessageTransport {
     this.ws = new WebSocket(this.url);
 
     this.ws.onopen = () => {
+      this.openCount++;
       this.reconnectAttempts = 0;
       console.log('[Transport] WebSocket connected');
       this.setState(TRANSPORT_STATE_CONNECTED);
       this.resolveReady();
-      // Flush any messages queued while connecting
+      // Flush any messages queued while connecting, before what a reconnect handler sends:
+      // they were meant to reach the server first.
       for (const msg of this.pendingMessages) {
         this.ws!.send(JSON.stringify(msg));
       }
       this.pendingMessages = [];
+      if (this.openCount > 1) {
+        for (const handler of this.reconnectHandlers) handler();
+      }
     };
 
     this.ws.onmessage = (e: MessageEvent) => {
@@ -77,11 +90,20 @@ export class WebSocketTransport implements MessageTransport {
       }
     };
 
-    this.ws.onclose = () => {
-      if (!this.disposed) {
-        this.setState(TRANSPORT_STATE_RECONNECTING);
-        this.scheduleReconnect();
+    this.ws.onclose = (e: CloseEvent) => {
+      if (this.disposed) return;
+      if (e.code === WS_CLOSE_UNAUTHORIZED) {
+        // A server restarted with another token. Only the link the CLI printed helps.
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+        this.pendingMessages = [];
+        this.setState(TRANSPORT_STATE_REJECTED);
+        return;
       }
+      this.setState(TRANSPORT_STATE_RECONNECTING);
+      this.scheduleReconnect();
     };
 
     this.ws.onerror = () => {
@@ -90,6 +112,14 @@ export class WebSocketTransport implements MessageTransport {
   }
 
   send(message: ClientMessage): void {
+    if (this._state === TRANSPORT_STATE_REJECTED) {
+      // Nothing will ever carry it: queueing would only grow.
+      if (!this.warnedDroppedSend) {
+        this.warnedDroppedSend = true;
+        console.warn('[Transport] The server refused this page; outgoing messages are dropped');
+      }
+      return;
+    }
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
     } else {
@@ -121,6 +151,13 @@ export class WebSocketTransport implements MessageTransport {
     };
   }
 
+  onReconnect(handler: () => void): () => void {
+    this.reconnectHandlers.push(handler);
+    return () => {
+      this.reconnectHandlers = this.reconnectHandlers.filter((h) => h !== handler);
+    };
+  }
+
   dispose(): void {
     this.disposed = true;
     if (this.reconnectTimer) {
@@ -130,6 +167,7 @@ export class WebSocketTransport implements MessageTransport {
     this.ws?.close();
     this.ws = null;
     this.handlers = [];
+    this.reconnectHandlers = [];
     this.pendingMessages = [];
     this.setState(TRANSPORT_STATE_DISCONNECTED);
     this.stateHandlers = [];

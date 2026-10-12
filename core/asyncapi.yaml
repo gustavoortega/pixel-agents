@@ -84,6 +84,7 @@ components:
         - $ref: '#/components/schemas/AgentClosed'
         - $ref: '#/components/schemas/AgentSelected'
         - $ref: '#/components/schemas/ExistingAgents'
+        - $ref: '#/components/schemas/HandshakeDone'
         # Agent status / tool activity
         - $ref: '#/components/schemas/AgentStatus'
         - $ref: '#/components/schemas/AgentToolStart'
@@ -263,6 +264,21 @@ components:
           description: Map of agent ID (string) to external flag.
           additionalProperties:
             type: boolean
+
+    HandshakeDone:
+      description: |
+        Sent by the standalone server after every webviewReady handshake, as the
+        last message of its catch-up: existingAgents, layoutLoaded and the agent
+        activity resend (workflow presences included) all precede it. Only the
+        hooks status and consent ask, checked asynchronously, may follow. A client
+        that reconnected drops whatever the catch-up did not restate. The VS Code
+        adapter does not send it.
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          const: handshakeDone
 
     AgentStatus:
       description: Active vs waiting state for an agent (drives character animation).
@@ -767,6 +783,12 @@ components:
             - type: 'null'
         wasReset:
           type: boolean
+        imported:
+          type: boolean
+          description: >-
+            True for a layout the user just imported (the VS Code adapter's
+            Import Layout). The client applies it even over unsaved editor
+            changes, which hold any other layoutLoaded back: the user chose it.
 
     FurnitureAssetsLoaded:
       description: Furniture catalog and sprite data, sent once after webviewReady.
@@ -1016,7 +1038,8 @@ components:
         consentDisclosure(), shared with no client-side duplicate to drift).
         The client answers with `hooksConsentResponse`, echoing the providerId;
         dismissing the dialog sends nothing and the request fires again on the
-        next connect. One request per provider that needs an answer.
+        next page load (in-session reconnects are deduped by the webview). One
+        request per provider that needs an answer.
       type: object
       additionalProperties: false
       required: [type, providerId, headline, disclosure]

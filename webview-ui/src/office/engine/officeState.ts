@@ -790,7 +790,8 @@ export class OfficeState {
     this.greeterCameraCancelled = true;
   }
 
-  removeAgent(id: number): void {
+  /** What the office keeps per agent id beside its character. */
+  private forgetAgentData(id: number): void {
     this.sessionTitles.delete(id);
     this.tripwires.delete(id);
     this.rosters.delete(id);
@@ -801,6 +802,10 @@ export class OfficeState {
     this.cacheByAgent.delete(id);
     this.modeByAgent.delete(id);
     this.shellsByAgent.delete(id);
+  }
+
+  removeAgent(id: number): void {
+    this.forgetAgentData(id);
     const ch = this.characters.get(id);
     if (!ch) return;
     if (ch.matrixEffect === 'despawn') return; // already despawning
@@ -814,6 +819,99 @@ export class OfficeState {
     // Start despawn animation instead of immediate delete
     startMatrixEffect(ch, 'despawn');
     ch.bubbleType = null;
+  }
+
+  /** Top-level agents with a character (helpers excluded). */
+  topLevelAgentIds(): number[] {
+    const ids: number[] = [];
+    for (const ch of this.characters.values()) if (!ch.isSubagent) ids.push(ch.id);
+    return ids;
+  }
+
+  /**
+   * Remove an agent and every helper of it now, with no despawn effect: a resync dropping
+   * what ended while the page was disconnected, not an agent leaving on screen. Their
+   * seats are freed; selection and camera follow are cleared only when they pointed at one
+   * of them. No-op for an unknown id.
+   */
+  removeAgentImmediate(id: number): void {
+    this.forgetAgentData(id);
+    for (const [key, subId] of [...this.subagentIdMap]) {
+      if (this.subagentMeta.get(subId)?.parentAgentId === id) this.deleteHelper(key, subId);
+    }
+    // Helpers already despawning have lost their meta but still hold a character.
+    for (const ch of [...this.characters.values()]) {
+      if (ch.isSubagent && ch.parentAgentId === id) this.deleteCharacter(ch.id);
+    }
+    this.deleteCharacter(id);
+  }
+
+  /**
+   * removeSubagent with no despawn effect, for a resync. A crew helper waiting past the
+   * lead's visible cap takes the freed place, also with no effect. Also removes a helper
+   * that has meta but no character (undrawn). No-op for an unknown key.
+   */
+  removeSubagentImmediate(parentAgentId: number, parentToolId: string): void {
+    const key = `${parentAgentId}:${parentToolId}`;
+    const id = this.subagentIdMap.get(key);
+    if (id === undefined) return;
+    const wasDrawn = this.characters.has(id);
+    this.deleteHelper(key, id);
+    if (wasDrawn && isCrewParentToolId(parentToolId)) this.drawNextCrewHelper(parentAgentId, true);
+  }
+
+  /** Drop a helper's tracking (drawn or not) and its character. */
+  private deleteHelper(key: string, id: number): void {
+    const undrawn = this.undrawnHelpers.indexOf(id);
+    if (undrawn >= 0) this.undrawnHelpers.splice(undrawn, 1);
+    this.undrawnState.delete(id);
+    this.subagentIdMap.delete(key);
+    this.subagentMeta.delete(id);
+    this.deleteCharacter(id);
+  }
+
+  /** Delete a character now, freeing its seat and any selection or follow on it. */
+  private deleteCharacter(id: number): void {
+    const ch = this.characters.get(id);
+    if (!ch) return;
+    // A despawning character's seat was freed when the despawn started and may be
+    // someone else's by now.
+    if (ch.seatId && ch.matrixEffect !== 'despawn') {
+      const seat = this.seats.get(ch.seatId);
+      if (seat) seat.assigned = false;
+    }
+    this.characters.delete(id);
+    if (this.selectedAgentId === id) this.selectedAgentId = null;
+    if (this.cameraFollowId === id) this.cameraFollowId = null;
+  }
+
+  /**
+   * Take the server's look and seat for an agent the office already holds: after a
+   * server restart its id may name another session. An absent field keeps the current
+   * value (hueShift 0 is a value). No effect: the character re-renders in place and walks
+   * to the server's seat only when that seat differs and is free.
+   */
+  applyAgentMeta(
+    id: number,
+    meta: { palette?: number; hueShift?: number; seatId?: string; folderName?: string },
+  ): void {
+    const ch = this.characters.get(id);
+    if (!ch || ch.isSubagent) return;
+    if (meta.palette !== undefined) ch.palette = meta.palette;
+    if (meta.hueShift !== undefined) ch.hueShift = meta.hueShift;
+    // Helpers wear their lead's look.
+    for (const helper of this.characters.values()) {
+      if (!helper.isSubagent || helper.parentAgentId !== id) continue;
+      helper.palette = ch.palette;
+      helper.hueShift = ch.hueShift;
+    }
+    if (meta.folderName !== undefined) ch.folderName = meta.folderName;
+    if (meta.seatId !== undefined && meta.seatId !== ch.seatId) {
+      // reassignSeat frees the current seat before it checks the new one: check first,
+      // or a taken seat would leave the character holding a seat nobody reserves.
+      const seat = this.seats.get(meta.seatId);
+      if (seat && !seat.assigned) this.reassignSeat(id, meta.seatId);
+    }
   }
 
   /** Find seat uid at a given tile position, or null */
@@ -1008,7 +1106,7 @@ export class OfficeState {
    * Create a helper (sub-agent) character. It keeps its parent's face and hair shape; the
    * renderer washes the rest to gray (the helper look), so it never reads as a clone.
    */
-  addSubagent(parentAgentId: number, parentToolId: string): number {
+  addSubagent(parentAgentId: number, parentToolId: string, skipSpawnEffect = false): number {
     const key = `${parentAgentId}:${parentToolId}`;
     if (this.subagentIdMap.has(key)) return this.subagentIdMap.get(key)!;
 
@@ -1024,7 +1122,7 @@ export class OfficeState {
       this.undrawnHelpers.push(id);
       return id;
     }
-    this.spawnHelper(id, parentAgentId);
+    this.spawnHelper(id, parentAgentId, skipSpawnEffect);
     return id;
   }
 
@@ -1044,7 +1142,7 @@ export class OfficeState {
   }
 
   /** Draw the oldest undrawn crew helper of a lead, with the last state it was sent. */
-  private drawNextCrewHelper(parentAgentId: number): void {
+  private drawNextCrewHelper(parentAgentId: number, skipSpawnEffect = false): void {
     const index = this.undrawnHelpers.findIndex(
       (id) => this.subagentMeta.get(id)?.parentAgentId === parentAgentId,
     );
@@ -1052,7 +1150,7 @@ export class OfficeState {
     const [id] = this.undrawnHelpers.splice(index, 1);
     const state = this.undrawnState.get(id);
     this.undrawnState.delete(id);
-    this.spawnHelper(id, parentAgentId);
+    this.spawnHelper(id, parentAgentId, skipSpawnEffect);
     if (state) {
       this.setAgentTool(id, state.tool);
       this.setAgentActive(id, state.active);
@@ -1067,7 +1165,7 @@ export class OfficeState {
     return true;
   }
 
-  private spawnHelper(id: number, parentAgentId: number): void {
+  private spawnHelper(id: number, parentAgentId: number, skipSpawnEffect = false): void {
     const parentCh = this.characters.get(parentAgentId);
     const palette = parentCh ? parentCh.palette : 0;
     const hueShift = parentCh ? parentCh.hueShift : 0;
@@ -1085,7 +1183,7 @@ export class OfficeState {
     else if (parentCh) ch.dir = parentCh.dir;
     ch.isSubagent = true;
     ch.parentAgentId = parentAgentId;
-    startMatrixEffect(ch, 'spawn');
+    if (!skipSpawnEffect) startMatrixEffect(ch, 'spawn');
     this.characters.set(id, ch);
   }
 

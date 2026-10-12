@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -20,6 +21,8 @@ export interface StandaloneSession {
   tmpHome: string;
   workspaceDir: string;
   hostUrl: string;
+  /** The server token the first host ran with, the one in the page's URL. */
+  token: string;
   hookServerConfig: HookServerConfig;
   getHostLogs: () => string;
   cleanup: () => Promise<void>;
@@ -27,11 +30,13 @@ export interface StandaloneSession {
   /** Stop the host process, breaking its WebSocket connections, without disposing
    *  the browser page or its recorded message buffer. Fallback for tests that need
    *  to observe a real connection drop when `context.setOffline` does not reliably
-   *  close an already-open WebSocket (Chromium-version dependent). */
-  stopHost: () => Promise<void>;
+   *  close an already-open WebSocket (Chromium-version dependent). `crash` kills it
+   *  with no shutdown: a graceful stop closes every agent over the socket first. */
+  stopHost: (opts?: { crash?: boolean }) => Promise<void>;
   /** Restart the host on the SAME port after `stopHost`, so the already-connected
-   *  browser page's exponential-backoff retry succeeds again. */
-  startHost: () => Promise<void>;
+   *  browser page's exponential-backoff retry reaches it again. With the session's
+   *  `token` the page reconnects; with none, a fresh token, the host refuses it (4001). */
+  startHost: (token?: string) => Promise<void>;
 }
 
 export interface LaunchStandaloneOptions {
@@ -95,12 +100,15 @@ async function waitForHttpOk(url: string): Promise<void> {
  * Spawn our standalone CLI (dist/cli.js). The CLI serves both the SPA and the
  * /ws WebSocket on the same port; tests connect Playwright's chromium to that
  * single origin. Workspace dir is communicated via process.cwd() since our CLI
- * doesn't take a --workspace-dir flag.
+ * doesn't take a --workspace-dir flag. Every host gets an explicit --token, so no
+ * host reads or writes the saved server-token file, and hosts sharing a HOME
+ * (multi-server) never race on it.
  */
 function spawnStandaloneHost(args: {
   homeDir: string;
   hostPort: number;
   workspaceDir: string;
+  token: string;
 }): ChildProcessWithoutNullStreams {
   if (!fs.existsSync(STANDALONE_CLI)) {
     throw new Error(
@@ -109,7 +117,15 @@ function spawnStandaloneHost(args: {
   }
   return spawn(
     process.execPath,
-    [STANDALONE_CLI, '--port', args.hostPort.toString(), '--host', '127.0.0.1'],
+    [
+      STANDALONE_CLI,
+      '--port',
+      args.hostPort.toString(),
+      '--host',
+      '127.0.0.1',
+      '--token',
+      args.token,
+    ],
     {
       cwd: args.workspaceDir,
       env: {
@@ -138,6 +154,18 @@ async function stopProcess(child: ChildProcessWithoutNullStreams): Promise<void>
       delay(1_000),
     ]);
   }
+}
+
+/** SIGKILL: no shutdown handler runs, so the host tells its sockets nothing on the way out. */
+async function killProcess(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (child.exitCode !== null || child.killed) {
+    return;
+  }
+  child.kill('SIGKILL');
+  await Promise.race([
+    new Promise<void>((resolve) => child.once('exit', () => resolve())),
+    delay(2_000),
+  ]);
 }
 
 /**
@@ -245,10 +273,16 @@ export async function launchStandalone(
   const hostPort = await getFreePort();
   const hostUrl = `http://127.0.0.1:${hostPort}`;
 
+  const token = crypto.randomUUID();
   let hostStdout = '';
   let hostStderr = '';
-  function spawnAndAttach(): ChildProcessWithoutNullStreams {
-    const proc = spawnStandaloneHost({ homeDir: tmpHome, hostPort, workspaceDir });
+  function spawnAndAttach(hostToken: string): ChildProcessWithoutNullStreams {
+    const proc = spawnStandaloneHost({
+      homeDir: tmpHome,
+      hostPort,
+      workspaceDir,
+      token: hostToken,
+    });
     proc.stdout.on('data', (chunk) => {
       hostStdout += chunk.toString();
     });
@@ -257,7 +291,7 @@ export async function launchStandalone(
     });
     return proc;
   }
-  let hostProcess = spawnAndAttach();
+  let hostProcess = spawnAndAttach(token);
 
   try {
     await page.setViewportSize({ width: 1280, height: 800 });
@@ -279,15 +313,16 @@ export async function launchStandalone(
       tmpHome,
       workspaceDir,
       hostUrl,
+      token,
       hookServerConfig,
       getHostLogs: () =>
         [hostStdout.trim(), hostStderr.trim()].filter((value) => value.length > 0).join('\n'),
       drainMessages: () => drainRecordedMessages(page),
-      stopHost: async () => {
-        await stopProcess(hostProcess);
+      stopHost: async (opts?: { crash?: boolean }) => {
+        await (opts?.crash ? killProcess(hostProcess) : stopProcess(hostProcess));
       },
-      startHost: async () => {
-        hostProcess = spawnAndAttach();
+      startHost: async (hostToken?: string) => {
+        hostProcess = spawnAndAttach(hostToken ?? crypto.randomUUID());
         await waitForHttpOk(`${hostUrl}/api/health`);
       },
       cleanup: async () => {

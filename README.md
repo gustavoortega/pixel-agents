@@ -42,6 +42,8 @@ node dist/cli.js --host 127.0.0.1
 
 Open the URL it prints. It carries a `?token=` that gives full control of the office, including installing the Claude Code hooks, so treat it as a password. The first run asks before it touches `~/.claude/settings.json`.
 
+The token is saved in `~/.pixel-agents/server-token`, so the URL keeps working after a restart and an open tab reconnects on its own. Delete that file to get a new token, or pass `--token <token>` for a single run.
+
 Keep the default bind. `--host 0.0.0.0` puts the office and its token-gated socket on your network.
 
 `npx pixel-agents` and the VS Code Marketplace install upstream, not this fork. For VS Code, open the repo and press F5.

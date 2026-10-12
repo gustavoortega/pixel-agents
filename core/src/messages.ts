@@ -13,6 +13,7 @@ export type ServerMessage =
   | AgentClosed
   | AgentSelected
   | ExistingAgents
+  | HandshakeDone
   | AgentStatus
   | AgentToolStart
   | AgentToolDone
@@ -116,6 +117,10 @@ export interface AgentSeatMeta {
   palette?: number;
   hueShift?: number;
   seatId?: string;
+}
+
+export interface HandshakeDone {
+  type: 'handshakeDone';
 }
 
 export interface AgentStatus {
@@ -297,6 +302,7 @@ export interface LayoutLoaded {
   type: 'layoutLoaded';
   layout: Record<string, any> | null;
   wasReset?: boolean;
+  imported?: boolean;
 }
 
 export interface FurnitureAssetsLoaded {

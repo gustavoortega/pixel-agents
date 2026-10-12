@@ -12,6 +12,7 @@ import type {
   SetHooksEnabledSideEffect,
 } from './clientMessageHandler.js';
 import {
+  LAYOUT_FILE_DIR,
   SERVER_JSON_DIR,
   SERVER_JSON_NAME,
   SERVER_REGISTRY_PROTOCOL_VERSION,
@@ -20,6 +21,7 @@ import {
 import { createHttpServer } from './httpServer.js';
 import type { ServerConfig } from './serverConfig.js';
 import { isServerConfig, isServerTarget } from './serverConfig.js';
+import { loadOrCreateToken } from './serverToken.js';
 import type { TokenLedger } from './tokenLedger.js';
 
 export type { ServerConfig } from './serverConfig.js';
@@ -71,6 +73,8 @@ export class PixelAgentsServer {
     onSetHooksEnabled?: SetHooksEnabledSideEffect;
     onReloadAssets?: ReloadAssetsSideEffect;
     tokenLedger?: TokenLedger;
+    /** The CLI's `--token`: used as given, and the token file is neither read nor written. */
+    token?: string;
   }): Promise<ServerConfig> {
     const embedded = options?.embedded ?? true;
     const wantsSpa = !embedded;
@@ -92,8 +96,15 @@ export class PixelAgentsServer {
       return candidate;
     }
 
-    // Start our own server
-    const token = crypto.randomUUID();
+    // Start our own server. Standalone keeps its token across restarts, since its
+    // printed URL carries it to open tabs. Embedded mints one per start: no URL
+    // carries it, and sharing the standalone's file would make one secret, which
+    // also reaches browser history, open both servers.
+    const token =
+      options?.token ??
+      (embedded
+        ? crypto.randomUUID()
+        : loadOrCreateToken(path.join(os.homedir(), LAYOUT_FILE_DIR)));
     const store = options?.store;
 
     const { app, port } = await createHttpServer({

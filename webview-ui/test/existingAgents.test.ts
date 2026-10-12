@@ -55,6 +55,12 @@ function fakeOffice(
     setHeadless: (id, isHeadless) => {
       if (isHeadless) headless.push(id);
     },
+    // Removal and the server's look only run in a resync (resync.test.ts, real office).
+    topLevelAgentIds: () => [...ids],
+    removeAgentImmediate: (id) => {
+      ids.delete(id);
+    },
+    applyAgentMeta: () => {},
   };
 }
 
@@ -68,9 +74,9 @@ test('layout ready: adds restored agents immediately with their seat metadata', 
   };
   const folderNames: Record<number, string> = { 5: 'alpha' };
 
-  const addedDirectly = reconcileExistingAgents(os, [5], meta, folderNames, true, pending);
+  const { added } = reconcileExistingAgents(os, [5], meta, folderNames, true, pending);
 
-  assert.equal(addedDirectly, true);
+  assert.deepEqual(added, [5]);
   assert.equal(pending.length, 0, 'nothing should be buffered once the layout is ready');
   assert.deepEqual(os.calls, [
     // skipSpawnEffect must be true so restored agents don't replay the matrix effect.
@@ -95,9 +101,9 @@ test('layout not ready: buffers restored agents for the later layoutLoaded flush
   };
   const folderNames: Record<number, string> = { 5: 'alpha' };
 
-  const addedDirectly = reconcileExistingAgents(os, [5], meta, folderNames, false, pending);
+  const { added } = reconcileExistingAgents(os, [5], meta, folderNames, false, pending);
 
-  assert.equal(addedDirectly, false);
+  assert.deepEqual(added, []);
   assert.equal(os.calls.length, 0, 'no agent should be added before the layout is ready');
   assert.deepEqual(pending, [
     { id: 5, palette: 2, hueShift: 90, seatId: 'seat-a', folderName: 'alpha', isHeadless: false },
@@ -110,9 +116,9 @@ test('layout ready: skips an agent that already exists and reports nothing added
   const os = fakeOffice([5]); // agent 5 already has a character
   const pending: PendingAgent[] = [];
 
-  const addedDirectly = reconcileExistingAgents(os, [5], {}, {}, true, pending);
+  const { added } = reconcileExistingAgents(os, [5], {}, {}, true, pending);
 
-  assert.equal(addedDirectly, false);
+  assert.deepEqual(added, []);
   assert.equal(os.calls.length, 0);
   assert.equal(pending.length, 0);
 });
@@ -121,9 +127,9 @@ test('layout ready: a mixed roster adds only the missing agent', () => {
   const os = fakeOffice([5]);
   const pending: PendingAgent[] = [];
 
-  const addedDirectly = reconcileExistingAgents(os, [5, 6], {}, {}, true, pending);
+  const { added } = reconcileExistingAgents(os, [5, 6], {}, {}, true, pending);
 
-  assert.equal(addedDirectly, true);
+  assert.deepEqual(added, [6]);
   assert.deepEqual(
     os.calls.map((c) => c.id),
     [6],
@@ -163,9 +169,9 @@ test('layout ready: agent with no metadata is still added with undefined fields'
   const os = fakeOffice();
   const pending: PendingAgent[] = [];
 
-  const addedDirectly = reconcileExistingAgents(os, [7], {}, {}, true, pending);
+  const { added } = reconcileExistingAgents(os, [7], {}, {}, true, pending);
 
-  assert.equal(addedDirectly, true);
+  assert.deepEqual(added, [7]);
   assert.deepEqual(os.calls, [
     {
       id: 7,

@@ -117,8 +117,8 @@ export const MAX_PORT = 65_535;
 export const SERVER_REGISTRY_PROTOCOL_VERSION = 1;
 
 // ── WebSocket close codes (application range 4000-4999) ────
-/** Embedded mode: Bearer token missing or wrong. */
-export const WS_CLOSE_UNAUTHORIZED = 4001;
+// The unauthorized code lives in core: the webview stops reconnecting on it.
+export { WS_CLOSE_UNAUTHORIZED } from '../../core/src/constants.js';
 /** Standalone mode: the handshake's Origin is not this server's own origin.
  *  WebSocket connects bypass CORS, so this is the only thing standing between
  *  a drive-by web page and the privileged client-message channel. */
@@ -139,6 +139,13 @@ export const LAYOUT_FILE_POLL_INTERVAL_MS = 2000;
 export const LAYOUT_REVISION_KEY = 'layoutRevision';
 export const CONFIG_FILE_NAME = 'config.json';
 export const TRIPWIRES_FILE_NAME = 'tripwires.json';
+
+// ── Standalone server token ────────────────────────────────
+/** Under LAYOUT_FILE_DIR: the standalone server's token, kept across restarts so
+ *  the URL the CLI printed still opens, and an open tab still reconnects. */
+export const SERVER_TOKEN_FILE_NAME = 'server-token';
+/** What `--token` and the token file must hold: URL-safe, never shorter than 16. */
+export const SERVER_TOKEN_PATTERN = /^[A-Za-z0-9._-]{16,128}$/;
 
 // ── Roster ─────────────────────────────────────────────────
 export const ROSTER_FILE_NAME = 'roster.json';

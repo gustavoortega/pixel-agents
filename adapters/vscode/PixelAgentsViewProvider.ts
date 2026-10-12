@@ -988,7 +988,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           }
           this.layoutWatcher?.markOwnWrite();
           writeLayoutToFile(imported);
-          this.webview?.postMessage({ type: 'layoutLoaded', layout: imported });
+          this.webview?.postMessage({ type: 'layoutLoaded', layout: imported, imported: true });
           vscode.window.showInformationMessage('Pixel Agents: Layout imported successfully.');
         } catch {
           vscode.window.showErrorMessage('Pixel Agents: Failed to read or parse layout file.');

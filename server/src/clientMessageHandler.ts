@@ -493,7 +493,8 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
         // 4a-bis. First-run consent, asked in the app: this connect is the moment the user can be asked, so the ask
         // rides the handshake and consentGate owns every condition (VS Code calls the same function). The record is
         // re-read here rather than taken from startup — another tab may have answered while this one loaded.
-        // Dismissing sends nothing, so the ask returns on the next connect: fail-closed, never nagging in-session.
+        // Dismissing sends nothing, so the ask returns on the next page load (in-session reconnects are deduped by the
+        // webview): fail-closed, never nagging in-session.
         const request = hooksConsentRequest(
           {
             installed,
@@ -565,4 +566,10 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // exist once the layout flush creates them. Without this a reconnecting
   // client shows bare characters until each agent takes another turn.
   resendAgentActivity(send, store);
+
+  // 9. End of the catch-up. A client resyncing after a reconnect drops what the
+  // steps above did not restate, so this must follow every one of them (the
+  // workflow presences included). Only the async hooks status and consent ask
+  // of step 4a may land after it.
+  send({ type: 'handshakeDone' });
 }

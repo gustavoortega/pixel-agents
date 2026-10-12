@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { expect, test } from '../../fixtures/standalone';
+import type { TestHooksWindow } from '../../helpers/editor';
 import {
   ourHookEvents,
   sendHookEvent,
@@ -152,6 +153,38 @@ test.describe('Standalone / hooks consent', () => {
 
     // The install's own hooksStatus broadcast must not yank the closing step.
     await finishIntro(dialog);
+  });
+
+  // One ask per provider per page load: while the ask is unanswered, the handshake after a
+  // reconnect asks again, and queueing it would reopen the tour the user just closed.
+  test('an Intro closed unanswered stays closed when the host restarts with the same token @area:standalone', async ({
+    page,
+    standalone,
+  }) => {
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible({ timeout: 30_000 });
+    // Escape aborts the tour and sends nothing: the server still holds the ask.
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    const asks = () =>
+      page.evaluate(
+        () =>
+          (window as TestHooksWindow).__pixelAgentsTestHooks?.messageLog?.filter(
+            (message) => message.type === 'hooksConsentRequest',
+          ).length ?? 0,
+      );
+    const asksBeforeRestart = await asks();
+
+    await standalone.stopHost({ crash: true });
+    await expect(page.getByText(/Reconnecting|Disconnected/)).toBeVisible({ timeout: 15_000 });
+    await standalone.startHost(standalone.token);
+    await expect(page.getByTestId('connection-indicator')).toHaveCount(0, { timeout: 15_000 });
+
+    // The restarted host asked again (the log records every message, dropped or not).
+    await expect.poll(asks, { timeout: 15_000 }).toBeGreaterThan(asksBeforeRestart);
+    // Settle wait before the negative assertion (office.ts wait-strategy convention).
+    await page.waitForTimeout(1_000);
+    await expect(dialog).toBeHidden();
   });
 
   // The token boundary, at the browser level: a bare-URL session still watches

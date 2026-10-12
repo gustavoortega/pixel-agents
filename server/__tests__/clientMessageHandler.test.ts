@@ -390,6 +390,32 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
       expect(sent[iStatus]).toMatchObject({ type: 'agentStatus', id: 1, status: 'waiting' });
     });
 
+    it('ends the catch-up with handshakeDone, after the workflow presences', () => {
+      // A client resyncing after a reconnect removes whatever the catch-up did not restate
+      // by the time handshakeDone lands: a presence after it would cost a live helper.
+      store.set(
+        1,
+        createTestAgent({
+          id: 1,
+          workflow: {
+            runs: new Map(),
+            watched: new Set(['wf:run1:a1']),
+            runIdByToolId: new Map(),
+            completedRunIds: new Set(),
+            ignored: new Map(),
+          },
+        }),
+      );
+
+      handleClientMessage({ type: 'webviewReady' }, (m) => sent.push(m), ctx);
+
+      // Still synchronous: only the async hooks status and consent ask may follow.
+      const types = sent.map((m) => m.type);
+      expect(types.filter((t) => t === 'handshakeDone')).toHaveLength(1);
+      expect(types[types.length - 1]).toBe('handshakeDone');
+      expect(types).toContain('subagentPresent');
+    });
+
     it('emits carpetTilesLoaded after wallTilesLoaded when both are present in the cache', () => {
       // Hex placeholders are test fixtures, not UI tokens — disable the
       // centralized-color rule just for this cache literal.

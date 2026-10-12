@@ -153,3 +153,6 @@ export class EditorState {
     this.areaDragErasing = null;
   }
 }
+
+/** The page's editor: App edits through it, and the layoutLoaded gate asks it for unsaved edits. */
+export const editorState = new EditorState();

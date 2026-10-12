@@ -29,7 +29,7 @@ export function useIntroTour(args: {
   /** A consent-step button click: sends the choice, arms the verdict wait. */
   onChoice: (choice: ConsentChoice) => void;
   /** Every way the tour ends. Sends NOTHING — an unanswered ask must return
-   *  on the next open. */
+   *  on the next page load (in-session reconnects are deduped by the webview). */
   onClose: () => void;
 } {
   const [state, dispatch] = useReducer(reduceIntroTour, INTRO_TOUR_IDLE);

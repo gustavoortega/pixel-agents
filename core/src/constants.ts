@@ -44,3 +44,11 @@ export const TRANSPORT_STATE_CONNECTING = 'connecting';
 export const TRANSPORT_STATE_CONNECTED = 'connected';
 export const TRANSPORT_STATE_RECONNECTING = 'reconnecting';
 export const TRANSPORT_STATE_DISCONNECTED = 'disconnected';
+/** Terminal: the server refused this page's token, and retrying would send the same one. */
+export const TRANSPORT_STATE_REJECTED = 'rejected';
+
+// ── WebSocket close codes (application range 4000-4999) ────
+
+/** The server refused the connection's token (embedded Bearer header or
+ *  standalone `?token=`). Shared with the webview, which stops reconnecting on it. */
+export const WS_CLOSE_UNAUTHORIZED = 4001;
