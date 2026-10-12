@@ -47,7 +47,8 @@ function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
   } as AgentState;
 }
 
-/** Assistant record shaped like Claude's: caching makes input_tokens tiny. */
+/** Assistant record shaped like Claude's: caching makes input_tokens tiny. The cache
+ *  write split, timestamp and message id are left out unless a test asks for them. */
 function assistantRecord(
   opts: {
     input?: number;
@@ -55,22 +56,45 @@ function assistantRecord(
     cacheRead?: number;
     output?: number;
     isSidechain?: boolean;
+    /** Cache write by TTL class (usage.cache_creation). Zeros are a turn that only read. */
+    write1h?: number;
+    write5m?: number;
+    timestamp?: string;
+    messageId?: string;
   } = {},
 ): Record<string, unknown> {
+  const split =
+    opts.write1h === undefined && opts.write5m === undefined
+      ? {}
+      : {
+          cache_creation: {
+            ephemeral_5m_input_tokens: opts.write5m ?? 0,
+            ephemeral_1h_input_tokens: opts.write1h ?? 0,
+          },
+        };
   return {
     type: 'assistant',
     isSidechain: opts.isSidechain ?? false,
+    ...(opts.timestamp === undefined ? {} : { timestamp: opts.timestamp }),
     message: {
+      ...(opts.messageId === undefined ? {} : { id: opts.messageId }),
       model: 'claude-opus-5',
       usage: {
         input_tokens: opts.input ?? 2,
         cache_creation_input_tokens: opts.cacheCreation ?? 0,
         cache_read_input_tokens: opts.cacheRead ?? 0,
         output_tokens: opts.output ?? 0,
+        ...split,
       },
     },
   };
 }
+
+/** A turn's clock: T0 plus an offset, as the ISO string transcripts carry. */
+const T0 = Date.parse('2026-10-12T10:00:00.000Z');
+const at = (offsetMs: number) => new Date(T0 + offsetMs).toISOString();
+const HOUR_MS = 3_600_000;
+const FIVE_MIN_MS = 300_000;
 
 describe('extractContextTokens', () => {
   it('counts cached prompt tokens, which dominate a real turn', () => {
@@ -273,6 +297,110 @@ describe('updateContextUsage', () => {
   });
 });
 
+describe('prompt-cache clock', () => {
+  let agents: AgentStateStore;
+  let agent: AgentState;
+  let caches: Array<Record<string, unknown>>;
+
+  beforeEach(() => {
+    agents = new AgentStateStore();
+    agent = createTestAgent();
+    agents.set(1, agent);
+    caches = [];
+    agents.on('broadcast', (msg) => {
+      const m = msg as Record<string, unknown>;
+      if (m.type === 'agentCache') caches.push(m);
+    });
+  });
+
+  const turn = (opts: Parameters<typeof assistantRecord>[0]) =>
+    updateContextUsage(1, agent, agents, assistantRecord({ cacheRead: 50_000, ...opts }));
+
+  it('C1 a 5 minute write expires five minutes after its turn, a 1 hour write an hour after', () => {
+    turn({ write5m: 900, timestamp: at(0), messageId: 'msg_1' });
+    turn({ write1h: 900, timestamp: at(60_000), messageId: 'msg_2' });
+
+    expect(caches).toEqual([
+      { type: 'agentCache', id: 1, ttlSeconds: 300, expiresAt: T0 + FIVE_MIN_MS },
+      { type: 'agentCache', id: 1, ttlSeconds: 3600, expiresAt: T0 + 60_000 + HOUR_MS },
+    ]);
+  });
+
+  it('C5 a turn that only read the cache keeps the TTL and restarts it; before any write, nothing', () => {
+    turn({ write1h: 0, write5m: 0, timestamp: at(0), messageId: 'msg_0' });
+    expect(caches).toEqual([]);
+
+    turn({ write1h: 900, timestamp: at(1_000), messageId: 'msg_1' });
+    turn({ write1h: 0, write5m: 0, timestamp: at(600_000), messageId: 'msg_2' });
+
+    expect(caches.at(-1)).toEqual({
+      type: 'agentCache',
+      id: 1,
+      ttlSeconds: 3600,
+      expiresAt: T0 + 600_000 + HOUR_MS,
+    });
+  });
+
+  it('C6 a 5 minute write after 1 hour ones flips the TTL to 300', () => {
+    turn({ write1h: 900, timestamp: at(0), messageId: 'msg_1' });
+    turn({ write1h: 900, timestamp: at(1_000), messageId: 'msg_2' });
+    turn({ write5m: 900, timestamp: at(2_000), messageId: 'msg_3' });
+
+    expect(caches.at(-1)).toEqual({
+      type: 'agentCache',
+      id: 1,
+      ttlSeconds: 300,
+      expiresAt: T0 + 2_000 + FIVE_MIN_MS,
+    });
+  });
+
+  it('C7 three lines of one message broadcast once, dated by the first line', () => {
+    turn({ write1h: 900, timestamp: at(0), messageId: 'msg_1' });
+    turn({ write1h: 900, timestamp: at(4_000), messageId: 'msg_1' });
+    turn({ write1h: 900, timestamp: at(9_000), messageId: 'msg_1' });
+
+    expect(caches).toEqual([
+      { type: 'agentCache', id: 1, ttlSeconds: 3600, expiresAt: T0 + HOUR_MS },
+    ]);
+  });
+
+  it("C8 an all-zero record and a lead's sidechain turn leave the clock alone", () => {
+    turn({ write1h: 900, timestamp: at(0), messageId: 'msg_1' });
+    // A synthetic record (API error, interrupt): all-zero usage, later timestamp.
+    updateContextUsage(1, agent, agents, {
+      type: 'assistant',
+      timestamp: at(5_000),
+      message: {
+        id: 'msg_err',
+        model: '<synthetic>',
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+    });
+    // A sub-agent's turn inlined in the lead's transcript, after the lead's own.
+    turn({ write5m: 900, timestamp: at(9_000), messageId: 'msg_sub', isSidechain: true });
+
+    expect(caches).toHaveLength(1);
+    expect(agent.cacheTtlSeconds).toBe(3600);
+    expect(agent.cacheExpiresAt).toBe(T0 + HOUR_MS);
+  });
+
+  it("C8 a teammate's own sidechain turn moves the clock: its transcript has nothing else", () => {
+    turn({ write1h: 900, timestamp: at(0), messageId: 'msg_1', isSidechain: true });
+
+    expect(caches).toEqual([
+      { type: 'agentCache', id: 1, ttlSeconds: 3600, expiresAt: T0 + HOUR_MS },
+    ]);
+  });
+
+  it('a record without a timestamp leaves the clock alone instead of reading it as now', () => {
+    turn({ write1h: 900, timestamp: at(0), messageId: 'msg_1' });
+    turn({ write5m: 900, messageId: 'msg_2' });
+
+    expect(caches).toHaveLength(1);
+    expect(agent.cacheExpiresAt).toBe(T0 + HOUR_MS);
+  });
+});
+
 describe('agentModel broadcast', () => {
   let agents: AgentStateStore;
   let agent: AgentState;
@@ -450,6 +578,58 @@ describe('seedContextUsage', () => {
     seedAgent(path.join(tmpDir, 'gone.jsonl'), { id: 2 });
 
     expect(messages).toHaveLength(0);
+  });
+
+  const cacheMessages = () => messages.filter((m) => m.type === 'agentCache');
+
+  it('seeds the clock as streaming would: newest write for the class, first line of the newest turn for the time', () => {
+    const file = writeTranscript('cached.jsonl', [
+      assistantRecord({ cacheRead: 9_000, write5m: 900, timestamp: at(0), messageId: 'msg_1' }),
+      assistantRecord({
+        cacheRead: 9_000,
+        write1h: 900,
+        timestamp: at(60_000),
+        messageId: 'msg_2',
+      }),
+      assistantRecord({ cacheRead: 9_000, write1h: 0, timestamp: at(120_000), messageId: 'msg_3' }),
+      assistantRecord({ cacheRead: 9_000, write1h: 0, timestamp: at(125_000), messageId: 'msg_3' }),
+    ]);
+
+    seedAgent(file);
+
+    expect(cacheMessages()).toEqual([
+      { type: 'agentCache', id: 1, ttlSeconds: 3600, expiresAt: T0 + 120_000 + HOUR_MS },
+    ]);
+  });
+
+  it('leaves the clock unknown for a tail with no cache write, never cold', () => {
+    const file = writeTranscript('read-only.jsonl', [
+      assistantRecord({
+        cacheRead: 9_000,
+        write1h: 0,
+        write5m: 0,
+        timestamp: at(0),
+        messageId: 'm',
+      }),
+    ]);
+
+    const agent = seedAgent(file);
+
+    expect(cacheMessages()).toEqual([]);
+    expect(agent.cacheExpiresAt).toBeUndefined();
+  });
+
+  it('seeds the clock of an agent whose gauge is already known, as after a resume', () => {
+    const file = writeTranscript('resumed.jsonl', [
+      assistantRecord({ cacheRead: 90_000, write1h: 900, timestamp: at(0), messageId: 'm' }),
+    ]);
+
+    const agent = seedAgent(file, { contextTokens: 12_345 });
+
+    expect(agent.contextTokens).toBe(12_345);
+    expect(cacheMessages()).toEqual([
+      { type: 'agentCache', id: 1, ttlSeconds: 3600, expiresAt: T0 + HOUR_MS },
+    ]);
   });
 
   it('leaves an agent that already reported its context untouched', () => {

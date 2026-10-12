@@ -105,6 +105,10 @@ components:
         - $ref: '#/components/schemas/AgentModel'
         # Session title
         - $ref: '#/components/schemas/AgentSessionTitle'
+        # Session signals
+        - $ref: '#/components/schemas/AgentCache'
+        - $ref: '#/components/schemas/AgentMode'
+        - $ref: '#/components/schemas/AgentShells'
         # Tripwires
         - $ref: '#/components/schemas/AgentTripwire'
         - $ref: '#/components/schemas/AgentTripwireClear'
@@ -543,6 +547,82 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+
+    CacheTtlSeconds:
+      description: Prompt-cache TTL classes, in seconds (5 minutes or 1 hour).
+      type: integer
+      enum: [300, 3600]
+
+    AgentCache:
+      description: |
+        An estimate of the agent's prompt-cache clock, read from its transcript: the
+        CLI's own cache state reaches neither hooks nor transcripts. `ttlSeconds` is
+        the TTL class of the newest cache write (a turn that only read the cache
+        keeps the previous class) and `expiresAt` (epoch ms) is that turn's first
+        transcript line plus the TTL, so it trails the real clock by seconds, never
+        by a TTL class. Both are present or both are absent; absent means unknown,
+        never cold. Clients derive time left and cold from `expiresAt` against
+        their own clock. Sent once per turn that moves the clock, as a clear when
+        the agent moves to another transcript or its session ends, and on
+        reconnect for every agent. Sub-agents never receive one.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      dependencies:
+        ttlSeconds: [expiresAt]
+        expiresAt: [ttlSeconds]
+      properties:
+        type:
+          const: agentCache
+        id:
+          type: integer
+        ttlSeconds:
+          $ref: '#/components/schemas/CacheTtlSeconds'
+        expiresAt:
+          type: integer
+
+    PermissionMode:
+      description: Permission modes a session can run in.
+      type: string
+      enum: [default, acceptEdits, plan, auto, bypassPermissions, dontAsk]
+
+    AgentMode:
+      description: |
+        The agent's permission mode, from the newest transcript record that states
+        one. `mode` omitted means unknown. Sent when it changes, as a clear when the
+        session ends for good, and on reconnect for every agent. A /clear or resume
+        keeps it: the mode belongs to the CLI process, not to the transcript.
+        Sub-agents never receive one.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: agentMode
+        id:
+          type: integer
+        mode:
+          $ref: '#/components/schemas/PermissionMode'
+
+    AgentShells:
+      description: |
+        Background shells this server saw launch and not finish for the agent. A
+        launch counts once its result carries a background task id; its task
+        notification ends it. Not persisted: after a server restart it reads 0
+        until the next launch. Zero after /clear, resume and session end. Sent when
+        the count changes and on reconnect for every agent. Sub-agents never
+        receive one.
+      type: object
+      additionalProperties: false
+      required: [type, id, running]
+      properties:
+        type:
+          const: agentShells
+        id:
+          type: integer
+        running:
+          type: integer
+          minimum: 0
 
     TripwireSeverity:
       description: How loud a tripwire alarm is.

@@ -466,6 +466,53 @@ describe('HookEventHandler', () => {
     expect(mockWebview.messages).toHaveLength(0);
   });
 
+  describe('SessionEnd on a terminal agent, which stays in the office', () => {
+    const signals = () =>
+      mockWebview.messages.filter((m) =>
+        ['agentCache', 'agentMode', 'agentShells'].includes(String(m.type)),
+      );
+
+    function endSession(reason: string): AgentState {
+      const agent = createTestAgent({
+        id: 1,
+        isExternal: false,
+        cacheTtlSeconds: 3600,
+        cacheExpiresAt: 1_760_000_000_000,
+        permissionMode: 'auto',
+        runningShellIds: new Map([['toolu_1', 'b1']]),
+      });
+      agents.set(1, agent);
+      handler.registerAgent('sess-1', 1);
+      handler.handleEvent('claude', {
+        hook_event_name: 'SessionEnd',
+        session_id: 'sess-1',
+        reason,
+      });
+      return agent;
+    }
+
+    it('C12 an exit clears its cache clock, its shells and its mode', () => {
+      const agent = endSession('exit');
+
+      expect(signals()).toEqual([
+        { type: 'agentCache', id: 1 },
+        { type: 'agentShells', id: 1, running: 0 },
+        { type: 'agentMode', id: 1 },
+      ]);
+      expect(agent.permissionMode).toBeUndefined();
+    });
+
+    it('C12 a /clear clears the cache clock and the shells but keeps the mode', () => {
+      const agent = endSession('clear');
+
+      expect(signals()).toEqual([
+        { type: 'agentCache', id: 1 },
+        { type: 'agentShells', id: 1, running: 0 },
+      ]);
+      expect(agent.permissionMode).toBe('auto');
+    });
+  });
+
   // ── PreToolUse / PostToolUse ─────────────────────────────────
 
   it('PreToolUse sends agentToolStart with formatted status', () => {

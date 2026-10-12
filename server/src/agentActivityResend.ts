@@ -1,5 +1,7 @@
 import type { AgentStateStore } from './agentStateStore.js';
+import { cacheMessage } from './contextUsage.js';
 import { rosterMessage } from './rosterAgent.js';
+import { modeMessage, shellsMessage } from './sessionSignals.js';
 import { derivedTitle } from './sessionTitle.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 import { tripwireResendMessage } from './tripwires.js';
@@ -39,6 +41,7 @@ export function agentStatusMessage(id: number, agent: AgentState): Record<string
  * 5. Context usage
  * 6. Model look
  * 7. Session title
+ * 7b. Session signals: cache clock, permission mode, background shells
  * 8. Tripwire alarm
  * 9. Roster member (only for agents that hold one; mood depends on the alarm, so it follows it)
  */
@@ -121,6 +124,12 @@ export function resendAgentActivity(
     // 7. Session title. Sent for untitled agents too (title omitted): a client that
     // was offline when a title was cleared would otherwise keep showing the stale one.
     send({ type: 'agentSessionTitle', id, title: derivedTitle(agent) });
+
+    // 7b. Session signals. Sent for every agent, unknown fields omitted and a zero
+    // shell count included, so a client that missed a clear keeps nothing stale.
+    send(cacheMessage(id, agent));
+    send(modeMessage(id, agent));
+    send(shellsMessage(id, agent));
 
     // 8. Tripwire alarm, or a clear for agents without one: a client that was offline
     // during an ack would otherwise keep an alarm the user already dismissed.

@@ -50,6 +50,7 @@ import { folderNameFromProjectDir } from './folderName.js';
 import { assignPaletteIfNeeded } from './paletteAssigner.js';
 import { pathsMatch } from './pathKey.js';
 import { claimRosterMember } from './rosterAgent.js';
+import { resetSessionSignals, seedPermissionMode } from './sessionSignals.js';
 import { seedSessionTitle } from './sessionTitle.js';
 import type { SubagentWatch } from './subagentWatch.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
@@ -121,6 +122,7 @@ export function startFileWatching(
   // replaying its whole transcript.
   seedContextUsage(agentId, agents, getHookProvider());
   seedSessionTitle(agentId, agents, getHookProvider());
+  seedPermissionMode(agentId, agents, getHookProvider());
 
   // Single polling approach: reliable on all platforms (macOS, Linux, WSL2, Windows).
   // Previously used triple-redundant fs.watch + fs.watchFile + setInterval, but
@@ -1644,6 +1646,9 @@ export function reassignAgentToFile(
   cancelWaitingTimer(agentId, waitingTimers);
   cancelPermissionTimer(agentId, permissionTimers);
   clearAgentActivity(agent, agentId, agents, permissionTimers);
+  // The cache clock and the shells belong to the old transcript; the mode is the
+  // CLI process's and stays. The new file's seed may set the clock right back.
+  resetSessionSignals(agentId, agent, agents, { keepMode: true });
 
   // Permanently dismiss old file so scanners never re-adopt it as external
   dismissalTracker!.permanentlyDismiss(agent.jsonlFile);

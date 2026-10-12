@@ -271,6 +271,29 @@ describe('claudeProvider', () => {
       expect(claudeProvider.formatToolStatus('Bash', { command })).toBe(`Running: ${program}`);
     });
   });
+
+  describe('extractPermissionMode', () => {
+    const extract = (record: unknown) => claudeProvider.extractPermissionMode?.(record);
+
+    it('reads permission-mode records and the mode every user record carries', () => {
+      expect(extract({ type: 'permission-mode', permissionMode: 'auto', sessionId: 's' })).toBe(
+        'auto',
+      );
+      expect(extract({ type: 'user', permissionMode: 'plan', message: { content: 'go' } })).toBe(
+        'plan',
+      );
+    });
+
+    it.each([
+      [
+        'an input-mode record (its mode is not a permission mode)',
+        { type: 'mode', mode: 'normal' },
+      ],
+      ['a user record that states no mode', { type: 'user', message: { content: 'go' } }],
+    ])('reads no mode from %s', (_name, record) => {
+      expect(extract(record)).toBeUndefined();
+    });
+  });
 });
 
 describe('claudeProvider real-work signals', () => {

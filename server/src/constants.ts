@@ -44,6 +44,12 @@ export const CONTEXT_WINDOW_TIERS = [200_000, 1_000_000] as const;
  *  adoption or restore. Comfortably more than one turn's worth of records. */
 export const CONTEXT_SEED_TAIL_BYTES = 256 * 1024;
 
+// ── Session signals (sessionSignals.ts) ─────────────────────
+/** Task notifications remembered without a matching running shell. One that
+ *  lands before its launch's result is a few lines ahead of it, so a short
+ *  memory covers it; the rest (sub-agent shells, other task kinds) age out. */
+export const SHELL_DONE_MEMO_MAX = 32;
+
 // ── Workflow crews (workflowRuns.ts) ────────────────────────
 /** An untracked run is adopted only if its journal or one of its agent
  *  transcripts moved within this window; a tracked run with nobody live is

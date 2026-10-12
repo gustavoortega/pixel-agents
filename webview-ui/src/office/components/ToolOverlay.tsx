@@ -18,7 +18,6 @@ import {
   CONTEXT_GAUGE_HEIGHT_PX,
   CONTEXT_GAUGE_WIDTH_PX,
   CONTEXT_WARN_THRESHOLD,
-  FULL_BOX_ROW_PX,
   LABEL_LAYOUT_DIM_OPACITY,
   NAMEPLATE_COMPACT_FONT_PX,
   NAMEPLATE_COMPACT_LINE_PX,
@@ -43,7 +42,7 @@ import type { OfficeState } from '../engine/officeState.js';
 import { isShowModelFlairEnabled } from '../engine/renderer.js';
 import { ANCHORS } from '../flair/accessories.js';
 import { characterFlair, Rarity } from '../flair/modelFlair.js';
-import { fullBoxRows } from '../fullBox.js';
+import { fullBoxRows, fullBoxTopOffsetPx } from '../fullBox.js';
 import { fxTextBox } from '../fx/fxTextBox.js';
 import {
   areaSignRect,
@@ -363,11 +362,13 @@ export function ToolOverlay({
   onCloseAgent,
   onAckTripwire,
 }: ToolOverlayProps) {
-  const [, setTick] = useState(0);
+  // Re-render every frame. The frame's wall-clock time drives the cache countdown; it is
+  // taken here, outside render, and is 0 until the first frame.
+  const [frameMs, setFrameMs] = useState(0);
   useEffect(() => {
     let rafId = 0;
     const tick = () => {
-      setTick((n) => n + 1);
+      setFrameMs(Date.now());
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
@@ -695,6 +696,17 @@ export function ToolOverlay({
             id: officeState.models.get(id)?.model ?? '',
             rarity: characterFlair(ch, officeState.models, isShowModelFlairEnabled()).rarity,
           },
+          // Same gate as the context gauge: a sub-agent has no session of its own.
+          signals:
+            isSub || frameMs === 0
+              ? undefined
+              : {
+                  cache: officeState.cacheByAgent.get(id),
+                  mode: officeState.modeByAgent.get(id),
+                  shells: officeState.shellsByAgent.get(id),
+                  contextTokens: ch.contextTokens,
+                  now: frameMs,
+                },
         });
         const group = sub?.group;
         const hasExtraLines = !!(label || teamRoleLabel || tripwire || group);
@@ -711,8 +723,7 @@ export function ToolOverlay({
             className="absolute flex flex-col items-center -translate-x-1/2"
             style={{
               left: screenX,
-              // The box grows downward from `top`, so each roster row lifts it to keep the character clear.
-              top: screenY - (hasExtraLines ? 34 : 28) - rosterRows.length * FULL_BOX_ROW_PX,
+              top: screenY - fullBoxTopOffsetPx(rosterRows, hasExtraLines),
               pointerEvents: isSelected ? 'auto' : 'none',
               zIndex: FULL_BOX_Z_INDEX,
             }}

@@ -4,6 +4,13 @@ import type { HookProvider, SignalHit } from '../../core/src/provider.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { SIGNAL_KEYS_MAX, TEXT_IDLE_DELAY_MS, TOOL_DONE_DELAY_MS } from './constants.js';
 import { updateContextUsage } from './contextUsage.js';
+import {
+  applyPermissionMode,
+  noteShellEnded,
+  noteShellLaunched,
+  noteShellStopped,
+  noteTaskDone,
+} from './sessionSignals.js';
 import { applySessionTitle } from './sessionTitle.js';
 import { hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
 import {
@@ -147,7 +154,16 @@ export function processTranscriptLine(
     const titles = hookProvider?.extractSessionTitle?.(record);
     if (titles) applySessionTitle(agentId, agent, agents, titles);
 
-    // -- Context window usage (drives every agent's context gauge) --
+    // -- Permission mode (permission-mode records, and every user record repeats it) --
+    applyPermissionMode(agentId, agent, agents, hookProvider?.extractPermissionMode?.(record));
+
+    // -- Background shells: a task notification also reaches the model as a prompt or a
+    // queued attachment, and for some shells that copy is the only one written --
+    for (const toolUseId of deliveredTaskNotificationIds(record)) {
+      noteShellEnded(agentId, agent, agents, toolUseId);
+    }
+
+    // -- Context window usage (drives every agent's context gauge and cache clock) --
     updateContextUsage(agentId, agent, agents, record, hookProvider);
 
     // Resilient content extraction: support both record.message.content and record.content
@@ -430,6 +446,22 @@ export function processTranscriptLine(
                 // Stop the shadow watch on a foreground spawn's transcript.
                 backgroundAgentCompletedCallback?.(agentId, completedToolId);
               }
+              // A background shell proves its launch with the task id on its result;
+              // a denied launch has a result without one. A sidechain result is a
+              // sub-agent's shell, not this agent's.
+              const launchedTaskId =
+                record.isSidechain !== true && completedToolName === 'Bash'
+                  ? toolResultId(record, 'backgroundTaskId')
+                  : undefined;
+              if (launchedTaskId !== undefined) {
+                noteShellLaunched(agentId, agent, agents, completedToolId, launchedTaskId);
+              }
+              // A stopped shell gets no task notification: the TaskStop result is its end.
+              const stoppedTaskId =
+                completedToolName === 'TaskStop' ? toolResultId(record, 'task_id') : undefined;
+              if (stoppedTaskId !== undefined) {
+                noteShellStopped(agentId, agent, agents, stoppedTaskId);
+              }
               agent.activeToolIds.delete(completedToolId);
               agent.activeToolStatuses.delete(completedToolId);
               agent.activeToolNames.delete(completedToolId);
@@ -512,9 +544,14 @@ export function processTranscriptLine(
                 });
               }, TOOL_DONE_DELAY_MS);
             }
+          } else {
+            // A background shell ended, or a task this agent never saw launch.
+            noteTaskDone(agentId, agent, agents, completedToolId);
           }
         }
       }
+    } else if (record.type === 'permission-mode') {
+      // Read above by extractPermissionMode: handled, not an unknown type.
     } else if (record.type === 'system' && record.subtype === 'turn_duration') {
       cancelWaitingTimer(agentId, waitingTimers);
       cancelPermissionTimer(agentId, permissionTimers);
@@ -592,7 +629,8 @@ export function processTranscriptLine(
     } else if (record.type && !agent.seenUnknownRecordTypes.has(record.type)) {
       // Log first occurrence of unrecognized record types to help diagnose issues
       // where Claude Code changes JSONL format. Known types we intentionally skip:
-      // file-history-snapshot, queue-operation (non-enqueue), etc.
+      // file-history-snapshot, queue-operation (non-enqueue), etc. `mode` is the
+      // CLI's input mode ('normal'), not a permission mode.
       const knownSkippableTypes = new Set([
         'file-history-snapshot',
         'system',
@@ -602,6 +640,7 @@ export function processTranscriptLine(
         // Re-appended many times per PR, including PRs this session did not open: never
         // evidence of work, and logging it would repeat for every one.
         'pr-link',
+        'mode',
       ]);
       if (!knownSkippableTypes.has(record.type)) {
         agent.seenUnknownRecordTypes.add(record.type);
@@ -938,6 +977,38 @@ function workflowRunResult(
     transcriptDir: typeof result.transcriptDir === 'string' ? result.transcriptDir : undefined,
     launched: result.status === 'async_launched',
   };
+}
+
+/**
+ * A task id the record's toolUseResult carries, or undefined: a Bash result's
+ * `backgroundTaskId` when its command went to the background (by request or
+ * because it ran too long), a TaskStop result's `task_id`. Read from the result,
+ * never the tool input: only the result proves the launch or the stop happened.
+ */
+function toolResultId(
+  record: Record<string, unknown>,
+  key: 'backgroundTaskId' | 'task_id',
+): string | undefined {
+  const result = record.toolUseResult as Record<string, unknown> | undefined;
+  const id = result && typeof result === 'object' ? result[key] : undefined;
+  return typeof id === 'string' && id !== '' ? id : undefined;
+}
+
+/**
+ * Tool-use ids a task notification names as it is delivered to the model: the
+ * text of a user record, or the prompt of a `queued_command` attachment written
+ * while the agent was busy. Empty for every other record, a typed prompt included.
+ */
+function deliveredTaskNotificationIds(record: Record<string, unknown>): string[] {
+  let text: unknown;
+  if (record.type === 'user') {
+    text = (record.message as { content?: unknown } | undefined)?.content ?? record.content;
+  } else if (record.type === 'attachment') {
+    const attachment = record.attachment as { type?: unknown; prompt?: unknown } | undefined;
+    if (attachment?.type === 'queued_command') text = attachment.prompt;
+  }
+  if (typeof text !== 'string' || !/^\s*<task-notification>/.test(text)) return [];
+  return Array.from(text.matchAll(/<tool-use-id>(.*?)<\/tool-use-id>/g), (match) => match[1]);
 }
 
 /** Check if a tool_result block indicates an async/background agent launch */
