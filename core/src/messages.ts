@@ -28,6 +28,9 @@ export type ServerMessage =
   | AgentContextUsage
   | AgentModel
   | AgentSessionTitle
+  | AgentCache
+  | AgentMode
+  | AgentShells
   | AgentTripwire
   | AgentTripwireClear
   | AgentRoster
@@ -221,6 +224,30 @@ export interface AgentSessionTitle {
   type: 'agentSessionTitle';
   id: number;
   title?: string;
+}
+
+export interface AgentCache {
+  type: 'agentCache';
+  id: number;
+  ttlSeconds?: CacheTtlSeconds;
+  expiresAt?: number;
+}
+
+export type CacheTtlSeconds = 300 | 3600;
+
+export interface AgentMode {
+  type: 'agentMode';
+  id: number;
+  mode?: PermissionMode;
+}
+
+export type PermissionMode =
+  'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions' | 'dontAsk';
+
+export interface AgentShells {
+  type: 'agentShells';
+  id: number;
+  running: number;
 }
 
 export interface AgentTripwire {

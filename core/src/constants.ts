@@ -30,6 +30,13 @@ export const WORKFLOW_PARENT_TOOL_ID_PREFIX = 'wf:';
 export const WORKFLOW_LABEL_MAX_LENGTH = 60;
 export const WORKFLOW_GROUP_MAX_LENGTH = 40;
 
+// ── Session signals ──────────────────────────────────────────
+
+/** Prompt-cache TTL classes (`AgentCache.ttlSeconds`). On a subscription the
+ *  5 minute class means the session moved to usage credits. */
+export const CACHE_TTL_5M_SECONDS = 300;
+export const CACHE_TTL_1H_SECONDS = 3600;
+
 // ── Transport ────────────────────────────────────────────────
 // Connection-state names for the MessageTransport state machine.
 

@@ -405,3 +405,210 @@ describe('transcriptParser: status truth (live path)', () => {
     expect(agent.activeToolIds.size).toBe(0);
   });
 });
+
+/** A Bash result. A background launch carries the task id on toolUseResult. */
+function bashResult(toolId: string, backgroundTaskId: string) {
+  return JSON.stringify({
+    type: 'user',
+    message: {
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: toolId,
+          content: `Command running in background with ID: ${backgroundTaskId}`,
+        },
+      ],
+    },
+    toolUseResult: { stdout: '', stderr: '', interrupted: false, isImage: false, backgroundTaskId },
+  });
+}
+
+/** The result of a Bash call the user denied: an error, no task id. */
+function deniedResult(toolId: string) {
+  return JSON.stringify({
+    type: 'user',
+    message: {
+      content: [
+        { type: 'tool_result', tool_use_id: toolId, is_error: true, content: 'Permission denied' },
+      ],
+    },
+    toolUseResult: 'Error: Permission for this tool has been denied',
+  });
+}
+
+/** The same record written by a sub-agent inlined in this transcript. */
+function sidechain(line: string) {
+  return JSON.stringify({ ...JSON.parse(line), isSidechain: true });
+}
+
+/** Claude Code's notification text for a background task that ended. */
+function notificationText(toolId: string, taskId: string, status: string) {
+  return `<task-notification>\n<task-id>${taskId}</task-id>\n<tool-use-id>${toolId}</tool-use-id>\n<status>${status}</status>\n<summary>done</summary>\n</task-notification>`;
+}
+
+/** The notification as enqueued when the task ends. */
+function taskNotification(toolId: string, taskId: string, status = 'completed') {
+  return JSON.stringify({
+    type: 'queue-operation',
+    operation: 'enqueue',
+    content: notificationText(toolId, taskId, status),
+  });
+}
+
+/** The notification delivered to the model as a prompt. */
+function promptNotification(toolId: string, taskId: string) {
+  return JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: notificationText(toolId, taskId, 'completed') },
+  });
+}
+
+/** The notification queued as an attachment while the agent was busy. */
+function queuedNotification(toolId: string, taskId: string) {
+  return JSON.stringify({
+    type: 'attachment',
+    attachment: { type: 'queued_command', prompt: notificationText(toolId, taskId, 'completed') },
+  });
+}
+
+/** A TaskStop result: it names the task it stopped. */
+function taskStopResult(toolId: string, taskId: string) {
+  const result = {
+    message: `Successfully stopped task: ${taskId} (npm run dev)`,
+    task_id: taskId,
+    task_type: 'local_bash',
+    command: 'npm run dev',
+  };
+  return JSON.stringify({
+    type: 'user',
+    message: {
+      content: [{ type: 'tool_result', tool_use_id: toolId, content: JSON.stringify(result) }],
+    },
+    toolUseResult: result,
+  });
+}
+
+describe('transcriptParser: background shells', () => {
+  let agents: AgentStateStore;
+  let agent: AgentState;
+  let shells: Array<Record<string, unknown>>;
+  const waitingTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  const permissionTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  const feed = (line: string) =>
+    processTranscriptLine(1, line, agents, waitingTimers, permissionTimers);
+  const running = (n: number) => ({ type: 'agentShells', id: 1, running: n });
+  /** A Bash sent to the background: its call, then its result with the task id. */
+  const launch = (toolId: string, taskId: string) => {
+    feed(agentToolUseRecord(toolId, 'Bash', { command: 'npm run dev', run_in_background: true }));
+    feed(bashResult(toolId, taskId));
+  };
+
+  beforeEach(() => {
+    setHookProvider(claudeProvider);
+    agents = new AgentStateStore();
+    agent = createTestAgent();
+    agents.set(1, agent);
+    shells = [];
+    agents.on('broadcast', (msg) => {
+      const m = msg as Record<string, unknown>;
+      if (m.type === 'agentShells') shells.push(m);
+    });
+    vi.useFakeTimers();
+    return () => vi.useRealTimers();
+  });
+
+  /** Every record that can end a background shell, as the lines it takes. */
+  const shellEnds: Array<[string, (toolId: string, taskId: string) => string[]]> = [
+    ['its task notification is enqueued', (toolId, taskId) => [taskNotification(toolId, taskId)]],
+    [
+      'its notification is delivered as a prompt',
+      (toolId, taskId) => [promptNotification(toolId, taskId)],
+    ],
+    [
+      'its notification is queued as an attachment',
+      (toolId, taskId) => [queuedNotification(toolId, taskId)],
+    ],
+    [
+      'TaskStop stops its task, which no notification follows',
+      (_toolId, taskId) => [
+        agentToolUseRecord('toolu_stop', 'TaskStop', { task_id: taskId }),
+        taskStopResult('toolu_stop', taskId),
+      ],
+    ],
+  ];
+
+  it.each(shellEnds)('C3 a background shell counts from its launch until %s', (_how, end) => {
+    launch('toolu_1', 'b1');
+    launch('toolu_2', 'b2');
+    expect(shells).toEqual([running(1), running(2)]);
+    // The launches returned: each Bash is done as a tool while its shell runs on.
+    expect([...agent.activeToolIds]).toEqual([]);
+
+    for (const line of end('toolu_2', 'b2')) feed(line);
+    expect(shells).toEqual([running(1), running(2), running(1)]);
+
+    // The other shell still counts until its own end.
+    feed(taskNotification('toolu_1', 'b1'));
+    expect(shells).toEqual([running(1), running(2), running(1), running(0)]);
+  });
+
+  it('C9 a denied or sidechain launch never counts; a result with a task id does, even without the flag', () => {
+    feed(
+      agentToolUseRecord('toolu_no', 'Bash', { command: 'npm run dev', run_in_background: true }),
+    );
+    feed(deniedResult('toolu_no'));
+    // A sub-agent's launch: its notification lands in another transcript.
+    feed(
+      sidechain(
+        agentToolUseRecord('toolu_sub', 'Bash', {
+          command: 'npm run dev',
+          run_in_background: true,
+        }),
+      ),
+    );
+    feed(sidechain(bashResult('toolu_sub', 'b9')));
+    expect(shells).toEqual([]);
+
+    // A command that runs too long goes to the background with no flag on its input.
+    feed(agentToolUseRecord('toolu_auto', 'Bash', { command: 'npm test' }));
+    feed(bashResult('toolu_auto', 'b2'));
+    expect(shells).toEqual([running(1)]);
+  });
+
+  it('C10 a notification for a shell this agent never launched changes nothing; a repeat counts down once', () => {
+    launch('toolu_1', 'b1');
+    // A sub-agent's shell finishing on the lead's transcript.
+    feed(taskNotification('toolu_sub', 'b9'));
+    expect(shells).toEqual([running(1)]);
+
+    feed(taskNotification('toolu_1', 'b1'));
+    feed(taskNotification('toolu_1', 'b1', 'killed'));
+    expect(shells).toEqual([running(1), running(0)]);
+    expect(agent.runningShellIds?.size).toBe(0);
+  });
+
+  it('a notification written before its launch result leaves the shell uncounted', () => {
+    feed(taskNotification('toolu_fast', 'b3'));
+    launch('toolu_fast', 'b3');
+
+    expect(shells).toEqual([]);
+    expect(agent.runningShellIds?.size ?? 0).toBe(0);
+  });
+});
+
+describe('transcriptParser: record types', () => {
+  it('C14 mode and permission-mode records are known types, never logged as unrecognized', () => {
+    setHookProvider(claudeProvider);
+    const agents = new AgentStateStore();
+    const agent = createTestAgent();
+    agents.set(1, agent);
+    const feed = (record: unknown) =>
+      processTranscriptLine(1, JSON.stringify(record), agents, new Map(), new Map());
+
+    feed({ type: 'mode', mode: 'normal', sessionId: 's' });
+    feed({ type: 'permission-mode', permissionMode: 'auto', sessionId: 's' });
+
+    expect([...agent.seenUnknownRecordTypes]).toEqual([]);
+  });
+});

@@ -1,5 +1,6 @@
 import { spriteWorldHeight } from '../../../../core/src/assets/artDensity.js';
 import { WORKFLOW_PARENT_TOOL_ID_PREFIX } from '../../../../core/src/constants.js';
+import type { CacheTtlSeconds, PermissionMode } from '../../../../core/src/messages.js';
 import { pickDiversePalette } from '../../../../core/src/paletteUtils.js';
 import type { ModelTier } from '../../../../core/src/provider.js';
 import {
@@ -127,6 +128,11 @@ export class OfficeState {
   /** Model and tier by agent id, from `agentModel`. Keyed by id for the same reason as
    *  sessionTitles. A model the provider cannot place has no tier and no flair. */
   models: Map<number, { model: string; tier?: ModelTier }> = new Map();
+  /** Session signals by agent id, keyed by id for the same reason as sessionTitles. An
+   *  absent entry is unknown (the cache is never shown cold for it) or, for shells, none. */
+  cacheByAgent: Map<number, { ttlSeconds: CacheTtlSeconds; expiresAt: number }> = new Map();
+  modeByAgent: Map<number, PermissionMode> = new Map();
+  shellsByAgent: Map<number, number> = new Map();
   /** The follower of each agent whose tier brings a companion, by agent id. */
   companions: Map<number, Companion> = new Map();
   /** Every furniture footprint tile, background rows included (blockedTiles skips those). */
@@ -792,6 +798,9 @@ export class OfficeState {
     this.fx.forget(id);
     this.models.delete(id);
     this.companions.delete(id);
+    this.cacheByAgent.delete(id);
+    this.modeByAgent.delete(id);
+    this.shellsByAgent.delete(id);
     const ch = this.characters.get(id);
     if (!ch) return;
     if (ch.matrixEffect === 'despawn') return; // already despawning
@@ -1590,6 +1599,31 @@ export class OfficeState {
   setAgentModel(id: number, model: string | undefined, tier: ModelTier | undefined): void {
     if (model) this.models.set(id, { model, tier });
     else this.models.delete(id);
+  }
+
+  /** Both fields or neither: a message missing either says the clock is unknown. */
+  setAgentCache(
+    id: number,
+    ttlSeconds: CacheTtlSeconds | undefined,
+    expiresAt: number | undefined,
+  ): void {
+    if (typeof ttlSeconds === 'number' && typeof expiresAt === 'number') {
+      this.cacheByAgent.set(id, { ttlSeconds, expiresAt });
+    } else {
+      this.cacheByAgent.delete(id);
+    }
+  }
+
+  /** Undefined clears the mode: unknown. */
+  setAgentMode(id: number, mode: PermissionMode | undefined): void {
+    if (mode) this.modeByAgent.set(id, mode);
+    else this.modeByAgent.delete(id);
+  }
+
+  /** Zero keeps no entry: no shells is the default, not a value to remember. */
+  setAgentShells(id: number, running: number): void {
+    if (typeof running === 'number' && running > 0) this.shellsByAgent.set(id, running);
+    else this.shellsByAgent.delete(id);
   }
 
   /** Undefined clears the alarm. */

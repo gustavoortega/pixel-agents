@@ -193,6 +193,11 @@ export interface HookProvider {
    *  or not a string is absent, never an empty title. */
   extractSessionTitle?(record: unknown): { customTitle?: string; aiTitle?: string } | null;
 
+  /** Permission mode carried by one transcript record, as the CLI wrote it, or
+   *  undefined when the record states none. The runtime keeps only the modes the
+   *  protocol knows (`PermissionMode`), so the value is passed through raw. */
+  extractPermissionMode?(record: unknown): string | undefined;
+
   /** Classify one parsed transcript record. Required for the adoption-time tail
    *  walk (server/src/turnState.ts); a provider without it keeps the old behavior
    *  of showing adopted agents as unknown. */

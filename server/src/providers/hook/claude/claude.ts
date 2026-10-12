@@ -17,6 +17,7 @@ import {
   SESSION_TITLE_MAX_LENGTH,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
 } from '../../../constants.js';
+import { recordTimestampMs } from '../../../contextUsage.js';
 import {
   areHooksInstalled as installerAreHooksInstalled,
   installHooks as installerInstallHooks,
@@ -387,6 +388,21 @@ export function extractSessionTitle(
   return null;
 }
 
+/**
+ * Claude Code writes `{type:'permission-mode', permissionMode}` records and
+ * stamps `permissionMode` on every user record. Both reach the transcript when a
+ * prompt is submitted, which no installed hook beats (UserPromptSubmit is not
+ * installed). The value goes out raw; the runtime keeps only the modes it knows.
+ */
+export function extractPermissionMode(record: unknown): string | undefined {
+  const r = record as { type?: unknown; permissionMode?: unknown } | null;
+  if (r?.type === 'permission-mode') {
+    return typeof r.permissionMode === 'string' ? r.permissionMode : undefined;
+  }
+  if (r?.type === 'user' && typeof r.permissionMode === 'string') return r.permissionMode;
+  return undefined;
+}
+
 // ── Turn signals ──
 
 /** Interrupt marker Claude writes as a user text record, with or without the
@@ -418,15 +434,14 @@ export function turnSignal(record: unknown): TurnSignal {
     subtype?: unknown;
     isMeta?: unknown;
     isCompactSummary?: unknown;
-    timestamp?: unknown;
     message?: { content?: unknown };
     content?: unknown;
   };
-  const parsed = typeof r.timestamp === 'string' ? Date.parse(r.timestamp) : NaN;
+  const timestampMs = recordTimestampMs(record);
   const stamp = (kind: TurnSignal['kind'], extra?: Partial<TurnSignal>): TurnSignal => ({
     kind,
     ...extra,
-    ...(Number.isNaN(parsed) ? {} : { timestampMs: parsed }),
+    ...(timestampMs === undefined ? {} : { timestampMs }),
   });
   const content = r.message?.content ?? r.content;
 
@@ -795,6 +810,7 @@ export const claudeProvider: HookProvider = {
   contextWindowForModel,
   modelTier,
   extractSessionTitle,
+  extractPermissionMode,
   turnSignal,
   turnTraits: TURN_TRAITS,
   toolVerdicts,

@@ -37,16 +37,24 @@ function createTestAgent(overrides: Partial<AgentState> = {}): AgentState {
   } as AgentState;
 }
 
-/** Resend minus the model, title and tripwire messages, which every agent gets, so the tests
- *  below can assert the other messages without restating them each time. */
+/** Messages every agent gets on a resend, known or not. */
+const SENT_FOR_EVERY_AGENT = new Set([
+  'agentModel',
+  'agentSessionTitle',
+  'agentCache',
+  'agentMode',
+  'agentShells',
+]);
+
+/** Resend minus the model, title, session-signal and tripwire messages, which every agent
+ *  gets, so the tests below can assert the other messages without restating them each time. */
 function resendActivityWithoutTitlesOrAlarms(
   sent: Array<Record<string, unknown>>,
   store: AgentStateStore,
 ): void {
   resendAgentActivity((msg) => {
     if (
-      msg.type !== 'agentSessionTitle' &&
-      msg.type !== 'agentModel' &&
+      !SENT_FOR_EVERY_AGENT.has(String(msg.type)) &&
       !String(msg.type).startsWith('agentTripwire')
     ) {
       sent.push(msg);
@@ -75,6 +83,9 @@ describe('resendAgentActivity roster', () => {
       'agentStatus',
       'agentModel',
       'agentSessionTitle',
+      'agentCache',
+      'agentMode',
+      'agentShells',
       'agentTripwireClear',
       'agentRoster',
     ]);
@@ -82,6 +93,9 @@ describe('resendAgentActivity roster', () => {
       'agentStatus',
       'agentModel',
       'agentSessionTitle',
+      'agentCache',
+      'agentMode',
+      'agentShells',
       'agentTripwireClear',
     ]);
     expect(sent.find((m) => m.type === 'agentRoster')).toMatchObject({
@@ -95,7 +109,7 @@ describe('resendAgentActivity roster', () => {
 });
 
 describe('resendAgentActivity', () => {
-  it('sends messages in order: team info, tools, waiting, context, model, title, tripwire', () => {
+  it('sends messages in order: team info, tools, waiting, context, model, title, session signals, tripwire', () => {
     const store = new AgentStateStore();
     store.set(
       1,
@@ -118,6 +132,9 @@ describe('resendAgentActivity', () => {
       'agentContextUsage',
       'agentModel',
       'agentSessionTitle',
+      'agentCache',
+      'agentMode',
+      'agentShells',
       'agentTripwireClear',
     ]);
   });
@@ -305,6 +322,37 @@ describe('resendAgentActivity', () => {
     expect(sent).toEqual([
       { type: 'agentModel', id: 1, model: 'claude-opus-5-5', tier: 3 },
       { type: 'agentModel', id: 2 },
+    ]);
+  });
+
+  it('sends the session signals for every agent, omitting what is unknown and counting zero shells', () => {
+    const store = new AgentStateStore();
+    store.set(
+      1,
+      createTestAgent({
+        id: 1,
+        cacheTtlSeconds: 3600,
+        cacheExpiresAt: 1_760_000_000_000,
+        permissionMode: 'auto',
+        runningShellIds: new Map([
+          ['toolu_a', 'ba'],
+          ['toolu_b', 'bb'],
+        ]),
+      }),
+    );
+    store.set(2, createTestAgent({ id: 2 }));
+    const sent: Array<Record<string, unknown>> = [];
+    resendAgentActivity((msg) => {
+      if (['agentCache', 'agentMode', 'agentShells'].includes(String(msg.type))) sent.push(msg);
+    }, store);
+    // Strict: an unknown field is absent from the message, not present as undefined.
+    expect(sent).toStrictEqual([
+      { type: 'agentCache', id: 1, ttlSeconds: 3600, expiresAt: 1_760_000_000_000 },
+      { type: 'agentMode', id: 1, mode: 'auto' },
+      { type: 'agentShells', id: 1, running: 2 },
+      { type: 'agentCache', id: 2 },
+      { type: 'agentMode', id: 2 },
+      { type: 'agentShells', id: 2, running: 0 },
     ]);
   });
 

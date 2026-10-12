@@ -7,7 +7,8 @@ import {
 import { rarityColor } from '../flair/modelFlair.js';
 import type { FullBoxRow } from '../fullBox.js';
 
-/** Roster and model rows of the hover/selected box: name, level, XP bar, streak, mood, model. */
+/** Roster, model and session rows of the hover/selected box: name, level, XP bar, streak, mood,
+ *  model, then the cache clock, permission mode and background shells as plain lines. */
 export function FullBoxRoster({ rows }: { rows: FullBoxRow[] }) {
   if (rows.length === 0) return null;
   return (
@@ -68,6 +69,14 @@ export function FullBoxRoster({ rows }: { rows: FullBoxRow[] }) {
                 className="text-2xs leading-none"
                 style={{ color: rarityColor(row.rarity) }}
               >
+                {row.text}
+              </span>
+            );
+          case 'cache':
+          case 'mode':
+          case 'shells':
+            return (
+              <span key={row.kind} className="text-2xs leading-none">
                 {row.text}
               </span>
             );

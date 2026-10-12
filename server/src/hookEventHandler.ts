@@ -6,6 +6,7 @@ import { SESSION_END_GRACE_MS } from './constants.js';
 import { bindHookSubRow, releaseHookSubRow } from './hookSubRows.js';
 import { broadcastRoster } from './rosterAgent.js';
 import type { SessionRouter } from './sessionRouter.js';
+import { resetSessionSignals } from './sessionSignals.js';
 import { getInlineTeammates, hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import { notifyBackgroundAgentCompleted } from './transcriptParser.js';
@@ -483,6 +484,13 @@ export class HookEventHandler {
     // /clear and /resume send SessionEnd then SessionStart. Wait briefly for the follow-up.
     // All other reasons (exit, logout, prompt_input_exit) are final -- despawn immediately.
     const expectsFollowUp = reason === 'clear' || reason === 'resume';
+
+    // A terminal agent outlives its session (an external one is removed or
+    // reassigned), so what the session ran must not linger on it. The mode is
+    // the CLI process's setting: it survives /clear and resume, not an exit.
+    if (!agent.isExternal) {
+      resetSessionSignals(agentId, agent, this.agents, { keepMode: expectsFollowUp });
+    }
 
     if (expectsFollowUp) {
       agent.pendingClear = true;

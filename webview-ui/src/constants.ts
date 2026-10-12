@@ -1,3 +1,4 @@
+import type { PermissionMode } from '../../core/src/messages.js';
 import type { ColorValue } from './components/ui/types.js';
 
 // ── Grid & Layout ────────────────────────────────────────────
@@ -733,6 +734,23 @@ export const DESK_PROP_FEET_INSET_PX = 5;
 // ── Cozy FX: full box ───────────────────────────────────────────
 /** Height one roster row adds to the full box, CSS px. */
 export const FULL_BOX_ROW_PX = 14;
+/** How far the full box's top sits above the character before any row, CSS px:
+ *  one activity line, or the taller box with team, title, alarm or group lines. */
+export const FULL_BOX_BASE_LIFT_PX = 28;
+export const FULL_BOX_EXTRA_LINES_LIFT_PX = 34;
+/** Below this many context tokens a cold cache costs nothing worth protecting, so
+ *  the cache row stays hidden (the statusline's rule). */
+export const CACHE_ROW_MIN_CONTEXT_TOKENS = 20_000;
+/** Full box row per permission mode, worded like Claude Code's statusline. The
+ *  default mode is the absence of a mode worth showing: no row. */
+export const PERMISSION_MODE_ROW_TEXT: Record<PermissionMode, string | null> = {
+  default: null,
+  acceptEdits: 'accept edits on',
+  plan: 'plan mode on',
+  auto: 'auto mode on',
+  bypassPermissions: 'bypass permissions on',
+  dontAsk: "don't ask on",
+};
 export const FULL_BOX_XP_BAR_BG = '#e9d2a8';
 export const FULL_BOX_XP_BAR_FILL = '#5fb85a';
 export const FULL_BOX_STREAK_COLOR = '#ff8a2a';

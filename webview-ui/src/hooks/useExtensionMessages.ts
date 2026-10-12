@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { HooksConsentRequest, TokenUsage } from '../../../core/src/messages.js';
+import type {
+  CacheTtlSeconds,
+  HooksConsentRequest,
+  PermissionMode,
+  TokenUsage,
+} from '../../../core/src/messages.js';
 import type { ModelTier } from '../../../core/src/provider.js';
 import { areaShares } from '../components/usageView.js';
 import {
@@ -729,6 +734,16 @@ export function useExtensionMessages(
         );
       } else if (msg.type === 'agentSessionTitle') {
         os.setSessionTitle(msg.id as number, msg.title as string | undefined);
+      } else if (msg.type === 'agentCache') {
+        os.setAgentCache(
+          msg.id as number,
+          msg.ttlSeconds as CacheTtlSeconds | undefined,
+          msg.expiresAt as number | undefined,
+        );
+      } else if (msg.type === 'agentMode') {
+        os.setAgentMode(msg.id as number, msg.mode as PermissionMode | undefined);
+      } else if (msg.type === 'agentShells') {
+        os.setAgentShells(msg.id as number, msg.running as number);
       } else if (msg.type === 'agentTripwire') {
         const id = msg.id as number;
         const alarm = {

@@ -1,5 +1,6 @@
 import type * as vscode from 'vscode';
 
+import type { CacheTtlSeconds, PermissionMode } from '../../core/src/messages.js';
 import type { ModelTier, ToolVerdict } from '../../core/src/provider.js';
 import type { HookSubRow } from './hookSubRows.js';
 import type { LeadWorkflowState } from './workflowRuns.js';
@@ -86,6 +87,26 @@ export interface AgentState {
   /** The jsonlFile the titles above were read from. A different file (switch,
    *  /clear) means they belong to another session and must be dropped. */
   titleSourceFile?: string;
+
+  // -- Session signals (server/src/contextUsage.ts, server/src/sessionSignals.ts) --
+  // None is persisted: a restart rebuilds the cache clock and the mode from the
+  // transcript tail, and shells read 0 until the next launch.
+  /** TTL class of the newest prompt-cache write; undefined until one is seen. */
+  cacheTtlSeconds?: CacheTtlSeconds;
+  /** Epoch ms the cache expires: the newest turn's first line plus the TTL. */
+  cacheExpiresAt?: number;
+  /** message.id of the turn that last moved the clock. Claude Code writes one
+   *  message over several lines, and only the first one counts. */
+  cacheMessageId?: string;
+  /** Permission mode the newest carrier record stated; undefined while unknown. */
+  permissionMode?: PermissionMode;
+  /** Background shells not yet finished: the Bash tool_use id, mapped to the
+   *  background task id a TaskStop result names. */
+  runningShellIds?: Map<string, string>;
+  /** Task notification ids that matched no running shell, newest last. A
+   *  notification can land before its launch's result; the launch then counts
+   *  as already finished. Capped at SHELL_DONE_MEMO_MAX. */
+  shellDoneBeforeLaunch?: Set<string>;
 
   // -- Agent Teams --
   teamName?: string;
