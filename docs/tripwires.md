@@ -53,22 +53,22 @@ Warning: a user regex with catastrophic backtracking stalls the whole server, wh
 
 ## Default pack
 
-| Id | Severity | Fires on |
-| --- | --- | --- |
-| `cloud-credentials` | high | `~/.aws` credentials, config and SSO cache, gcloud, azure, kubeconfig, `aws configure export-credentials`, `aws sts get-session-token` |
-| `ssh-private-key` | high | `~/.ssh/id_*` except `.pub` |
-| `sensor-tamper` | high | `~/.pixel-agents/`, `~/.claude` settings, hooks and credentials, `~/.claude.json` |
-| `secret-literal` | high | AWS access key ids, GitHub tokens, Slack tokens, PEM private key headers, `sk-ant-` keys, in any input including file contents |
-| `pipe-to-shell` | high | `curl` or `wget` piped into a shell or interpreter, `bash <(curl ...)` |
-| `aws-mutation` | high | `aws` create, delete, put, update, `s3 rm/mv`, uploads to S3 and similar write verbs |
-| `recursive-delete-home` | high | `rm -rf` of `~`, `$HOME`, `/` or a top-level home directory |
-| `iac-apply` | high | `terraform`, `terragrunt`, `tofu` apply, destroy, import, state rm/mv |
-| `dotenv` | medium | `.env` files except `.env.example`, `.sample`, `.template` |
-| `file-upload` | medium | `curl` uploading a file (`-F`, `-T`, `-d @file`) |
-| `git-force-push` | medium | `git push --force`, `-f`, `+ref` (not `--force-with-lease`) |
-| `k8s-write` | medium | `kubectl` write verbs, `helm install/upgrade/uninstall/rollback` |
-| `gh-write` | medium | `gh` merge, create, close, comment, secret set, `gh api` with a write method or fields |
-| `mcp-outbound` | medium | MCP tools whose name sends, forwards, replies, shares, publishes, deletes or removes (read-style names excluded) |
+| Id                      | Severity | Fires on                                                                                                                                                                                                                                                                                   |
+| ----------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cloud-credentials`     | high     | `~/.aws` credentials, config and SSO cache, gcloud, azure, kubeconfig, `aws configure export-credentials`, `aws sts get-session-token`                                                                                                                                                     |
+| `ssh-private-key`       | high     | `~/.ssh/id_*` except `.pub`                                                                                                                                                                                                                                                                |
+| `sensor-tamper`         | high     | `~/.pixel-agents/`, `~/.claude` settings, hooks and credentials, `~/.claude.json`                                                                                                                                                                                                          |
+| `secret-literal`        | high     | AWS access key ids, GitHub tokens, Slack tokens, PEM private key headers, `sk-ant-` keys, in any input including file contents. Slack and `sk-ant-` need a key body after the prefix (at least 10 and 20 characters), so a doc or regex that only names `xoxb-` or `sk-ant-` does not fire |
+| `pipe-to-shell`         | high     | `curl` or `wget` piped into a shell or interpreter, `bash <(curl ...)`                                                                                                                                                                                                                     |
+| `aws-mutation`          | high     | `aws` create, delete, put, update, `s3 rm/mv`, uploads to S3 and similar write verbs                                                                                                                                                                                                       |
+| `recursive-delete-home` | high     | `rm -rf` of `~`, `$HOME`, `/` or a top-level home directory                                                                                                                                                                                                                                |
+| `iac-apply`             | high     | `terraform`, `terragrunt`, `tofu` apply, destroy, import, state rm/mv                                                                                                                                                                                                                      |
+| `dotenv`                | medium   | `.env` files except `.env.example`, `.sample`, `.template`                                                                                                                                                                                                                                 |
+| `file-upload`           | medium   | `curl` uploading a file (`-F`, `-T`, `-d @file`)                                                                                                                                                                                                                                           |
+| `git-force-push`        | medium   | `git push --force`, `-f`, `+ref` (not `--force-with-lease`)                                                                                                                                                                                                                                |
+| `k8s-write`             | medium   | `kubectl` write verbs, `helm install/upgrade/uninstall/rollback`                                                                                                                                                                                                                           |
+| `gh-write`              | medium   | `gh` merge, create, close, comment, secret set, `gh api` with a write method or fields                                                                                                                                                                                                     |
+| `mcp-outbound`          | medium   | MCP tools whose name sends, forwards, replies, shares, publishes, deletes or removes (read-style names excluded)                                                                                                                                                                           |
 
 Path-style rules skip the keys `pattern`, `description`, `prompt`, `content`, `old_string`, `new_string` and `todos`, so a Grep pattern, a sub-agent prompt or a document being written does not alarm, while a Grep `path`, a Read `file_path` and a Bash `command` are still scanned. `secret-literal` scans everything.
 
