@@ -11,7 +11,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import type { ServerMessage } from '../../core/src/messages.js';
 import type { ModelTier } from '../../core/src/provider.js';
-import { PLATE_SCALE_MAX } from '../src/constants.js';
+import { FX_POP_MS, PLATE_SCALE_MAX } from '../src/constants.js';
 import {
   HERO_AGENTS,
   HERO_SEATS,
@@ -127,15 +127,35 @@ describe('hero scene staging', () => {
       if (pops > 0) popFrames++;
       if (os.weather.stormAlpha(3, Date.now()) !== null) stormFrames++;
     }
-    expect(popFrames / frames).toBeGreaterThan(0.5);
+    expect(popFrames / frames).toBeGreaterThan(0.8);
     // Never a second pop stacked over one that is still rising.
     expect(mostPops).toBe(1);
     // A frame or two of calm is the restart; anything more is the cloud going away.
     expect(stormFrames / frames).toBeGreaterThan(0.95);
   });
 
-  it('pins the clock to 16:30 while staged and gives the real one back after', () => {
-    expect([officeNow().getHours(), officeNow().getMinutes()]).toEqual([16, 30]);
+  it('keeps a readable "+120 XP" over Ada in at least 90% of samples over 10 s', () => {
+    // Readable = still at half opacity or more: FxText fades as min(1, (1 - age/FX_POP_MS) * 3).
+    // Samples every 250 ms: the old 2.5 s cadence leaves ~20% of them in the fade or the gap.
+    let readable = 0;
+    const samples = 40;
+    for (let i = 0; i < samples; i++) {
+      for (let f = 0; f < 5; f++) {
+        vi.advanceTimersByTime(50);
+        os.update(0.05);
+      }
+      const pop = os.fx.active.find((a) => a.kind === 'pop' && a.agentId === 1);
+      const opacity = pop ? Math.min(1, (1 - (Date.now() - pop.startedAt) / FX_POP_MS) * 3) : 0;
+      if (opacity >= 0.5) readable++;
+    }
+    expect(readable / samples).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it('pins the clock to 09:30, the shafts near their .30 peak, while staged and gives the real one back after', () => {
+    expect([officeNow().getHours(), officeNow().getMinutes()]).toEqual([9, 30]);
+    const shaft = shaftRects(os.getLayout(), officeNow().getHours(), officeNow().getMinutes())[0];
+    // The curve holds .30 to 09:00 and is at ~.294 by 09:30; at 16:30 it read ~.24.
+    expect(shaft.color.alpha).toBeGreaterThan(0.29);
     stop();
     expect([officeNow().getHours(), officeNow().getMinutes()]).toEqual([9, 5]);
     stop = () => {};
@@ -204,7 +224,7 @@ describe('hero light', () => {
       ...layout.furniture.filter((f) => f.type === 'DESK_FRONT').map((f) => f.row),
     );
     const firstFloorRow = layout.tiles.findIndex((t) => t !== TileType.WALL && t !== TileType.VOID);
-    const shafts = shaftRects(layout, 16, 30);
+    const shafts = shaftRects(layout, 9, 30);
     expect(shafts).toHaveLength(2);
     for (const shaft of shafts) {
       const rows = shaft.cells.map((c) => c.row);

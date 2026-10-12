@@ -246,6 +246,13 @@ export function renderCarpetLayer(
   const s = TILE_SIZE * zoom;
   const halfS = s / 2;
 
+  // A junction sprite is one tile centered on a corner, so the corners on the map's outer edge
+  // paint half a tile past it. The rug stays inside its own tile rows.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(offsetX, offsetY, cols * s, rows * s);
+  ctx.clip();
+
   for (let jy = 0; jy <= rows; jy++) {
     for (let jx = 0; jx <= cols; jx++) {
       const localGroups = new Map<
@@ -303,6 +310,7 @@ export function renderCarpetLayer(
       }
     }
   }
+  ctx.restore();
 }
 
 /**
