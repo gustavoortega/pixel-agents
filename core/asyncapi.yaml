@@ -134,6 +134,8 @@ components:
         - $ref: '#/components/schemas/WorkspaceFolders'
         # Token ledger
         - $ref: '#/components/schemas/TokenUsage'
+        # Official usage limits (status line wrapper)
+        - $ref: '#/components/schemas/UsageLimits'
         # Diagnostics
         - $ref: '#/components/schemas/AgentDiagnostics'
       discriminator: type
@@ -1031,7 +1033,11 @@ components:
         `webviewReady` handshake when the hooks preference is on, consent has not
         been recorded, and nothing of ours is installed — and, in standalone, only
         on privileged (tokened) connections, since an untokened spectator could not
-        act on it anyway (its `hooksConsentResponse` would be ignored).
+        act on it anyway (its `hooksConsentResponse` would be ignored). Also sent
+        in reply to `setHooksEnabled` turning a provider ON whose ask was never
+        answered: the server records the preference and asks instead of
+        installing. A provider that is off by default (the status line wrapper)
+        is only ever asked that way.
 
         Carries the provider being asked about and its disclosure copy so the
         client renders the server's exact terms (the provider's
@@ -1293,6 +1299,11 @@ components:
             never originates one.
         enabled:
           type: boolean
+          description: >-
+            Turning ON a provider whose consent ask was never answered records
+            the preference and replies with that provider's
+            `hooksConsentRequest` instead of installing; an answered ask
+            (granted or declined) installs directly. Turning OFF uninstalls.
 
     HooksConsentResponse:
       description: |
@@ -1304,7 +1315,9 @@ components:
         `notNow` writes nothing on a fresh ask, but over anything an EARLIER
         answer left behind it reverts it — uninstalling a landed install,
         clearing a recorded grant or decline — so the ask genuinely returns on
-        the next connect. Any unrecognized value writes NOTHING and the user is
+        the next connect. Over an ask a Settings toggle-on raised for a provider
+        that is off by default, `notNow` also takes that preference back, so the
+        provider stays off and is not asked again on its own. Any unrecognized value writes NOTHING and the user is
         asked again — a malformed choice must never be read as approval, a
         durable decline, or an uninstall trigger. The server ignores this
         message on unprivileged standalone connections, which were never sent
@@ -1513,6 +1526,47 @@ components:
       description: '`quota` = anchored to a reset time the CLI reported; `estimated` = derived from transcript timestamps.'
       type: string
       enum: [quota, estimated]
+
+    UsageLimits:
+      description: |
+        Claude Code's official usage limits, as its status line input reports them: the status line wrapper
+        (statusline-tee.js) posts them to `POST /api/statusline/:providerId` on each refresh. Account-wide, so every
+        session reports the same windows; the server keeps one sample per window and replaces it only with one that
+        is not older (a later `resetsAt`, or the same `resetsAt` with equal or higher usage), so an idle session
+        re-posting an old snapshot never moves it back. Broadcast whenever a post was accepted, and sent on every
+        connect by the process that receives the posts, also before anything arrived: then both windows are null and
+        `receivedAt` is 0, which tells a client this process is listening. A window is null when no reading for it
+        has been received; 0 is a real value.
+      type: object
+      additionalProperties: false
+      required: [type, receivedAt, fiveHour, sevenDay]
+      properties:
+        type:
+          const: usageLimits
+        receivedAt:
+          type: integer
+          description: Epoch ms of the last accepted post, 0 before the first one.
+        fiveHour:
+          oneOf:
+            - $ref: '#/components/schemas/LimitWindow'
+            - type: 'null'
+        sevenDay:
+          oneOf:
+            - $ref: '#/components/schemas/LimitWindow'
+            - type: 'null'
+
+    LimitWindow:
+      description: One official usage window.
+      type: object
+      additionalProperties: false
+      required: [usedPercentage, resetsAt]
+      properties:
+        usedPercentage:
+          type: number
+          description: Percent of the window used, as Claude Code reports it (above 100 once the window is overdrawn).
+        resetsAt:
+          type: integer
+          description: Epoch ms when the window resets.
 
     TokenAreaTotal:
       type: object

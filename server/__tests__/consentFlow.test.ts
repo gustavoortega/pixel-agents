@@ -9,12 +9,15 @@ import {
   getHooksConsent,
   getHooksEnabled,
   grantHooksConsent,
+  recordHooksDecline,
   setHooksEnabled,
 } from '../src/configPersistence.js';
 import { FileStateAdapter } from '../src/fileStateAdapter.js';
 import {
   CONSENT_DISCLOSURE,
   CONSENT_INSTALL_HEADLINE,
+  STATUSLINE_CONSENT_DISCLOSURE,
+  STATUSLINE_CONSENT_HEADLINE,
 } from '../src/providers/hook/claude/consentCopy.js';
 import { CLAUDE_HOOK_EVENTS } from '../src/providers/hook/claude/constants.js';
 
@@ -518,6 +521,134 @@ describe('clientMessageHandler: hooks consent flow', () => {
         providerId: 'claude',
         installed: false,
       });
+    });
+  });
+
+  // ── The Settings toggle asks first (C6) ──────────────────────
+  // A toggle-on whose ask was never answered records the preference and sends the ask instead of writing the settings
+  // file. The status line wrapper is off by default, so that toggle is the only way it is ever asked about.
+  describe('Settings toggle over an unanswered ask', () => {
+    const STATUSLINE = 'claude-statusline';
+
+    function toggle(providerId: string, enabled: boolean): void {
+      handleClientMessage(
+        { type: 'setHooksEnabled', providerId, enabled },
+        (m) => sent.push(m),
+        ctx,
+      );
+    }
+
+    function statuslineAsks(): number {
+      return sent.filter((m) => m.type === 'hooksConsentRequest' && m.providerId === STATUSLINE)
+        .length;
+    }
+
+    /** What the wrapper install leaves: our wrapper as the whole status line. */
+    function seedWrapper(): void {
+      const tee = path.join(tempHome, '.pixel-agents', 'hooks', 'statusline-tee.js');
+      fs.mkdirSync(path.join(tempHome, '.claude'), { recursive: true });
+      fs.writeFileSync(
+        path.join(tempHome, '.claude', 'settings.json'),
+        JSON.stringify({ statusLine: { type: 'command', command: `node "${tee}"` } }),
+      );
+    }
+
+    it('never asks about the status line wrapper on connect', async () => {
+      await connect();
+
+      const asked = sent.filter((m) => m.type === 'hooksConsentRequest').map((m) => m.providerId);
+      expect(asked).toEqual(['claude']);
+    });
+
+    it('asks instead of installing, keeping the preference so the ask survives a reload', async () => {
+      let sideEffectRan = false;
+      ctx.onSetHooksEnabled = () => {
+        sideEffectRan = true;
+      };
+
+      toggle(STATUSLINE, true);
+      await settle();
+
+      expect(sideEffectRan).toBe(false);
+      expect(settingsJsonExists()).toBe(false);
+      expect(getHooksEnabled(STATUSLINE)).toBe(true);
+      expect(sent.find((m) => m.type === 'hooksConsentRequest')).toEqual({
+        type: 'hooksConsentRequest',
+        providerId: STATUSLINE,
+        headline: STATUSLINE_CONSENT_HEADLINE,
+        disclosure: STATUSLINE_CONSENT_DISCLOSURE,
+      });
+
+      sent = [];
+      await connect();
+      expect(statuslineAsks()).toBe(1);
+    });
+
+    // ADR 0001 stays for the hooks: on by default, their toggle click is the grant, so it installs without an ask.
+    it('the hooks toggle installs directly over an unanswered ask', async () => {
+      let sideEffect: { providerId: string; enabled: boolean } | undefined;
+      ctx.onSetHooksEnabled = (providerId, enabled) => {
+        sideEffect = { providerId, enabled };
+      };
+
+      toggle('claude', true);
+      await settle();
+
+      expect(sideEffect).toEqual({ providerId: 'claude', enabled: true });
+      expect(sent.filter((m) => m.type === 'hooksConsentRequest')).toEqual([]);
+    });
+
+    // The user already read the terms once, whatever the answer was.
+    it('installs directly once the ask was answered, even with a decline', async () => {
+      recordHooksDecline(STATUSLINE);
+      let sideEffect: { providerId: string; enabled: boolean } | undefined;
+      ctx.onSetHooksEnabled = (providerId, enabled) => {
+        sideEffect = { providerId, enabled };
+      };
+
+      toggle(STATUSLINE, true);
+      await settle();
+
+      expect(sideEffect).toEqual({ providerId: STATUSLINE, enabled: true });
+      expect(statuslineAsks()).toBe(0);
+    });
+
+    it("takes the toggle's preference back on a notNow: the wrapper is not asked about again", async () => {
+      toggle(STATUSLINE, true);
+      await settle();
+
+      answer('notNow', STATUSLINE);
+      await settle();
+
+      expect(getHooksEnabled(STATUSLINE)).toBe(false);
+      sent = [];
+      await connect();
+      expect(statuslineAsks()).toBe(0);
+    });
+
+    it('a notNow revising a landed wrapper install also leaves it off and unasked', async () => {
+      ctx.onSetHooksEnabled = (providerId, enabled) => {
+        if (enabled) {
+          grantHooksConsent(providerId); // the real side effect (cli.ts) grants, copies, installs
+          seedWrapper();
+        } else {
+          fs.writeFileSync(path.join(tempHome, '.claude', 'settings.json'), '{}');
+        }
+      };
+      toggle(STATUSLINE, true);
+      await settle();
+      answer('install', STATUSLINE);
+      await settle();
+      expect(getHooksConsent(STATUSLINE)).toBe('granted');
+
+      answer('notNow', STATUSLINE);
+      await settle();
+
+      expect(getHooksConsent(STATUSLINE)).toBe('unanswered');
+      expect(getHooksEnabled(STATUSLINE)).toBe(false);
+      sent = [];
+      await connect();
+      expect(statuslineAsks()).toBe(0);
     });
   });
 });

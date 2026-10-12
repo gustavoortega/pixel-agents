@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 
+import { CLAUDE_HOOKS_PROVIDER_ID, CLAUDE_STATUSLINE_PROVIDER_ID } from '../constants.js';
 import { isSoundEnabled, setSoundEnabled } from '../notificationSound.js';
 import { isBrowserRuntime } from '../runtime.js';
 import { transport } from '../transport/index.js';
@@ -25,12 +26,12 @@ interface SettingsModalProps {
   externalAssetDirectories: string[];
   watchAllSessions: boolean;
   onToggleWatchAllSessions: () => void;
-  /** ACTUAL install state (the hooksStatus message), not the hooksEnabled
-   *  preference. The preference defaults to true while first-run consent is
-   *  still pending, so binding the checkbox to it renders "on" over an empty
-   *  ~/.claude/settings.json. */
-  hooksInstalled: boolean;
-  onToggleHooksEnabled: () => void;
+  /** ACTUAL install state per provider (the hooksStatus messages), not the
+   *  hooksEnabled preference. The preference defaults to true while first-run
+   *  consent is still pending, so binding a checkbox to it renders "on" over an
+   *  empty ~/.claude/settings.json. */
+  hooksInstalled: Record<string, boolean>;
+  onToggleHooks: (providerId: string) => void;
   /** Whether the areas overlay is rendered outside of the Areas edit tool. */
   showAreas: boolean;
   onToggleShowAreas: () => void;
@@ -63,7 +64,7 @@ export function SettingsModal({
   watchAllSessions,
   onToggleWatchAllSessions,
   hooksInstalled,
-  onToggleHooksEnabled,
+  onToggleHooks,
   showAreas,
   onToggleShowAreas,
   showAreasAvailable,
@@ -217,8 +218,13 @@ export function SettingsModal({
       />
       <Checkbox
         label="Instant Detection (Hooks)"
-        checked={hooksInstalled}
-        onChange={onToggleHooksEnabled}
+        checked={hooksInstalled[CLAUDE_HOOKS_PROVIDER_ID] === true}
+        onChange={() => onToggleHooks(CLAUDE_HOOKS_PROVIDER_ID)}
+      />
+      <Checkbox
+        label="Claude status line (official limits)"
+        checked={hooksInstalled[CLAUDE_STATUSLINE_PROVIDER_ID] === true}
+        onChange={() => onToggleHooks(CLAUDE_STATUSLINE_PROVIDER_ID)}
       />
       {/* Headless agents are the office's only terminal-less citizens in VS Code.
           Standalone has no terminals at all, so nothing there would ever ghost. */}

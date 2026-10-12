@@ -460,6 +460,30 @@ describe('claudeHookInstaller', () => {
     expect(fs.existsSync(backupPath)).toBe(false);
   });
 
+  // 8c-6. The status line wrapper shares this file. Next to our hooks, the wrapper alone (what its installer writes
+  //       when there was no status line) is still our own output; a wrapped user command is the user's content.
+  it.each([
+    ['our wrapper alone', false, null],
+    ["our wrapper around the user's command", true, "'~/.claude/statusline.sh'"],
+  ])(
+    'with %s as the status line, the next hook write backs up: %s',
+    async (_case, backedUp, arg) => {
+      const settingsPath = settingsPathFor();
+      await installHooks();
+      const tee = path.join(tmpBase, '.pixel-agents', 'hooks', 'statusline-tee.js');
+      const withStatusLine = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      withStatusLine.statusLine = {
+        type: 'command',
+        command: arg === null ? `node "${tee}"` : `node "${tee}" ${arg}`,
+      };
+      fs.writeFileSync(settingsPath, JSON.stringify(withStatusLine, null, 2));
+
+      await uninstallHooks();
+
+      expect(fs.existsSync(settingsPath + SETTINGS_BACKUP_SUFFIX)).toBe(backedUp);
+    },
+  );
+
   // ── W1: the write path throws instead of logging ──────────────
   //
   // A swallowed write error used to leave callers logging "Hooks installed"
@@ -994,14 +1018,18 @@ describe('claudeHookInstaller', () => {
     expect(stat.mode & 0o100).toBeTruthy();
   });
 
-  // 11. copyHookScript reports success when the source exists (issue #333)
-  it('copyHookScript returns true when the source exists', () => {
+  // 11. copyHookScript reports success when the sources exist (issue #333). Both bundled scripts ship together,
+  //     so success means both were copied: the status line wrapper is refreshed by every install path too.
+  it('copyHookScript returns true when the sources exist, and copies the status line wrapper too', () => {
     const mockExtPath = path.join(tmpBase, 'mock-ext');
     const hookSrc = path.join(mockExtPath, 'dist', 'hooks');
     fs.mkdirSync(hookSrc, { recursive: true });
     fs.writeFileSync(path.join(hookSrc, 'claude-hook.js'), '// mock');
+    fs.writeFileSync(path.join(hookSrc, 'statusline-tee.js'), '// mock wrapper');
 
     expect(copyHookScript(mockExtPath)).toBe(true);
+    const dst = path.join(tmpBase, '.pixel-agents', 'hooks', 'statusline-tee.js');
+    expect(fs.readFileSync(dst, 'utf-8')).toBe('// mock wrapper');
   });
 
   // 12. copyHookScript reports failure when the source is missing (issue #333):
@@ -1014,4 +1042,17 @@ describe('claudeHookInstaller', () => {
     expect(copyHookScript(mockExtPath)).toBe(false);
     expect(fs.existsSync(dst)).toBe(false);
   });
+
+  // 13. A partial copy is a failed copy: every install path proceeds on true, and hook entries pointing at a missing
+  //     claude-hook.js spawn a dead `node` per event (#333 again).
+  it.each([['claude-hook.js'], ['statusline-tee.js']])(
+    'copyHookScript returns false when only %s ships',
+    (shipped) => {
+      const hookSrc = path.join(tmpBase, 'mock-ext', 'dist', 'hooks');
+      fs.mkdirSync(hookSrc, { recursive: true });
+      fs.writeFileSync(path.join(hookSrc, shipped), '// mock');
+
+      expect(copyHookScript(path.join(tmpBase, 'mock-ext'))).toBe(false);
+    },
+  );
 });

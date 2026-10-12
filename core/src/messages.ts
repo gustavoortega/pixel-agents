@@ -50,6 +50,7 @@ export type ServerMessage =
   | AreaMappingsLoaded
   | WorkspaceFolders
   | TokenUsage
+  | UsageLimits
   | AgentDiagnostics;
 
 export type ClientMessage =
@@ -465,6 +466,18 @@ export interface TokenSessionTotal {
   raw: number;
   models: Record<string, number>;
   rawModels: Record<string, number[]>;
+}
+
+export interface UsageLimits {
+  type: 'usageLimits';
+  receivedAt: number;
+  fiveHour: LimitWindow | null;
+  sevenDay: LimitWindow | null;
+}
+
+export interface LimitWindow {
+  usedPercentage: number;
+  resetsAt: number;
 }
 
 export interface AgentDiagnostics {

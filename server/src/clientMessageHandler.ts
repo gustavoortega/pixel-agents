@@ -16,11 +16,12 @@ import { HUE_SHIFT_MAX_DEG, PALETTE_COUNT } from './constants.js';
 import { readLayoutFromFile, writeLayoutToFile } from './layoutPersistence.js';
 import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
-import { hooksConsentRequest } from './providers/hook/consentGate.js';
+import { hooksConsentRequest, toggleNeedsConsent } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
 import { broadcastRoster, seatsForClient, seatsToPersist } from './rosterAgent.js';
 import type { TokenLedger } from './tokenLedger.js';
 import { ackTripwire } from './tripwires.js';
+import type { UsageLimitsStore } from './usage/usageLimitsStore.js';
 
 type WsSend = (message: Record<string, unknown>) => void;
 
@@ -58,6 +59,8 @@ export interface ClientMessageContext {
   onReloadAssets?: ReloadAssetsSideEffect;
   /** Token usage source: its snapshot rides the connect handshake and budget/area changes refresh it. */
   tokenLedger?: TokenLedger;
+  /** Official limits from the status line wrapper: the latest reading rides the connect handshake. */
+  usageLimits?: UsageLimitsStore;
   /**
    * Whether this client may send messages that reach OUTSIDE `~/.pixel-agents/`
    * — today only `setHooksEnabled`, which grants machine-wide consent to modify
@@ -230,6 +233,10 @@ export function handleClientMessage(
           .then((installed) => send({ type: 'hooksStatus', providerId: provider.id, installed }));
         break;
       }
+      if (toggleNeedsConsent(enabled, getHooksConsent(provider.id), provider.defaultEnabled)) {
+        void askBeforeInstall(ctx, send, provider);
+        break;
+      }
       void applyHooksPreference(ctx, send, provider, enabled);
       break;
     }
@@ -352,6 +359,39 @@ async function applyHooksPreference(
     send({ type: 'hooksStatus', providerId: provider.id, installed });
   } catch (err) {
     console.error('[Pixel Agents] Applying the hooks preference failed:', err);
+  }
+}
+
+/**
+ * A Settings toggle-on for a provider whose ask was never answered: record the preference ON (so the ask survives a
+ * reload until it is answered) and send the provider's consent ask instead of installing. The answer then runs
+ * through the consent executor like a first-run answer. When the ask has nothing to approve (our install is already
+ * on disk), the toggle installs as before. Never rejects, like applyHooksPreference.
+ */
+async function askBeforeInstall(
+  ctx: ClientMessageContext,
+  send: WsSend,
+  provider: HookProvider,
+): Promise<void> {
+  try {
+    setHooksEnabled(provider.id, true);
+    const installed = await provider.areHooksInstalled().catch(() => false);
+    const request = hooksConsentRequest(
+      {
+        installed,
+        hooksEnabled: getHooksEnabled(provider.id),
+        consentAnswered: getHooksConsent(provider.id) !== 'unanswered',
+        privileged: ctx.privileged === true,
+      },
+      provider,
+    );
+    if (request) {
+      send({ ...request }); // spread: WsSend takes an index-signature shape
+    } else {
+      await applyHooksPreference(ctx, send, provider, true);
+    }
+  } catch (err) {
+    console.error('[Pixel Agents] Asking before the install failed:', err);
   }
 }
 
@@ -517,6 +557,9 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
 
   // 4c. Token usage (a `scanning` stub until the ledger's first pass completes).
   if (ctx.tokenLedger) send({ ...ctx.tokenLedger.snapshot() });
+  // 4d. Official limits: sent even before the first reading, so the client
+  // knows this process is the one receiving them.
+  if (ctx.usageLimits) send({ ...ctx.usageLimits.latest() });
 
   // Sync runtime refs with the persisted settings so scanners behave correctly
   // from the first tick after a server restart.

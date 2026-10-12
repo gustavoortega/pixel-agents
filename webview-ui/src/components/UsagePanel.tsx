@@ -1,6 +1,15 @@
 import { useState } from 'react';
 
-import type { TokenUsage, TokenWindow } from '../../../core/src/messages.js';
+import type { TokenUsage, TokenWindow, UsageLimits } from '../../../core/src/messages.js';
+import { USAGE_LIMITS_TICK_MS } from '../constants.js';
+import { useNow } from '../hooks/useNow.js';
+import {
+  LIMIT_TONE_CLASS,
+  type LimitKey,
+  limitsNudge,
+  noLiveLimits,
+  officialRow,
+} from './limitsPace.js';
 import { Button } from './ui/Button.js';
 import {
   areaBars,
@@ -18,6 +27,10 @@ type UsageTab = 'block' | 'week';
 
 interface UsagePanelProps {
   usage: TokenUsage | null;
+  /** Official limits from the status line wrapper; null until this window's server says it receives them. */
+  limits: UsageLimits | null;
+  /** The wrapper is chained in ~/.claude/settings.json (hooksStatus for 'claude-statusline'). */
+  statuslineInstalled: boolean;
   onClose: () => void;
 }
 
@@ -34,9 +47,55 @@ function Bar({ fraction, over }: { fraction: number; over?: boolean }) {
   );
 }
 
-export function UsagePanel({ usage, onClose }: UsagePanelProps) {
+/**
+ * The official row for the open tab, above the token totals and whatever state they are in. Not installed: how to
+ * turn it on. Installed with nothing live: waiting, once this window's server said it receives the limits (a window
+ * reusing another's server never hears, and shows nothing new). Otherwise the reading, its pace, and at most one
+ * nudge across both windows.
+ */
+function OfficialLimits({
+  limits,
+  installed,
+  limitKey,
+  now,
+}: {
+  limits: UsageLimits | null;
+  installed: boolean;
+  limitKey: LimitKey;
+  now: number;
+}) {
+  if (!installed) {
+    return (
+      <p className="text-xs text-ink-muted mb-6">
+        Official limits are off. Turn on "Claude status line" in Settings.
+      </p>
+    );
+  }
+  if (limits === null) return null;
+  if (noLiveLimits(limits, now)) {
+    return <p className="text-xs text-ink-muted mb-6">Waiting for Claude Code's status line…</p>;
+  }
+  const row = officialRow(limits, limitKey, now);
+  const nudge = limitsNudge(limits, now);
+  return (
+    <div className="mb-6 text-xs" data-testid="official-limits">
+      {row && (
+        <div className={row.stale ? 'opacity-60' : undefined}>
+          <div>
+            <span className={LIMIT_TONE_CLASS[row.tone]}>{row.text}</span>
+          </div>
+          {row.pace && <div className="text-ink-muted">{row.pace}</div>}
+        </div>
+      )}
+      {nudge && <div className={LIMIT_TONE_CLASS.red}>{nudge}</div>}
+    </div>
+  );
+}
+
+export function UsagePanel({ usage, limits, statuslineInstalled, onClose }: UsagePanelProps) {
   const [tab, setTab] = useState<UsageTab>('block');
   const [metric, setMetric] = useState<UsageMetric>('weighted');
+  const now = useNow(USAGE_LIMITS_TICK_MS);
 
   const win: TokenWindow | undefined = tab === 'block' ? usage?.block : usage?.week;
   const budget = tab === 'block' ? usage?.budget5h : usage?.budgetWeek;
@@ -84,6 +143,13 @@ export function UsagePanel({ usage, onClose }: UsagePanelProps) {
           {metric === 'weighted' ? 'cost-weighted' : 'raw tokens'}
         </button>
       </div>
+
+      <OfficialLimits
+        limits={limits}
+        installed={statuslineInstalled}
+        limitKey={tab === 'block' ? 'fiveHour' : 'sevenDay'}
+        now={now}
+      />
 
       {!usage || usage.scanning ? (
         <p className="text-sm text-ink-muted py-8">Reading your transcripts…</p>

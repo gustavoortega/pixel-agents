@@ -124,6 +124,20 @@ describe('consentActionFor — what an answer means', () => {
     expect(consentActionFor('notNow', declined)).toBe('revertDecline');
   });
 
+  // A Settings toggle-on of an off-by-default provider records the preference and asks. With nothing answered, that
+  // preference is all the ask left, so declining it must take it back: otherwise every later handshake asks on its
+  // own, which an off-by-default provider never does.
+  it('takes back the preference a toggle raised on a notNow, and records a never as usual', () => {
+    const toggleAsked = {
+      installed: false,
+      consent: 'unanswered',
+      preferenceRaised: true,
+    } as const;
+    expect(consentActionFor('notNow', toggleAsked)).toBe('revertDecline');
+    expect(consentActionFor('never', toggleAsked)).toBe('persistOff');
+    expect(consentActionFor('install', toggleAsked)).toBe('install');
+  });
+
   // A decline with entries still on disk: a revised "never" whose uninstall
   // failed. The revision arm handles the disk half itself; the mapping still
   // routes through revertDecline (the consent record is the decline).

@@ -163,6 +163,9 @@ export interface HookProvider {
    *  provider that installs anything must state its terms, and the gate ships these verbatim so no client copy can
    *  drift. */
   consentDisclosure(): { headline: string; disclosure: string };
+  /** The hooks preference before the user has said anything. Absent = true. A provider that is off by default is
+   *  never asked about at startup: the ask comes only after the user turns it on in Settings. */
+  readonly defaultEnabled?: boolean;
 
   /** Format tool status for display (e.g., "Read" -> "Reading foo.ts") */
   formatToolStatus(toolName: string, input?: unknown): string;

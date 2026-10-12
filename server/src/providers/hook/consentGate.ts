@@ -13,8 +13,11 @@ export interface ConsentGateState {
   /** Are any of this provider's hook commands on disk right now
    *  (areHooksInstalled)? */
   installed: boolean;
-  /** The provider's persisted hooks preference. Defaults true, so it is only
-   *  false after an explicit decline or a Settings toggle-off. */
+  /** The provider's persisted hooks preference, or its default when nothing
+   *  is recorded. Claude's default is true, so it is only false after an
+   *  explicit decline or a Settings toggle-off; a provider that is off by
+   *  default (the status line wrapper) is therefore never asked here until a
+   *  Settings toggle-on records the preference. */
   hooksEnabled: boolean;
   /** Has this provider's ask been durably answered (config.json
    *  hooksConsent[providerId] holds 'granted' or 'declined')? */
@@ -43,6 +46,21 @@ export function hooksConsentRequest(
   return { type: 'hooksConsentRequest', providerId: provider.id, headline, disclosure };
 }
 
+/**
+ * Whether a Settings toggle must ask before it installs. Only an off-by-default provider (the status line wrapper)
+ * asks: its toggle-on over an unanswered ask records the preference and sends the same `hooksConsentRequest` the
+ * handshake would, instead of writing the settings file; Install then installs through the executor, "Not Now" takes
+ * the preference back. The hooks keep ADR 0001's rule: their toggle click is the grant. An answered ask, granted or
+ * declined, keeps the direct install, and turning off never asks.
+ */
+export function toggleNeedsConsent(
+  enabled: unknown,
+  consent: 'granted' | 'declined' | 'unanswered',
+  defaultEnabled: boolean | undefined,
+): boolean {
+  return enabled === true && consent === 'unanswered' && defaultEnabled === false;
+}
+
 /** What the server should DO about an answer. The Intro lets the user walk BACK from the closing step and re-answer,
  *  so a choice is an absolute statement of desired state, not a one-shot event: a decline maps to whichever action
  *  UNDOES what the earlier answer left (hooks on disk, a recorded grant, or a decline's own hooks-off). Rationale and
@@ -62,6 +80,10 @@ export interface ConsentRevisionState {
    *  fail; keying the revert off `installed` stranded exactly that user), and `declined` carries the provenance that
    *  the persisted hooks-off was the ANSWER's own write, which a revised "not now" takes back with it. */
   consent: 'granted' | 'declined' | 'unanswered';
+  /** The preference is recorded ON for a provider that is off by default (hooksPreferenceRaisedFromDefault): a
+   *  Settings toggle asked first and wrote it. With nothing answered, that preference is the only thing the ask left
+   *  behind, so a "Not Now" takes it back like a decline's own hooks-off. Absent = false. */
+  preferenceRaised?: boolean;
 }
 
 /**
@@ -75,6 +97,9 @@ export function consentActionFor(choice: unknown, state: ConsentRevisionState): 
   if (choice === 'notNow') {
     if (state.consent === 'declined') return 'revertDecline';
     if (state.installed || state.consent === 'granted') return 'revert';
+    // A toggle-on that asked first: the recorded preference is the toggle's own write, so "Not Now" restores the
+    // default rather than leaving an ask that would then come back on every handshake.
+    if (state.preferenceRaised === true) return 'revertDecline';
     return 'none';
   }
   return 'none';

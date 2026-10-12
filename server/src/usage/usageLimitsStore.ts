@@ -1,0 +1,80 @@
+import type { LimitWindow, UsageLimits } from '../../../core/src/messages.js';
+import type { AgentStateStore } from '../agentStateStore.js';
+import type { LimitSample, UsageLimitsBody } from './usageLimitsBody.js';
+
+export type LimitWindowKey = 'fiveHour' | 'sevenDay';
+
+/** Told when a window's reset time moves (the first reading, or a new window): the token ledger anchors its 5-hour
+ *  block or week on it, as it does on a transcript's quota record. `resetsAt` and `now` are epoch ms. */
+export type LimitsAnchorCallback = (window: LimitWindowKey, resetsAt: number, now: number) => void;
+
+const WINDOW_KEYS: readonly LimitWindowKey[] = ['fiveHour', 'sevenDay'];
+
+/** Usage only grows inside a window and a new window always resets later, so a sample is "not older" when its reset
+ *  is later, or the same with equal or higher usage. Equal counts: a session confirming the same numbers keeps the
+ *  reading fresh. */
+function isNotOlder(next: LimitWindow, stored: LimitWindow): boolean {
+  return (
+    next.resetsAt > stored.resetsAt ||
+    (next.resetsAt === stored.resetsAt && next.usedPercentage >= stored.usedPercentage)
+  );
+}
+
+function toWindow(sample: LimitSample): LimitWindow {
+  // The wire carries epoch ms, as integers.
+  return { usedPercentage: sample.usedPercentage, resetsAt: Math.round(sample.resetsAt * 1000) };
+}
+
+/**
+ * The official limits the status line wrapper reports, account-wide and in memory. Several Claude Code sessions post
+ * the same limits from different moments, and with `refreshInterval` an idle session re-posts its last snapshot
+ * every refresh, so "the latest post wins" would flip the panel between a stale and a fresh value. Each window keeps
+ * one sample and takes an incoming one only when it is not older; a post with nothing accepted changes nothing and
+ * broadcasts nothing.
+ */
+export class UsageLimitsStore {
+  private readonly samples: Record<LimitWindowKey, LimitWindow | null> = {
+    fiveHour: null,
+    sevenDay: null,
+  };
+  private receivedAt = 0;
+
+  constructor(
+    private readonly store: Pick<AgentStateStore, 'broadcast'>,
+    private readonly onLimits?: LimitsAnchorCallback,
+  ) {}
+
+  /** Merge one validated post received at `now` (epoch ms). */
+  set(body: UsageLimitsBody, now: number): void {
+    let accepted = false;
+    for (const key of WINDOW_KEYS) {
+      const sample = body[key];
+      if (sample === null) continue; // a post with one window keeps the other
+      const next = toWindow(sample);
+      const stored = this.samples[key];
+      if (stored !== null && !isNotOlder(next, stored)) continue;
+      this.samples[key] = next;
+      accepted = true;
+      // Anchor once per reset time, and only on a window still running.
+      if ((stored === null || stored.resetsAt !== next.resetsAt) && next.resetsAt > now) {
+        this.onLimits?.(key, next.resetsAt, now);
+      }
+    }
+    if (!accepted) return;
+    // Advances even when the values are equal: the staleness label reads it.
+    this.receivedAt = now;
+    this.store.broadcast({ ...this.latest() });
+  }
+
+  /** What a connecting client is sent: the stored samples, or both windows null with `receivedAt` 0 before anything
+   *  arrived. Always a message, so a client can tell "this process receives the limits, nothing yet" from a window
+   *  that reuses another window's server and never will. */
+  latest(): UsageLimits {
+    return {
+      type: 'usageLimits',
+      receivedAt: this.receivedAt,
+      fiveHour: this.samples.fiveHour,
+      sevenDay: this.samples.sevenDay,
+    };
+  }
+}

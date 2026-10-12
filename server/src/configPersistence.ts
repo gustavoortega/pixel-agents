@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { CONFIG_FILE_NAME, LAYOUT_FILE_DIR } from './constants.js';
+import { hookProviderById } from './providers/index.js';
 
 export interface AdapterSettings {
   soundEnabled: boolean;
@@ -60,7 +61,8 @@ export interface PixelAgentsConfig {
    *  been answered. */
   hooksConsent: Record<string, HooksConsentState>;
   /** Per-provider hooks preference, machine-global for the same reason as the
-   *  consent above. A provider absent from the map takes the default (true). */
+   *  consent above. A provider absent from the map takes its default
+   *  (HookProvider.defaultEnabled, true unless the provider says otherwise). */
   hooksEnabled: Record<string, boolean>;
 }
 
@@ -274,9 +276,24 @@ export function clearHooksConsent(providerId: string): void {
   }
 }
 
-/** The per-provider hooks preference. Absent = the default, true. */
+/** A provider's preference before anything was recorded: on, unless the
+ *  provider declares itself off by default (the status line wrapper). */
+function defaultHooksEnabled(providerId: string): boolean {
+  return hookProviderById(providerId)?.defaultEnabled ?? true;
+}
+
+/** The per-provider hooks preference. Absent = the provider's default. */
 export function getHooksEnabled(providerId: string): boolean {
-  return readConfig().hooksEnabled[providerId] ?? true;
+  return readConfig().hooksEnabled[providerId] ?? defaultHooksEnabled(providerId);
+}
+
+/** Whether the preference is recorded ON for a provider that is off by
+ *  default: only a Settings toggle-on writes that, so an open ask in this state
+ *  is the toggle's, and declining it must take the preference back (see
+ *  consentActionFor). Always false for a default-on provider, whose recorded
+ *  `true` means nothing the default does not. */
+export function hooksPreferenceRaisedFromDefault(providerId: string): boolean {
+  return readConfig().hooksEnabled[providerId] === true && !defaultHooksEnabled(providerId);
 }
 
 export function setHooksEnabled(providerId: string, enabled: boolean): void {
@@ -287,7 +304,7 @@ export function setHooksEnabled(providerId: string, enabled: boolean): void {
   }
 }
 
-/** Restore the provider's preference to its default (true) by REMOVING the key. Deleting rather than writing `true`
+/** Restore the provider's preference to its default by REMOVING the key. Deleting rather than writing the default
  *  keeps "never answered" and "answered and reverted" indistinguishable on disk. */
 export function clearHooksEnabled(providerId: string): void {
   const cfg = readConfig();

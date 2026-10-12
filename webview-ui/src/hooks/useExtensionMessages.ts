@@ -5,6 +5,7 @@ import type {
   HooksConsentRequest,
   PermissionMode,
   TokenUsage,
+  UsageLimits,
 } from '../../../core/src/messages.js';
 import type { ModelTier } from '../../../core/src/provider.js';
 import { areaShares } from '../components/usageView.js';
@@ -129,6 +130,9 @@ interface ExtensionMessageState {
   setShowAreas: (v: boolean) => void;
   /** Latest token ledger aggregate (tokenUsage), null until the first one arrives. */
   tokenUsage: TokenUsage | null;
+  /** Latest official limits (usageLimits), null until the server says it receives them: a VS Code window reusing
+   *  another window's server never gets one. */
+  usageLimits: UsageLimits | null;
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -174,6 +178,7 @@ export function useExtensionMessages(
   const [areaMappings, setAreaMappings] = useState<Record<string, string[]>>({});
   const [showAreas, setShowAreas] = useState(false);
   const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
+  const [usageLimits, setUsageLimits] = useState<UsageLimits | null>(null);
 
   // The renderer keeps its own module-level copy (read every rAF frame), so both
   // sources of truth move together — the persisted value on settingsLoaded and
@@ -540,6 +545,8 @@ export function useExtensionMessages(
         setTokenUsage(usage);
         // Room signs show each Area's share of the current block; none while there is no block.
         os.setAreaUsage(areaShares(usage.block));
+      } else if (msg.type === 'usageLimits') {
+        setUsageLimits(msg as UsageLimits);
       } else if (msg.type === 'workspaceFolders') {
         const folders = msg.folders as WorkspaceFolder[];
         setWorkspaceFolders(folders);
@@ -734,5 +741,6 @@ export function useExtensionMessages(
     showAreas,
     setShowAreas,
     tokenUsage,
+    usageLimits,
   };
 }
