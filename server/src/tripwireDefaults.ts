@@ -59,8 +59,10 @@ export const DEFAULT_TRIPWIRE_RULES: readonly TripwireRule[] = [
     name: 'Secret literal in tool input',
     severity: 'high',
     tool: /.*/,
+    // Slack and Anthropic need a key body: docs, regexes and test names that only
+    // name the pattern carry the bare prefix.
     input: new RegExp(
-      String.raw`\b(AKIA|ASIA)(?!IOSFODNN7EXAMPLE)[0-9A-Z]{16}\b|\bghp_[A-Za-z0-9]{36}\b|\bxox[baprs]-|-----BEGIN [A-Z ]*PRIVATE KEY|\bsk-ant-`,
+      String.raw`\b(AKIA|ASIA)(?!IOSFODNN7EXAMPLE)[0-9A-Z]{16}\b|\bghp_[A-Za-z0-9]{36}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY|\bsk-ant-[A-Za-z0-9_-]{20,}`,
       '',
     ),
     ignoreKeys: [],

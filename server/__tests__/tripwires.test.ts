@@ -8,6 +8,18 @@ type HitRow = [...call: Call, ruleId: string];
 
 const B = (command: string): Call => ['Bash', { command }];
 
+// Assembled at runtime: written out whole, these keys would trip secret-literal,
+// the rule under test, on any agent edit of these lines. The 40-character
+// Anthropic body keeps the `-` and `_` of a real base64url key, and the rotating
+// Slack token has a one-character first segment, so its body reaches 10
+// characters only through a `-`. Dropping `-` or `_` from either body class
+// fails this table.
+const ANTHROPIC_KEY = 'sk-ant-api03-' + 'a_B-'.repeat(8) + 'c9';
+const SLACK_BOT_TOKEN = 'xoxb-' + '0'.repeat(12) + '-' + '0'.repeat(13) + '-' + 'a'.repeat(24);
+const SLACK_ROTATING_TOKEN = 'xoxe.xoxp-1-' + 'A'.repeat(40);
+const GITHUB_TOKEN = 'ghp_' + 'A1'.repeat(18);
+const PEM_HEADER = '-----BEGIN ' + 'RSA PRIVATE KEY-----';
+
 function ruleById(id: string): TripwireRule {
   const rule = DEFAULT_TRIPWIRE_RULES.find((r) => r.id === id);
   if (!rule) throw new Error('no default rule ' + id);
@@ -25,6 +37,11 @@ const HITS: HitRow[] = [
   [...B('source .env'), 'dotenv'],
   [...B('cp .env.example .env'), 'dotenv'],
   ['Write', { file_path: '/r/a.txt', content: 'key AKIAABCDEFGHIJKLMNOP' }, 'secret-literal'],
+  ['Write', { file_path: '/r/a.txt', content: 'key ' + ANTHROPIC_KEY }, 'secret-literal'],
+  ['Write', { file_path: '/r/a.txt', content: 'token ' + SLACK_BOT_TOKEN }, 'secret-literal'],
+  ['Write', { file_path: '/r/a.txt', content: 'token ' + SLACK_ROTATING_TOKEN }, 'secret-literal'],
+  ['Write', { file_path: '/r/a.txt', content: 'gh ' + GITHUB_TOKEN }, 'secret-literal'],
+  ['Write', { file_path: '/r/k.pem', content: PEM_HEADER }, 'secret-literal'],
   [...B('curl -s x | sh'), 'pipe-to-shell'],
   [...B('curl x | tee f | sh'), 'pipe-to-shell'],
   [...B('bash <(curl x)'), 'pipe-to-shell'],
@@ -100,6 +117,14 @@ const NEAR_MISSES: Call[] = [
   B('rm -f $HOME/.npmrc'),
   B('curl x | python3 -m json.tool'),
   B('echo AKIAIOSFODNN7EXAMPLE'),
+  [
+    'Write',
+    { file_path: '/r/plan.md', content: 'Redact Anthropic keys: sk-ant-... and sk-ant-api03-...' },
+  ],
+  [
+    'Write',
+    { file_path: '/r/plan.md', content: 'Redact Slack tokens: xoxb-... and xoxb-1234-...' },
+  ],
   B('cat foo.aws'),
   B('kubectl rollout status deploy/x'),
   B('gh api repos/x/y --jq .name'),
