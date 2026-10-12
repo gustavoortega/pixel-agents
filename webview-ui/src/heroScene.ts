@@ -29,12 +29,15 @@ export function heroZoomFor(
   return fitView(null, map, viewport, dpr).zoom;
 }
 
-/** Afternoon light: the window shafts are on and the room is not yet in dusk tint. */
-export const HERO_HOUR = 16;
+/** Morning light: the window shafts are at their .30 peak (the curve holds it until 09:00 and fades after). */
+export const HERO_HOUR = 9;
 export const HERO_MINUTE = 30;
 
-/** A pop plays for FX_POP_MS; the next starts once it is gone, so only one is ever on screen. */
-export const HERO_XP_POP_MS = FX_POP_MS + 100;
+/**
+ * A pop is fully opaque for the first two thirds of FX_POP_MS and gone by the end, so it is
+ * replaced before it fades past half opacity (t = 5/6). Only one is ever on screen.
+ */
+export const HERO_XP_POP_MS = Math.floor((FX_POP_MS * 5) / 6);
 const STAGE_TICK_MS = 250;
 /** Just under the storm's 20 s life, so the cloud is replaced before it starts to fade. */
 export const HERO_STORM_RESTART_MS = 17_000;
@@ -183,7 +186,7 @@ export function heroMessages(): ServerMessage[] {
   return out;
 }
 
-/** 16:30 today; the seconds follow the real clock so lights and shimmer keep moving. */
+/** 09:30 today; the seconds follow the real clock so lights and shimmer keep moving. */
 export function heroClock(realMs: number): Date {
   const d = new Date(realMs);
   return new Date(
@@ -230,8 +233,10 @@ export function startHeroStage(
   overrideOfficeClock(() => heroClock(nowMs()));
   forceFullPlates(true);
   const pop = (): void => {
-    // One element per pop: never stack a second one over a pop that is still rising.
-    if (os.fx.active.some((a) => a.kind === 'pop' && a.agentId === HERO_XP_AGENT_ID)) return;
+    // One element per pop: the new one replaces the old one that is fading, never stacks over it.
+    os.fx.active = os.fx.active.filter(
+      (a) => !(a.kind === 'pop' && a.agentId === HERO_XP_AGENT_ID),
+    );
     os.fx.active.push({
       kind: 'pop',
       agentId: HERO_XP_AGENT_ID,

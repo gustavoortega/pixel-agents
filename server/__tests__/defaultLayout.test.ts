@@ -3,8 +3,8 @@
  * It must stay at revision 1 (a higher revision resets every user layout with a lower one to the
  * bundled default) and carry generic room names, never the maintainer's own.
  */
-import fs from 'fs';
-import path from 'path';
+import * as fs from 'fs';
+import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import { loadDefaultLayout } from '../src/assetLoader.js';
