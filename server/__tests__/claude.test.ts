@@ -92,22 +92,6 @@ describe('claudeProvider', () => {
       expect(failed?.event).toEqual({ kind: 'toolEnd', toolId: 'current', failed: true });
     });
 
-    it('flags a Bash commit or PR creation as shipping', () => {
-      const ships = (tool_name: string, command: string) => {
-        const result = claudeProvider.normalizeHookEvent({
-          hook_event_name: 'PreToolUse',
-          session_id: 'sess-1',
-          tool_name,
-          tool_input: { command },
-        });
-        return result?.event.kind === 'toolStart' ? result.event : undefined;
-      };
-      expect(ships('Bash', 'git commit -m x')?.ships).toBe(true);
-      expect(ships('Bash', 'git status')?.ships).toBeUndefined();
-      // Only the Bash tool's command is a shell command.
-      expect(ships('Read', 'git commit -m x')?.ships).toBeUndefined();
-    });
-
     it('normalizes Stop to turnEnd without awaitingInput (Done, not waiting)', () => {
       const result = claudeProvider.normalizeHookEvent({
         hook_event_name: 'Stop',
@@ -286,5 +270,205 @@ describe('claudeProvider', () => {
     ])('formats Bash %j as the program name only', (command, program) => {
       expect(claudeProvider.formatToolStatus('Bash', { command })).toBe(`Running: ${program}`);
     });
+  });
+});
+
+describe('claudeProvider real-work signals', () => {
+  const verdicts = (name: string, input: unknown) => claudeProvider.toolVerdicts!(name, input);
+  const kinds = (command: string) => verdicts('Bash', { command }).map((v) => v.kind);
+
+  it.each<[string, string[]]>([
+    ['git commit -m x', ['commit']],
+    ['git commit --amend --no-edit', ['commit-amend']],
+    ['cd repo && FOO=1 git -C sub -c user.name=a commit -m x', ['commit']],
+    ['git cherry-pick abc1234', ['commit']],
+    ['echo "git commit" ; git status', []],
+    ['gh pr create --fill', ['pr-create']],
+    ['gh pr merge 42 --squash', ['pr-merge']],
+    ['gh pr merge 42 --auto --squash', []],
+    ['gh pr merge --disable-auto 42', []],
+    ['gh pr merge --help', []],
+    ['gh pr merge 42 -h', []],
+    ['ls -h && git commit -m x', ['commit']],
+    ['./node_modules/.bin/vitest run', ['test']],
+    ['uv run python -m pytest tests/', ['test']],
+    ['npm run test:server', ['test']],
+    ['go test ./...', ['test']],
+    ['npm run build', []],
+    ['npm test && git commit -m x | tee log', ['test', 'commit']],
+  ])('Bash %s -> %j', (command, expected) => {
+    expect(kinds(command)).toEqual(expected);
+  });
+
+  /** How Claude Code writes a commit message or a PR body. */
+  const heredoc = (head: string, body: string) => `${head} "$(cat <<'EOF'\n${body}\nEOF\n)"`;
+
+  it.each<[string, string[], string]>([
+    [
+      'a commit message in a heredoc',
+      ['commit'],
+      heredoc('git commit -m', 'Ship it\n\ngh pr merge --squash --delete-branch'),
+    ],
+    [
+      'a PR body in a heredoc',
+      ['pr-create'],
+      heredoc('gh pr create --title x --body', 'Merge with:\ngh pr merge 7 --squash'),
+    ],
+    [
+      'a heredoc on stdin, then a test run',
+      ['commit', 'test'],
+      "git commit -F - <<-'EOF'\n\tShip it\n\tgh pr merge --squash\n\tEOF\nnpm test",
+    ],
+    ['a quoted message over two lines', ['commit'], 'git commit -m "Ship it; then\ngh pr merge 7"'],
+    ['a comment holding an apostrophe', ['commit'], "# don't skip this\ngit commit -m x"],
+    ['a quoted option value', ['commit'], 'git -c "user.name=A B" commit -m x'],
+  ])('Bash with %s reads as %j', (_text, expected, command) => {
+    expect(kinds(command)).toEqual(expected);
+  });
+
+  it('reads edits from the edit tools and commands from Bash only', () => {
+    expect(verdicts('Edit', { file_path: 'a.ts' })).toEqual([{ kind: 'edit' }]);
+    expect(verdicts('Write', { file_path: 'a.ts' })).toEqual([{ kind: 'edit' }]);
+    expect(verdicts('Read', { command: 'git commit -m x' })).toEqual([]);
+  });
+
+  it('keys a merge by the PR it names, hashed, and leaves it unkeyed when it names none', () => {
+    const key = (command: string) => verdicts('Bash', { command })[0]?.key;
+    const url = (repo: string) => `gh pr merge https://github.com/${repo}/pull/12 --squash`;
+    expect(key('gh pr merge 12 --squash')).toBe(key('gh pr merge 12 --rebase'));
+    expect(key('gh pr merge 12')).not.toBe(key('gh pr merge 13'));
+    expect(key(url('acme/app'))).not.toBe(key(url('acme/web')));
+    expect(key(url('acme/app'))).toMatch(/^[0-9a-f]{16}$/);
+    expect(key('gh pr merge --squash')).toBeUndefined();
+  });
+
+  const result = (
+    output: { stdout?: string; stderr?: string } | undefined,
+    block: { content?: unknown; is_error?: boolean } = {},
+  ) => ({
+    type: 'user',
+    message: {
+      content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: '', ...block }],
+    },
+    ...(output ? { toolUseResult: { stdout: '', stderr: '', ...output } } : {}),
+  });
+  const testRun = (record: unknown) =>
+    claudeProvider.resultSignals!([{ kind: 'test' }], record).map((h) => h.kind);
+
+  it.each<[string, { stdout?: string; stderr?: string }, string[]]>([
+    [
+      'vitest green',
+      { stdout: ' Test Files  2 passed (2)\n      Tests  9 passed (9)\n' },
+      ['tests'],
+    ],
+    [
+      'vitest where every file failed to load',
+      { stdout: ' Test Files  1 failed (1)\n      Tests  no tests\n' },
+      [],
+    ],
+    [
+      'vitest with a file that failed to load',
+      { stdout: ' Test Files  1 failed | 1 passed (2)\n      Tests  5 passed (5)\n' },
+      [],
+    ],
+    [
+      'jest with a suite that failed to load',
+      { stderr: 'Test Suites: 1 failed, 1 passed, 2 total\nTests:       5 passed, 5 total' },
+      [],
+    ],
+    [
+      'jest green on stderr',
+      { stderr: 'Test Suites: 1 passed, 1 total\nTests:       5 passed, 5 total' },
+      ['tests'],
+    ],
+    [
+      'jest red on stderr',
+      { stderr: 'Test Suites: 1 failed, 1 total\nTests:       1 failed, 4 passed, 5 total' },
+      [],
+    ],
+    [
+      'pytest green',
+      { stdout: '============ 5 passed, 1 warning in 0.12s ============' },
+      ['tests'],
+    ],
+    ['pytest with errors', { stdout: '===== 4 passed, 1 error in 0.30s =====' }, []],
+    ['pytest -q (no summary rule)', { stdout: '5 passed in 0.12s' }, []],
+    ['go green', { stdout: 'ok  \tacme/app/a\t0.1s\nok  \tacme/app/b\t(cached)\n' }, ['tests']],
+    [
+      'go with a failure',
+      { stdout: 'ok  \tacme/app/a\t0.1s\n--- FAIL: TestB (0.00s)\nFAIL\tacme/app/b\t0.2s\n' },
+      [],
+    ],
+    [
+      'a green summary next to a red one',
+      { stdout: 'ok  \tacme/app\t0.1s\n      Tests  1 failed | 3 passed (4)\n' },
+      [],
+    ],
+    [
+      'TAP with a failure, whose ok lines read like go',
+      { stdout: 'TAP version 13\nok 1 - adds\nnot ok 2 - subtracts\n1..2\n# pass 1\n# fail 1\n' },
+      [],
+    ],
+  ])('test run: %s', (_name, output, expected) => {
+    expect(testRun(result(output))).toEqual(expected);
+  });
+
+  it('reads a summary from the tool_result content when there are no streams', () => {
+    const summary = '      Tests  3 passed (3)';
+    expect(testRun(result(undefined, { content: [{ type: 'text', text: summary }] }))).toEqual([
+      'tests',
+    ]);
+    expect(testRun(result(undefined, { content: summary }))).toEqual(['tests']);
+  });
+
+  it('a failed result proves nothing, an edit included', () => {
+    const out = { stdout: '[main 1a2b3c4] x\n' };
+    const both = (block: { is_error?: boolean }) =>
+      claudeProvider.resultSignals!([{ kind: 'edit' }, { kind: 'commit' }], result(out, block)).map(
+        (h) => h.kind,
+      );
+    expect(both({ is_error: true })).toEqual([]);
+    expect(both({})).toEqual(['edit', 'commit']);
+  });
+
+  it('pays one commit per new-commit line, keyed by sha, and none from a command that also amends', () => {
+    const out = {
+      stdout:
+        '[STARTED] lint-staged\n[main (root-commit) 1a2b3c4] first\n[detached HEAD 5d6e7f8] second\n',
+    };
+    const hits = claudeProvider.resultSignals!([{ kind: 'commit' }], result(out));
+    expect(hits.map((h) => h.kind)).toEqual(['commit', 'commit']);
+    expect(hits[0].key).not.toBe(hits[1].key);
+    const amends = verdicts('Bash', {
+      command: 'git commit -m wip && git commit --amend --no-edit',
+    });
+    expect(claudeProvider.resultSignals!(amends, result(out))).toEqual([]);
+  });
+
+  it('pays a created PR only when its URL is printed', () => {
+    const hits = (stdout: string) =>
+      claudeProvider.resultSignals!([{ kind: 'pr-create' }], result({ stdout }));
+    const [pr] = hits('https://github.com/acme/app/pull/42\n');
+    expect(pr.kind).toBe('pr');
+    expect(
+      hits('Warning: 2 uncommitted changes\nhttps://github.com/acme/app/pull/42\n')[0].key,
+    ).toBe(pr.key);
+    expect(hits('https://github.com/acme/app/pull/43\n')[0].key).not.toBe(pr.key);
+    expect(hits('Opening github.com/acme/app/compare in your browser.\n')).toEqual([]);
+  });
+
+  it('proves a merge by success alone, keyed by its PR or else by its own call', () => {
+    const merge = (key: string | undefined, id: string) =>
+      claudeProvider.resultSignals!([{ kind: 'pr-merge', key }], {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: id, content: '' }] },
+      });
+    expect(merge('k42', 'toolu_1')).toEqual([{ kind: 'merge', key: 'k42' }]);
+    expect(merge(undefined, 'toolu_1')[0].key).not.toBe(merge(undefined, 'toolu_2')[0].key);
+  });
+
+  it('pays no merge when gh says the PR was merged already, which it says with exit code 0', () => {
+    const rerun = result({ stderr: '! Pull request acme/app#42 was already merged\n' });
+    expect(claudeProvider.resultSignals!([{ kind: 'pr-merge', key: 'k42' }], rerun)).toEqual([]);
   });
 });

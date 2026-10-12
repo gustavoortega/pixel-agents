@@ -8,7 +8,7 @@ import { AgentRuntime } from '../src/agentRuntime.js';
 import { AgentStateStore } from '../src/agentStateStore.js';
 import { claudeProvider } from '../src/providers/hook/claude/claude.js';
 import { NAME_POOL, RosterStore } from '../src/roster.js';
-import { claimRosterMember } from '../src/rosterAgent.js';
+import { claimRosterMember, rosterMessage } from '../src/rosterAgent.js';
 import type { AgentState, PersistedAgent } from '../src/types.js';
 
 let dir: string;
@@ -279,6 +279,49 @@ describe('restore reclaims the persisted member (R2)', () => {
     expect(store.get(7)?.palette).toBe(second?.palette);
     expect(first?.id).not.toBe(second?.id);
     runtime.dispose();
+    store.dispose();
+  });
+});
+
+describe('roster files from before XP paid for real work (D4)', () => {
+  it('keep their XP, level, streak and failures; the retired counters are ignored', () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        members: [
+          {
+            id: 'm1',
+            name: 'Ada',
+            palette: 2,
+            hueShift: 0,
+            xp: 400,
+            turns: 31,
+            cleanTurns: 20,
+            bestStreak: 6,
+            ships: 4,
+            streak: 2,
+            consecutiveFailures: 3,
+            createdAt: 1,
+          },
+        ],
+        holds: [],
+      }),
+    );
+    const roster = proc(100, new Set([100]));
+    const store = new AgentStateStore();
+    roster.attach(store);
+    const agent = { id: 1, sessionId: 's', rosterId: 'm1' } as AgentState;
+
+    claimRosterMember(agent, store);
+
+    expect(rosterMessage(agent, store)).toMatchObject({
+      memberId: 'm1',
+      level: 3,
+      xp: 400 - 100 - 283,
+      streak: 2,
+      mood: 'frustrated',
+    });
     store.dispose();
   });
 });

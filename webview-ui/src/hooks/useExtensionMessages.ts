@@ -751,11 +751,7 @@ export function useExtensionMessages(
           mood: msg.mood,
         });
       } else if (msg.type === 'rosterEvent') {
-        os.setRosterEvent(
-          msg.id,
-          { kind: msg.kind, amount: msg.amount, level: msg.level },
-          Date.now(),
-        );
+        os.setRosterEvent(msg.id, msg, Date.now());
       }
     };
     const unsubscribe = transport.onMessage(handler);

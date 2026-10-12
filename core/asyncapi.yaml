@@ -592,8 +592,8 @@ components:
     RosterMood:
       description: |
         Derived from the member's state, never stored: `alarmed` while a tripwire is set,
-        else `frustrated` after 3 failed tools in a row, else `happy` on a streak of 3
-        clean tool turns, else `neutral`.
+        else `frustrated` after 3 failed tools in a row, else `happy` once it has earned
+        XP from real work since its last failed tool, else `neutral`.
       type: string
       enum: [alarmed, frustrated, happy, neutral]
 
@@ -637,10 +637,16 @@ components:
       type: string
       enum: [xp, levelUp]
 
+    RosterEventSignal:
+      description: The real work an award pays for. The pop names it.
+      type: string
+      enum: [commit, pr, merge, tests]
+
     RosterEvent:
       description: |
-        Transient hint for animations: this agent just earned `amount` XP (`xp`) or
-        reached `level` (`levelUp`). Not resent on reconnect.
+        Transient hint for animations, one per award: this agent just earned `amount`
+        XP for `signal` (`xp`), or earned it and reached `level` (`levelUp`, the only
+        kind that carries `level`). Not resent on reconnect.
       type: object
       additionalProperties: false
       required: [type, id, kind]
@@ -657,6 +663,8 @@ components:
         level:
           type: integer
           minimum: 2
+        signal:
+          $ref: '#/components/schemas/RosterEventSignal'
 
     LayoutLoaded:
       description: |

@@ -20,6 +20,9 @@ export const CLEAR_IDLE_THRESHOLD_MS = 2000;
 
 // ── External Session Detection ──────────────────────────────
 export const EXTERNAL_SCAN_INTERVAL_MS = 3000;
+/** Two scan ticks: a transcript born this recently is adopted from its start, and a record
+ *  stamped this long before a read from the start began still counts as new. */
+export const TRANSCRIPT_FRESHNESS_WINDOW_MS = EXTERNAL_SCAN_INTERVAL_MS * 2;
 /** Only adopt JSONL files modified within this window */
 export const EXTERNAL_ACTIVE_THRESHOLD_MS = 120_000; // 2 minutes
 /** Remove external agents after this much inactivity */
@@ -163,3 +166,8 @@ export const TOKEN_LEDGER_CACHE_FLUSH_MS = 10 * 60 * 1000;
 export const TOKEN_LEDGER_READ_HIGH_WATER_MARK = 1024 * 1024;
 export const TOKEN_LEDGER_TOP_SESSIONS = 15;
 export const TOKEN_LEDGER_CACHE_FILE = 'ledger-cache.json';
+
+// ── XP signals ──
+/** Paid signal keys remembered per agent. A key only has to outlive re-reads of its own
+ *  record, so the oldest are dropped past this. */
+export const SIGNAL_KEYS_MAX = 500;

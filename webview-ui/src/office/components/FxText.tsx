@@ -12,6 +12,7 @@ import type { OfficeState } from '../engine/officeState.js';
 import type { Rect } from '../labelLayout.js';
 import { spriteHeadTopY } from '../nameplate.js';
 import { seatedDrawOffsetPx } from '../seatDraw.js';
+import { xpPopLabel } from '../toolUtils.js';
 
 const FX_TEXT_Z_INDEX = 41;
 const OUTLINE = [
@@ -22,7 +23,7 @@ const OUTLINE = [
 ].join(', ');
 
 /**
- * "+N XP" and "Level N!" as DOM text in the plate layer: they take the plates' scale, not the
+ * "+60 commit" and "Level N!" as DOM text in the plate layer: they take the plates' scale, not the
  * canvas zoom. Positions and fades are computed from the effect's age on every overlay tick.
  */
 export function FxText({
@@ -73,7 +74,7 @@ export function FxText({
               }}
               data-testid="fx-xp-pop"
             >
-              {`+${e.amount} XP`}
+              {xpPopLabel(e)}
             </div>
           );
         }

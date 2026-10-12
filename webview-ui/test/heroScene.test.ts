@@ -26,6 +26,7 @@ import { FxText } from '../src/office/components/FxText.js';
 import { OfficeState } from '../src/office/engine/officeState.js';
 import { plateIsCompact, plateScale } from '../src/office/nameplate.js';
 import { shaftRects } from '../src/office/shafts.js';
+import { xpPopLabel } from '../src/office/toolUtils.js';
 import type { OfficeLayout } from '../src/office/types.js';
 import { Direction, IdlePose, TileType, WorkStatus } from '../src/office/types.js';
 import { loadRealAssets } from './realAssets.js';
@@ -134,7 +135,7 @@ describe('hero scene staging', () => {
     expect(stormFrames / frames).toBeGreaterThan(0.95);
   });
 
-  it('keeps a readable "+120 XP" over Ada in at least 90% of samples over 10 s', () => {
+  it('keeps a readable "+120 PR" over Ada in at least 90% of samples over 10 s', () => {
     // Readable = still at half opacity or more: FxText fades as min(1, (1 - age/FX_POP_MS) * 3).
     // Samples every 250 ms: the old 2.5 s cadence leaves ~20% of them in the fade or the gap.
     let readable = 0;
@@ -146,7 +147,7 @@ describe('hero scene staging', () => {
       }
       const pop = os.fx.active.find((a) => a.kind === 'pop' && a.agentId === 1);
       const opacity = pop ? Math.min(1, (1 - (Date.now() - pop.startedAt) / FX_POP_MS) * 3) : 0;
-      if (opacity >= 0.5) readable++;
+      if (opacity >= 0.5 && pop && xpPopLabel(pop) === '+120 PR') readable++;
     }
     expect(readable / samples).toBeGreaterThanOrEqual(0.9);
   });
@@ -235,13 +236,20 @@ describe('hero light', () => {
 });
 
 describe('hero FX look', () => {
-  it('draws one "+120 XP" per pop in FS Pixel Sans gold with the dark outline, rising 70 px over 2.4 s', () => {
+  it('draws one "+120 PR" per pop in FS Pixel Sans gold with the dark outline, rising 70 px over 2.4 s', () => {
     vi.useFakeTimers();
     try {
       const os = new OfficeState(layoutOf());
       seatHeroAgents(os);
       const startedAt = 1_000_000;
-      os.fx.active.push({ kind: 'pop', agentId: 1, startedAt, amount: 120, level: 0 });
+      os.fx.active.push({
+        kind: 'pop',
+        agentId: 1,
+        startedAt,
+        amount: 120,
+        signal: 'pr',
+        level: 0,
+      });
       os.fx.now = startedAt + 1200;
       const html = renderToStaticMarkup(
         createElement(FxText, {
@@ -252,7 +260,7 @@ describe('hero FX look', () => {
         }),
       );
       expect(html.match(/data-testid="fx-xp-pop"/g)).toHaveLength(1);
-      expect(html).toContain('+120 XP');
+      expect(html).toContain('+120 PR');
       expect(html).toContain('font-size:22px');
       // The look is the spec, pinned on purpose: a constant edit must turn this red.
       /* eslint-disable pixel-agents/no-inline-colors */

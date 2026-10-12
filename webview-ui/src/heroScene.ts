@@ -143,9 +143,10 @@ export const HERO_SEATS: Readonly<Record<number, string>> = {
   4: 'f-v9-0002',
 };
 
-/** Agent that earns the "+120 XP" pop every HERO_XP_POP_MS. */
+/** Agent that earns the "+120 PR" pop every HERO_XP_POP_MS. */
 export const HERO_XP_AGENT_ID = 1;
 export const HERO_XP_AMOUNT = 120;
+export const HERO_XP_SIGNAL = 'pr';
 /** Agent that naps. */
 export const HERO_NAP_AGENT_ID = 4;
 
@@ -242,6 +243,7 @@ export function startHeroStage(
       agentId: HERO_XP_AGENT_ID,
       startedAt: nowMs(),
       amount: HERO_XP_AMOUNT,
+      signal: HERO_XP_SIGNAL,
       level: 0,
     });
   };

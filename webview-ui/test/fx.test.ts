@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import type { RosterEventSignal } from '../../core/src/messages.js';
 import {
   CHARACTER_SPRITE_HEIGHT_PX,
   FX_LEVEL_UP_MS,
@@ -12,10 +13,12 @@ import {
 } from '../src/constants.js';
 import { FxEngine } from '../src/office/fx/fxEngine.js';
 import { type FxRenderState, renderFx } from '../src/office/fx/fxRender.js';
+import { fxTextBox } from '../src/office/fx/fxTextBox.js';
 import { MoodWeather } from '../src/office/fx/moodWeather.js';
 import { spriteHeadTopY } from '../src/office/nameplate.js';
 import { weatherAnchorY } from '../src/office/overlayStack.js';
 import { seatedDrawOffsetPx } from '../src/office/seatDraw.js';
+import { xpPopLabel } from '../src/office/toolUtils.js';
 import type { Character } from '../src/office/types.js';
 import { CharacterState } from '../src/office/types.js';
 
@@ -58,11 +61,37 @@ describe('FxEngine budget', () => {
     expect(fx.active).toEqual([]);
   });
 
-  it('a pop inside the cooldown is ignored', () => {
+  it('a pop inside the cooldown is ignored, the next one after it plays', () => {
     const fx = new FxEngine();
-    fx.onRosterEvent(1, { kind: 'xp', amount: 100 }, 0);
-    fx.onRosterEvent(1, { kind: 'xp', amount: 100 }, 5000);
+    fx.onRosterEvent(1, { kind: 'xp', amount: 60, signal: 'commit' }, 0);
+    fx.onRosterEvent(1, { kind: 'xp', amount: 60, signal: 'commit' }, 1_499);
     expect(fx.active).toHaveLength(1);
+    fx.onRosterEvent(1, { kind: 'xp', amount: 120, signal: 'pr' }, 1_500);
+    expect(fx.active).toHaveLength(2);
+  });
+});
+
+describe('XP pop label (C7)', () => {
+  /** The box of a plain "+50 XP" pop: the other labels must scale from it by their length. */
+  const plain = fxTextBox({ kind: 'pop', agentId: 1, startedAt: 0, amount: 50, level: 0 }, 1);
+
+  it.each<[RosterEventSignal, string, number]>([
+    ['commit', '+60 commit', 60],
+    ['pr', '+120 PR', 120],
+    ['merge', '+200 merged', 200],
+    ['tests', '+40 tests green', 40],
+  ])('a %s award pops "%s", in a box sized for that text', (signal, label, amount) => {
+    const fx = new FxEngine();
+    fx.onRosterEvent(1, { kind: 'xp', amount, signal }, 0);
+    const [pop] = fx.active;
+    expect(xpPopLabel(pop)).toBe(label);
+    expect(fxTextBox(pop, 1).w / plain.w).toBeCloseTo(label.length / '+50 XP'.length);
+  });
+
+  it('an award without a signal pops "+50 XP"', () => {
+    const fx = new FxEngine();
+    fx.onRosterEvent(1, { kind: 'xp', amount: 50 }, 0);
+    expect(xpPopLabel(fx.active[0])).toBe('+50 XP');
   });
 });
 

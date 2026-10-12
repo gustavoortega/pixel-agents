@@ -42,6 +42,7 @@ import {
   GLOBAL_SCAN_ACTIVE_MAX_AGE_MS,
   GLOBAL_SCAN_ACTIVE_MIN_SIZE,
   PROJECT_SCAN_INTERVAL_MS,
+  TRANSCRIPT_FRESHNESS_WINDOW_MS,
 } from './constants.js';
 import { seedContextUsage } from './contextUsage.js';
 import type { DismissalTracker } from './dismissalTracker.js';
@@ -218,6 +219,8 @@ export function readNewLines(
   try {
     const stat = fs.statSync(agent.jsonlFile);
     if (stat.size <= agent.fileOffset) return;
+    // A read from the start replays work that was done before this agent was watched.
+    if (agent.fileOffset === 0) agent.historyBefore = Date.now() - TRANSCRIPT_FRESHNESS_WINDOW_MS;
 
     // Cap single read at 64KB to prevent blocking on massive JSONL dumps.
     // Remaining data will be picked up on the next poll cycle.
@@ -1211,8 +1214,7 @@ function adoptExternalSession(
   try {
     const stat = fs.statSync(jsonlFile);
     const ageMs = stat.birthtimeMs > 0 ? Date.now() - stat.birthtimeMs : Number.POSITIVE_INFINITY;
-    const freshnessWindowMs = EXTERNAL_SCAN_INTERVAL_MS * 2;
-    skippedHistory = ageMs > freshnessWindowMs;
+    skippedHistory = ageMs > TRANSCRIPT_FRESHNESS_WINDOW_MS;
     fileOffset = skippedHistory ? stat.size : 0;
   } catch {
     /* start from beginning if stat fails */

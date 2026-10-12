@@ -680,7 +680,7 @@ export const FIT_CENTER_EASE_MS = 300;
 export const FX_MAX_CONCURRENT = 3;
 /** Level-ups over the budget wait here; the oldest is dropped past this. */
 export const FX_LEVEL_UP_QUEUE_MAX = 6;
-/** A "+N XP" pop lives this long: one DOM element that rises FX_POP_RISE_PX over it. */
+/** An XP pop ("+60 commit") lives this long: one DOM element that rises FX_POP_RISE_PX over it. */
 export const FX_POP_MS = 2400;
 export const FX_SPARKLE_MS = 600;
 export const FX_SPARKLE_PARTICLES = 6;

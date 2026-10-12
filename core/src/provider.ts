@@ -31,6 +31,24 @@ export interface TurnSignal {
   timestampMs?: number;
 }
 
+// ── Real-work signals (what XP pays for) ──
+
+/** What one tool call may prove once its result is in. A verdict alone pays
+ *  nothing: only the result says whether the work happened. `key` is a hashed
+ *  identity, never the command text. */
+export interface ToolVerdict {
+  kind: 'commit' | 'commit-amend' | 'pr-create' | 'pr-merge' | 'test' | 'edit';
+  key?: string;
+}
+
+/** Work a tool result proves. `key` is a hashed identity the runtime dedupes on;
+ *  a commit, pr or merge hit without one is ignored, since it cannot be told
+ *  apart from the same work read twice. */
+export interface SignalHit {
+  kind: 'commit' | 'pr' | 'merge' | 'tests' | 'edit';
+  key?: string;
+}
+
 /** Tool names a provider needs the tail walk to treat specially. */
 export interface TurnTraits {
   /** Tools that legitimately run for minutes without writing to the transcript. */
@@ -51,9 +69,6 @@ export type AgentEvent =
        *  `run_in_background` on Agent/Task). Handlers use this to suppress ghost
        *  sub-agent characters for teammate spawns. */
       runInBackground?: boolean;
-      /** True when this tool call is a shell command that ships work (a commit or
-       *  a PR creation). The provider decides; the command text stays inside it. */
-      ships?: boolean;
     }
   | {
       kind: 'toolEnd';
@@ -184,6 +199,14 @@ export interface HookProvider {
   turnSignal?(record: unknown): TurnSignal;
   /** Tool names the tail walk treats specially. See `TurnTraits`. */
   readonly turnTraits?: TurnTraits;
+
+  /** What a tool call may prove (a commit, a PR, a test run, an edit), read at
+   *  its tool_use. The input stays inside the provider: only verdicts and hashed
+   *  keys come out. A provider without this and `resultSignals` earns no XP. */
+  toolVerdicts?(name: string, input: unknown): ToolVerdict[];
+  /** The work a transcript record's single tool result proves for the verdicts
+   *  of its tool_use. A failed result proves nothing. */
+  resultSignals?(verdicts: ToolVerdict[], record: unknown): SignalHit[];
 
   /** How this CLI's transcripts report token usage. Present = the token ledger can
    *  total usage across sessions. See `TranscriptUsageSource`. */

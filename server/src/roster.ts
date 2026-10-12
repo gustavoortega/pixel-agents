@@ -30,11 +30,9 @@ export interface RosterMember {
   palette: number;
   hueShift: number;
   xp: number;
-  turns: number;
-  cleanTurns: number;
-  bestStreak: number;
-  ships: number;
-  /** Current run of clean tool turns and failed tools in a row; stored so mood survives a restart. */
+  /** Awards since the last failed tool, and failed tools in a row; stored so mood survives a
+   *  restart. Files written before XP paid for real work keep their old streak, which the next
+   *  failed tool resets. */
   streak: number;
   consecutiveFailures: number;
   lastFolder?: string;
@@ -168,10 +166,6 @@ function cleanMember(raw: unknown): RosterMember | null {
     palette: count(r.palette),
     hueShift: count(r.hueShift),
     xp: count(r.xp),
-    turns: count(r.turns),
-    cleanTurns: count(r.cleanTurns),
-    bestStreak: count(r.bestStreak),
-    ships: count(r.ships),
     streak: count(r.streak),
     consecutiveFailures: count(r.consecutiveFailures),
     lastFolder: str(r.lastFolder, 200),
@@ -201,14 +195,8 @@ function cleanHold(raw: unknown): RosterHold | null {
 
 function applyChange(member: RosterMember, change: MemberChange): void {
   member.xp += change.xp ?? 0;
-  member.turns += change.turns ?? 0;
-  member.cleanTurns += change.cleanTurns ?? 0;
-  member.ships += change.ships ?? 0;
   if (change.streak !== undefined) {
     member.streak = change.streak;
-  }
-  if (change.bestStreak !== undefined) {
-    member.bestStreak = Math.max(member.bestStreak, change.bestStreak);
   }
   if (change.consecutiveFailures !== undefined) {
     member.consecutiveFailures = change.consecutiveFailures;
@@ -217,14 +205,8 @@ function applyChange(member: RosterMember, change: MemberChange): void {
 
 function mergeChange(into: MemberChange, change: MemberChange): void {
   into.xp = (into.xp ?? 0) + (change.xp ?? 0);
-  into.turns = (into.turns ?? 0) + (change.turns ?? 0);
-  into.cleanTurns = (into.cleanTurns ?? 0) + (change.cleanTurns ?? 0);
-  into.ships = (into.ships ?? 0) + (change.ships ?? 0);
   if (change.streak !== undefined) {
     into.streak = change.streak;
-  }
-  if (change.bestStreak !== undefined) {
-    into.bestStreak = Math.max(into.bestStreak ?? 0, change.bestStreak);
   }
   if (change.consecutiveFailures !== undefined) {
     into.consecutiveFailures = change.consecutiveFailures;
@@ -437,10 +419,6 @@ export class RosterStore {
       palette: pick.palette,
       hueShift: pick.hueShift,
       xp: 0,
-      turns: 0,
-      cleanTurns: 0,
-      bestStreak: 0,
-      ships: 0,
       streak: 0,
       consecutiveFailures: 0,
       createdAt: this.now(),
@@ -540,10 +518,6 @@ export class RosterStore {
         palette: m.palette,
         hueShift: m.hueShift,
         xp: m.xp,
-        turns: m.turns,
-        cleanTurns: m.cleanTurns,
-        bestStreak: m.bestStreak,
-        ships: m.ships,
         streak: m.streak,
         consecutiveFailures: m.consecutiveFailures,
         lastFolder: m.lastFolder,

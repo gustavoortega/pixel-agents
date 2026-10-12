@@ -1,3 +1,4 @@
+import type { RosterEventSignal } from '../../../core/src/messages.js';
 import {
   COMPACT_LABEL_GAP_PX,
   COMPACT_LABEL_MIN_WIDTH_PX,
@@ -148,22 +149,34 @@ export interface AgentRosterInfo {
 export interface RosterEventInfo {
   kind: 'xp' | 'levelUp';
   amount?: number;
+  signal?: RosterEventSignal;
 }
 
-/** Amount at or above which an XP award is worth a "+N XP" pop: a ship is 100, a clean tool turn
- *  with a 3-streak bonus is 105. Smaller awards only move the bar. */
-export const XP_POP_MIN_AMOUNT = 100;
-export const XP_POP_COOLDOWN_MS = 10_000;
+/** Short enough that a commit and the PR opened right after it each get their pop. */
+export const XP_POP_COOLDOWN_MS = 1_500;
 
-/** Show "+N XP" for a ship, a level-up or a big bonus, at most once per cooldown per agent. */
+/** Every award is real work, so each one pops, at most once per cooldown per agent. */
 export function shouldShowXpPop(
   event: RosterEventInfo,
   lastShownAt: number | undefined,
   now: number,
 ): boolean {
-  const worthy =
-    event.kind === 'levelUp' || (event.amount !== undefined && event.amount >= XP_POP_MIN_AMOUNT);
+  const worthy = event.kind === 'levelUp' || (event.amount !== undefined && event.amount > 0);
   return worthy && (lastShownAt === undefined || now - lastShownAt >= XP_POP_COOLDOWN_MS);
+}
+
+const XP_POP_WORK: Record<RosterEventSignal, string> = {
+  commit: 'commit',
+  pr: 'PR',
+  merge: 'merged',
+  tests: 'tests green',
+};
+
+/** The pop names the work the XP paid for. One string for the text and the box it is sized in. */
+export function xpPopLabel(e: { amount: number; signal?: RosterEventSignal }): string {
+  // A signal this build does not know still pops, as plain XP.
+  const work = e.signal ? XP_POP_WORK[e.signal] : undefined;
+  return `+${e.amount} ${work ?? 'XP'}`;
 }
 
 /** `text` cut to `max` code points with an ellipsis; a surrogate pair is never split. */
