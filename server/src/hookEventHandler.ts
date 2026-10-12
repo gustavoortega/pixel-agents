@@ -3,6 +3,7 @@ import * as path from 'path';
 import type { AgentEvent, HookProvider } from '../../core/src/provider.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { SESSION_END_GRACE_MS } from './constants.js';
+import { bindHookSubRow, releaseHookSubRow } from './hookSubRows.js';
 import { broadcastRoster } from './rosterAgent.js';
 import type { SessionRouter } from './sessionRouter.js';
 import { getInlineTeammates, hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
@@ -11,6 +12,7 @@ import { notifyBackgroundAgentCompleted } from './transcriptParser.js';
 import { DEFAULT_TRIPWIRE_RULES } from './tripwireDefaults.js';
 import { applyTripwireHit, evaluateTripwires, type TripwireRule } from './tripwires.js';
 import type { AgentState } from './types.js';
+import { isKnownWorkflowAgent, isWorkflowTranscriptPath } from './workflowRuns.js';
 import { applyXpEvent, newXpTurnState, type XpEvent } from './xp.js';
 
 const debug = process.env.PIXEL_AGENTS_DEBUG !== '0';
@@ -148,6 +150,9 @@ export class HookEventHandler {
     const normalized = this.provider.normalizeHookEvent(event);
     if (!normalized) return; // unknown / uninteresting event -- silently drop
     const normEvent = normalized.event;
+    // Set when the hook fired inside a sub-agent of the session (a Task/Agent
+    // spawn or a workflow agent): the event is that sub-agent's, not the session's.
+    const subAgentId = normalized.agentId;
     const eventName = event.hook_event_name; // retained for logs only
     // CI / e2e diagnostic: see agentStateStore.ts debugLogBroadcast comment.
     if (process.env['PIXEL_AGENTS_DEBUG_LOG']) {
@@ -269,6 +274,11 @@ export class HookEventHandler {
       return;
     }
 
+    // A sub-agent's hook speaks for a session we already track or for nobody: it
+    // never confirms a pending session, waits in the buffer, or adopts one, or
+    // every workflow agent could mint a phantom lead.
+    if (subAgentId !== undefined && !this.isKnownSession(event.session_id)) return;
+
     // If a confirmation event arrives for a pending external session, create the agent first
     const pending = this.sessionRouter.confirmPending(event.session_id);
     if (pending) {
@@ -320,6 +330,13 @@ export class HookEventHandler {
     const agent = this.agents.get(agentId);
     if (!agent) return;
 
+    if (
+      subAgentId !== undefined &&
+      (normEvent.kind === 'toolStart' || normEvent.kind === 'toolEnd')
+    ) {
+      return this.handleSubagentToolCall(normEvent, agent, agentId);
+    }
+
     agent.hookDelivered = true;
     // A hook is fresher than anything derived from the transcript tail.
     agent.hookSeq = (agent.hookSeq ?? 0) + 1;
@@ -355,9 +372,13 @@ export class HookEventHandler {
         // treats them alike (agentToolDone + clear currentHookToolId); only XP tells them apart.
         return this.handlePostToolUse(agent, agentId);
       case 'subagentStart':
-        return this.provider.team ? this.handleSubagentStart(event, agent, agentId) : undefined;
+        return this.provider.team
+          ? this.handleSubagentStart(event, agent, agentId, subAgentId)
+          : undefined;
       case 'subagentEnd':
-        return this.provider.team ? this.handleSubagentStop(agent, agentId) : undefined;
+        return this.provider.team
+          ? this.handleSubagentStop(normEvent, agent, agentId, subAgentId)
+          : undefined;
       case 'permissionRequest':
         // Handles BOTH the PermissionRequest hook AND the Notification(permission_prompt)
         // hook -- normalizeHookEvent collapses them into one event kind.
@@ -379,6 +400,40 @@ export class HookEventHandler {
       case 'progress':
         // Not yet consumed by the office visualization. Silently drop.
         return;
+    }
+  }
+
+  /** A session of ours, registered or not yet: never a pending or unknown one. */
+  private isKnownSession(sessionId: string): boolean {
+    if (this.sessionRouter.resolve(sessionId) !== undefined) return true;
+    for (const agent of this.agents.values()) {
+      if (agent.sessionId === sessionId) return true;
+    }
+    return false;
+  }
+
+  /**
+   * A tool call made inside a sub-agent. It still trips alarms and earns XP for
+   * the session's member, but it never starts, ends or fails a tool on the lead
+   * or moves its status: the lead may be idle while its workflow works.
+   */
+  private handleSubagentToolCall(
+    normEvent: Extract<AgentEvent, { kind: 'toolStart' | 'toolEnd' }>,
+    agent: AgentState,
+    agentId: number,
+  ): void {
+    // A sub-agent's permission prompt shows on the lead, whose terminal answers
+    // it. Its next tool call means it was answered: the lead's own tool start
+    // would clear the bubble, and this path starts none.
+    if (agent.permissionSent) {
+      agent.permissionSent = false;
+      this.agents.broadcast({ type: 'agentToolPermissionClear', id: agentId });
+    }
+    if (normEvent.kind === 'toolStart') {
+      this.checkTripwires(normEvent, agent, agentId);
+      this.awardXp(agent, { kind: 'toolStart', ships: normEvent.ships });
+    } else {
+      this.awardXp(agent, { kind: 'toolEnd', failed: normEvent.failed });
     }
   }
 
@@ -560,7 +615,14 @@ export class HookEventHandler {
    * For old-style Task/Agent subagents (inline, no run_in_background), creates
    * the child character immediately via hooks without waiting for JSONL polling.
    */
-  private handleSubagentStart(event: HookEvent, agent: AgentState, agentId: number): void {
+  private handleSubagentStart(
+    event: HookEvent,
+    agent: AgentState,
+    agentId: number,
+    subAgentId: string | undefined,
+  ): void {
+    // A workflow agent's helper comes from its run journal; a row here would draw it twice.
+    if (subAgentId !== undefined && isKnownWorkflowAgent(agent, subAgentId)) return;
     const agentType = this.provider.team?.extractTeammateNameFromEvent(event) ?? 'unknown';
 
     // Decide path: teammate spawn vs basic within-turn subagent.
@@ -611,6 +673,7 @@ export class HookEventHandler {
       agent.activeSubagentToolNames.set(parentToolId, subNames);
     }
     subNames.set(subToolId, agentType);
+    if (subAgentId !== undefined) bindHookSubRow(agent, subAgentId, { parentToolId, subToolId });
 
     this.agents.broadcast({
       type: 'subagentToolStart',
@@ -629,7 +692,24 @@ export class HookEventHandler {
    *
    * For old-style Task subagents: removes the child character from the office.
    */
-  private handleSubagentStop(agent: AgentState, agentId: number): void {
+  private handleSubagentStop(
+    normEvent: Extract<AgentEvent, { kind: 'subagentEnd' }>,
+    agent: AgentState,
+    agentId: number,
+    subAgentId: string | undefined,
+  ): void {
+    // A workflow agent ends with its journal result, not here. A row it drew in
+    // the moment before its journal was read is its own: release that row only.
+    if (
+      isWorkflowTranscriptPath(normEvent.transcriptPath) ||
+      (subAgentId !== undefined && isKnownWorkflowAgent(agent, subAgentId))
+    ) {
+      if (subAgentId !== undefined) {
+        releaseHookSubRow(this.agents, agent, agentId, subAgentId, false);
+      }
+      return;
+    }
+
     // Check if this agent has inline teammates (independent agents with leadAgentId).
     // Just mark them waiting -- SubagentStop fires per-task-iteration; teammates may
     // sit idle for minutes between lead requests before being re-invoked.
@@ -646,6 +726,13 @@ export class HookEventHandler {
       for (const [id, a] of inlineTeammates) {
         this.markAgentWaiting(a, id);
       }
+      return;
+    }
+
+    // Rows are bound to the agent_id that drew them: a stop ends its own row and
+    // nothing else (no row: no-op), so it can never clear another sub-agent's helper.
+    if (subAgentId !== undefined) {
+      releaseHookSubRow(this.agents, agent, agentId, subAgentId, true);
       return;
     }
 

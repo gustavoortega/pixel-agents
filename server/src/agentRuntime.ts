@@ -52,6 +52,14 @@ import {
 import type { TripwireRule } from './tripwires.js';
 import { seedTurnState } from './turnStateSeed.js';
 import type { AgentState } from './types.js';
+import {
+  completeWorkflowRunForTool,
+  disposeWorkflowState,
+  endWorkflowSession,
+  restoreWorkflowState,
+  scanWorkflowRuns,
+  type WorkflowScanContext,
+} from './workflowRuns.js';
 
 /** Callbacks that adapters register for platform-specific behavior. */
 export interface RuntimeLifecycleCallbacks {
@@ -88,6 +96,9 @@ export class AgentRuntime {
   readonly subagentWatch: SubagentWatch;
   private hookEventHandler: HookEventHandler;
   private lifecycleCallbacks: RuntimeLifecycleCallbacks = {};
+  private readonly workflowCtx: WorkflowScanContext;
+  /** Leads with a workflow scan already queued for this turn of the event loop. */
+  private readonly workflowKicks = new Set<number>();
 
   constructor(
     private readonly store: AgentStateStore,
@@ -101,6 +112,7 @@ export class AgentRuntime {
     setFileWatcherHookProvider(provider);
     this.subagentWatch = new SubagentWatch(store);
     setSubagentWatch(this.subagentWatch);
+    this.workflowCtx = { store, watch: this.subagentWatch };
     if (provider.team) {
       setTeamProvider(provider.team);
     }
@@ -124,6 +136,8 @@ export class AgentRuntime {
         () => this.store.persist(),
         undefined,
       );
+      // Workflow launches come through here too: their agents are found from the run journal.
+      this.kickWorkflowScan(leadId);
     });
     setBackgroundAgentCompletedCallback((leadId, toolUseId) => {
       for (const [id, agent] of this.store) {
@@ -135,6 +149,9 @@ export class AgentRuntime {
       // Unnamed spawns live in the shadow store; the webview sub-character is
       // cleared by the lead-side queue-op subagentClear, not by this call.
       this.subagentWatch.removeBySpawn(leadId, toolUseId);
+      // A Workflow tool's notification ends its whole run (any status).
+      const lead = this.store.get(leadId);
+      if (lead) completeWorkflowRunForTool(lead, leadId, toolUseId, this.workflowCtx);
     });
     // A resumed lead that spawns again belongs to a freshly minted implicit
     // team; its previous team's teammates are defunct. Promoted anonymous
@@ -280,6 +297,7 @@ export class AgentRuntime {
         this.removeTeammates(agentId);
         // Unnamed background spawns die with their lead's session too.
         this.subagentWatch.removeByLead(agentId);
+        endWorkflowSession(agent, agentId, this.workflowCtx);
         if (agent.isExternal) {
           this.unregisterAgent(agent.sessionId);
           this.removeAgent(agentId);
@@ -291,6 +309,23 @@ export class AgentRuntime {
   /** Register adapter-specific lifecycle callbacks. */
   setLifecycleCallbacks(callbacks: RuntimeLifecycleCallbacks): void {
     this.lifecycleCallbacks = callbacks;
+  }
+
+  /**
+   * Scan a lead's workflow runs once the current batch of transcript lines is
+   * parsed. A launch and its completion often arrive in the same read (a run
+   * that fails at once); scanning between the two would draw helpers for a run
+   * that already ended.
+   */
+  private kickWorkflowScan(leadId: number): void {
+    if (this.workflowKicks.has(leadId)) return;
+    this.workflowKicks.add(leadId);
+    setImmediate(() => {
+      this.workflowKicks.delete(leadId);
+      const lead = this.store.get(leadId);
+      if (!lead || lead.leadAgentId !== undefined) return;
+      scanWorkflowRuns(leadId, lead, this.workflowCtx);
+    });
   }
 
   // ── Hook event routing ──
@@ -316,6 +351,10 @@ export class AgentRuntime {
   removeAgent(id: number): void {
     const agent = this.store.get(id);
     if (!agent) return;
+
+    // A lead closed or dropped without a sessionEnd would leave its workflow
+    // watches running, and their next start would draw helpers with no parent.
+    disposeWorkflowState(agent, id, this.workflowCtx);
 
     // Stop JSONL poll timer
     const jpTimer = this.jsonlPollTimers.get(id);
@@ -508,6 +547,8 @@ export class AgentRuntime {
         // Live spawn ids survive the restart so the 1s scan can re-adopt the
         // spawns' transcripts and the completion queue-op still matches.
         backgroundAgentToolIds: new Set(p.backgroundAgentToolIds ?? []),
+        // Same for Workflow tool -> run mappings: the run's completion still ends its helpers.
+        workflow: restoreWorkflowState(p),
         isWaiting: false,
         permissionSent: false,
         hadToolsInTurn: false,

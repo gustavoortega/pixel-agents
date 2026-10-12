@@ -55,6 +55,7 @@ import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from '.
 import { getHookProvider, processTranscriptLine } from './transcriptParser.js';
 import { applyTurnDerivation, deriveAgentTurnState, seedTurnState } from './turnStateSeed.js';
 import type { AgentState } from './types.js';
+import { scanWorkflowRuns } from './workflowRuns.js';
 
 /** Dismissal tracker instance. Set once at startup via setDismissalTracker().
  *  Replaces the former module-global dismissedJsonlFiles, clearDismissedFiles,
@@ -1040,6 +1041,10 @@ export function scanAllTeammateFiles(
       persistAgents,
       onAgentCreated,
     );
+    // Workflow crews: agents of the lead's Workflow runs, read from the run
+    // journals. No team and no sidecar gate is involved, so this runs for
+    // every lead, before the team gate below.
+    if (subagentWatch) scanWorkflowRuns(agentId, agent, { store: agents, watch: subagentWatch });
     // Gate: basic-mode agents never get teamName set. Real team leads do, via JSONL.
     if (!agent.teamName) continue;
 

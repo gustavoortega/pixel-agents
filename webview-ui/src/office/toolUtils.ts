@@ -2,11 +2,14 @@ import {
   COMPACT_LABEL_GAP_PX,
   COMPACT_LABEL_MIN_WIDTH_PX,
   COMPACT_LABEL_SEAT_PITCH_TILES,
+  HELPER_PLATE_LABEL_MAX_CODE_POINTS,
   TILE_SIZE,
   TRIPWIRE_COLOR_HIGH,
   TRIPWIRE_COLOR_LOW,
   TRIPWIRE_COLOR_MEDIUM,
 } from '../constants.js';
+import type { SubagentCharacter } from '../hooks/subagentMessages.js';
+import type { OfficeState } from './engine/officeState.js';
 import { Rarity } from './flair/modelFlair.js';
 import { CharacterState, IdlePose } from './types.js';
 
@@ -163,6 +166,12 @@ export function shouldShowXpPop(
   return worthy && (lastShownAt === undefined || now - lastShownAt >= XP_POP_COOLDOWN_MS);
 }
 
+/** `text` cut to `max` code points with an ellipsis; a surrogate pair is never split. */
+function ellipsize(text: string, max: number): string {
+  const points = Array.from(text);
+  return points.length > max ? `${points.slice(0, max).join('')}\u2026` : text;
+}
+
 /** The parent's count of live helpers, e.g. `+2 helpers`. */
 export function helpersLabel(n: number): string {
   return `+${n} ${n === 1 ? 'helper' : 'helpers'}`;
@@ -188,15 +197,22 @@ export function overlayContent(state: {
   maxWidth: number;
   /** Set for a helper (sub-agent): its parent's name. A helper gets one small line, no level. */
   helperOf?: string;
+  /** A workflow helper's label: it names the helper instead of the word "helper". */
+  helperLabel?: string;
 }): OverlayContent {
   if (state.expanded) return { mode: 'full' };
   if (state.maxWidth < COMPACT_LABEL_MIN_WIDTH_PX) return { mode: 'marker' };
   if (state.helperOf !== undefined) {
+    // The label is script text: isolated (FSI ... PDI), its right-to-left runs
+    // can never reorder the parent's name that follows it.
+    const who = state.helperLabel
+      ? `\u2068${ellipsize(state.helperLabel, HELPER_PLATE_LABEL_MAX_CODE_POINTS)}\u2069`
+      : 'helper';
     return {
       mode: 'compact',
       plate: {
         badge: null,
-        name: `helper \u00B7 ${state.helperOf}`,
+        name: `${who} \u00B7 ${state.helperOf}`,
         sub: null,
         rarity: null,
         pill: null,
@@ -225,6 +241,38 @@ export function overlayContent(state: {
       pill,
     },
   };
+}
+
+/**
+ * The helper fields of a character's plate input, read off the office and the
+ * helper list the overlay renders: a lead's count of live helpers (undrawn
+ * crew helpers included), and for a helper its parent's name and its workflow
+ * label.
+ */
+export function helperPlateInput(
+  officeState: OfficeState,
+  helpers: readonly SubagentCharacter[],
+  id: number,
+): { subCount: number; helperOf?: string; helperLabel?: string } {
+  const subCount = helpers.filter((s) => s.parentAgentId === id).length;
+  const ch = officeState.characters.get(id);
+  const parentId = ch?.isSubagent ? ch.parentAgentId : null;
+  if (parentId === null) return { subCount };
+  return {
+    subCount,
+    helperOf: parentName(officeState, parentId),
+    helperLabel: helpers.find((s) => s.id === id)?.plateLabel,
+  };
+}
+
+/** A helper's parent as its plate names it: roster name, else session title or folder. */
+function parentName(officeState: OfficeState, parentId: number): string {
+  const parent = officeState.characters.get(parentId);
+  return (
+    officeState.rosters.get(parentId)?.name ||
+    agentLabel(officeState.sessionTitles.get(parentId), parent?.folderName) ||
+    'agent'
+  );
 }
 
 /**

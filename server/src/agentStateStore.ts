@@ -4,6 +4,7 @@ import { appendFileSync } from 'node:fs';
 import type { StateAdapter } from '../../core/src/adapter.js';
 import type { RosterStore } from './roster.js';
 import type { AgentState, PersistedAgent } from './types.js';
+import { workflowPersistFields } from './workflowRuns.js';
 
 /**
  * CI / e2e diagnostics: when PIXEL_AGENTS_DEBUG_LOG points to a writable
@@ -175,6 +176,7 @@ export class AgentStateStore {
         teamUsesTmux: agent.teamUsesTmux,
         backgroundAgentToolIds:
           agent.backgroundAgentToolIds.size > 0 ? [...agent.backgroundAgentToolIds] : undefined,
+        ...workflowPersistFields(agent),
         palette: agent.palette,
         hueShift: agent.hueShift,
         rosterId: agent.rosterId,

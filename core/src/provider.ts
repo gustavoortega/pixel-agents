@@ -77,7 +77,14 @@ export type AgentEvent =
       input?: unknown;
       runInBackground?: boolean;
     }
-  | { kind: 'subagentEnd'; parentToolId: string; toolId: string }
+  | {
+      kind: 'subagentEnd';
+      parentToolId: string;
+      toolId: string;
+      /** Transcript of the sub-agent that stopped, when the provider reports it.
+       *  Its location tells a workflow agent from a Task/Agent one. */
+      transcriptPath?: string;
+    }
   | {
       kind: 'subagentTurnEnd';
       parentToolId: string;
@@ -120,10 +127,14 @@ export interface HookProvider {
   /** Normalize a raw hook event payload into an AgentEvent.
    *  Each CLI sends different JSON (Claude: snake_case, Copilot: camelCase, etc.)
    *  The provider translates to the common AgentEvent format.
-   *  Return null for events we should ignore. */
+   *  Return null for events we should ignore.
+   *  `agentId` is set when the hook fired inside a sub-agent of the session
+   *  (Claude: `agent_id`). Such an event is the sub-agent's, never the
+   *  session's own: it must not move the session's tools, status or adoption. */
   normalizeHookEvent(raw: Record<string, unknown>): {
     sessionId: string;
     event: AgentEvent;
+    agentId?: string;
   } | null;
 
   /** Install hook scripts that POST to our server. */

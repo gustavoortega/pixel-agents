@@ -185,3 +185,89 @@ describe('a top-level agent outranks a helper for a seat', () => {
     expect(sub.seatId).toBeNull();
   });
 });
+
+/** Room A is columns 0-5; columns 6-11 belong to no Area: the lobby. */
+function officeWithLobby(furniture: PlacedFurniture[]): OfficeState {
+  const areaTiles = Array.from({ length: COLS * ROWS }, (_, i) => (i % COLS < 6 ? 'A' : null));
+  return new OfficeState({
+    version: 1,
+    cols: COLS,
+    rows: ROWS,
+    tiles: new Array(COLS * ROWS).fill(TileType.FLOOR_1),
+    furniture,
+    areaTiles,
+  } as OfficeLayout);
+}
+
+const crew = (agent: string): string => `wf:5b1fa126-e5b:${agent}`;
+
+describe('C9 a helper whose parent room is full', () => {
+  it('takes the nearest free lobby desk seat before standing, never a couch', () => {
+    // The couch is the nearest lobby seat; the desk chair is farther.
+    const os = officeWithLobby([
+      chair('parent', 5, 3),
+      { uid: 'couch', type: 'SOFA_FRONT', col: 7, row: 3 },
+      chair('lobby-desk', 10, 6),
+    ]);
+    os.addAgent(1, 0, 0, 'parent', true);
+    const sub = os.characters.get(os.addSubagent(1, crew('a1')))!;
+    expect(sub.seatId).toBe('lobby-desk');
+    expect([sub.tileCol, sub.tileRow]).toEqual([10, 6]);
+  });
+});
+
+describe('C18 a top-level agent placed after crew helpers took the lobby seats', () => {
+  it('never shares a seat with one: crew helpers keep theirs', () => {
+    const os = officeWithLobby([chair('parent', 5, 3), chair('l1', 8, 3), chair('l2', 10, 3)]);
+    os.addAgent(1, 0, 0, 'parent', true);
+    const a = os.characters.get(os.addSubagent(1, crew('a1')))!;
+    const b = os.characters.get(os.addSubagent(1, crew('a2')))!;
+    expect(new Set([a.seatId, b.seatId])).toEqual(new Set(['l1', 'l2']));
+
+    os.addAgent(2, 0, 0, 'l1', true); // its saved seat is a crew helper's
+    os.addAgent(3, 0, 0, undefined, true);
+
+    const seated = [...os.characters.values()]
+      .filter((ch) => ch.seatId !== null && ch.matrixEffect !== 'despawn')
+      .map((ch) => ch.seatId);
+    expect(new Set(seated).size).toBe(seated.length);
+    expect(new Set([a.seatId, b.seatId])).toEqual(new Set(['l1', 'l2']));
+  });
+});
+
+describe('C19 a lead with more crew helpers than the visible cap', () => {
+  it('draws 12; the rest exist without a sprite and the oldest is drawn when one leaves', () => {
+    const os = office([chair('parent', 5, 3)]);
+    os.addAgent(1, 0, 0, 'parent', true);
+    const ids = Array.from({ length: 14 }, (_, i) => os.addSubagent(1, crew(`a${i + 1}`)));
+    // On stage: a character that is not playing its leaving effect.
+    const drawn = (): number[] =>
+      ids.filter((id) => {
+        const ch = os.characters.get(id);
+        return ch !== undefined && ch.matrixEffect !== 'despawn';
+      });
+
+    expect(drawn()).toEqual(ids.slice(0, 12));
+    // The undrawn ones still exist under their keys (their count on the plate: subagentMessages).
+    expect(os.getSubagentId(1, crew('a13'))).toBe(ids[12]);
+    // A Task helper neither counts toward the cap nor waits behind it.
+    expect(os.characters.has(os.addSubagent(1, 'toolu_task'))).toBe(true);
+
+    os.setAgentActive(ids[12], true); // a start that reached the undrawn helper
+    os.removeSubagent(1, crew('a1'));
+
+    expect(drawn()).toEqual([...ids.slice(1, 13)]);
+    expect(os.characters.get(ids[12])!.isActive).toBe(true);
+    expect(os.characters.has(ids[13])).toBe(false);
+  });
+
+  it('never counts a Task helper toward the cap, even one drawn before the crew', () => {
+    const os = office([chair('parent', 5, 3)]);
+    os.addAgent(1, 0, 0, 'parent', true);
+    os.addSubagent(1, 'toolu_task');
+
+    const ids = Array.from({ length: 12 }, (_, i) => os.addSubagent(1, crew(`a${i + 1}`)));
+
+    expect(ids.filter((id) => os.characters.has(id))).toEqual(ids);
+  });
+});

@@ -36,7 +36,7 @@ import {
   TILE_SIZE,
   TOOL_OVERLAY_VERTICAL_OFFSET,
 } from '../../constants.js';
-import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js';
+import type { SubagentCharacter } from '../../hooks/subagentMessages.js';
 import { fitZoomWholeMap } from '../camera.js';
 import { sheetFrameIndex } from '../engine/characters.js';
 import type { OfficeState } from '../engine/officeState.js';
@@ -74,6 +74,7 @@ import {
   agentLabel,
   agentStatus,
   compactLabelMaxWidth,
+  helperPlateInput,
   type NameplateContent,
   type OverlayContent,
   overlayContent,
@@ -337,16 +338,6 @@ function CompactLabel({
   );
 }
 
-/** Name a helper's plate shows for its parent: roster member, else session label, else a generic word. */
-function parentName(officeState: OfficeState, parentId: number): string {
-  const parent = officeState.characters.get(parentId);
-  return (
-    officeState.rosters.get(parentId)?.name ||
-    agentLabel(officeState.sessionTitles.get(parentId), parent?.folderName) ||
-    'agent'
-  );
-}
-
 /** Something is drawn on the canvas right above the head (bubble, idle glyph, Zz, beacon). */
 function headSlotTaken(ch: Character, hasTripwire: boolean): boolean {
   const bubble = ch.bubbleType && !(ch.bubbleType === 'waiting' && ch.waitingAwaitingInput);
@@ -442,8 +433,7 @@ export function ToolOverlay({
       const content = overlayContent({
         expanded: false,
         label: agentLabel(officeState.sessionTitles.get(id), ch.folderName),
-        subCount: subagentCharacters.filter((s) => s.parentAgentId === id).length,
-        helperOf: parentId !== null ? parentName(officeState, parentId) : undefined,
+        ...helperPlateInput(officeState, subagentCharacters, id),
         tripwire: officeState.tripwires.get(id),
         level: officeState.rosters.get(id)?.level,
         name: officeState.rosters.get(id)?.name,
@@ -566,9 +556,7 @@ export function ToolOverlay({
       officeState.weatherAnchor.set(
         it.id,
         weatherAnchorY(
-          Number.isFinite(stackTop)
-            ? project.toWorldLength(stackTop - project.toScreenY(0))
-            : null,
+          Number.isFinite(stackTop) ? project.toWorldLength(stackTop - project.toScreenY(0)) : null,
           spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch)),
         ),
       );
@@ -655,6 +643,8 @@ export function ToolOverlay({
         // Get activity text
         const hasWaitingBubble = ch.bubbleType === 'waiting';
         const subHasPermission = isSub && ch.bubbleType === 'permission';
+        // A workflow helper has no parent tool row: everything it shows comes from its own entry.
+        const sub = isSub ? subagentCharacters.find((s) => s.id === id) : undefined;
         let activityText: string;
         if (hasWaitingBubble && ch.waitingAwaitingInput) {
           // Idle, waiting on the user -> dedicated label. A finished turn (Stop)
@@ -664,13 +654,12 @@ export function ToolOverlay({
           if (subHasPermission) {
             activityText = 'Needs approval';
           } else {
-            // Hover shows the subtask title; SELECTING the sub reveals its live
-            // tool activity (watched sub-agents stream it via subagentToolStart).
-            const sub = subagentCharacters.find((s) => s.id === id);
+            // Hover shows the subtask title (a workflow helper's full label); SELECTING the sub
+            // reveals its live tool activity (watched sub-agents stream it via subagentToolStart).
             const rows = sub ? subagentTools[sub.parentAgentId]?.[sub.parentToolId] : undefined;
             const activeRow =
               isSelected && rows ? [...rows].reverse().find((t) => !t.done) : undefined;
-            activityText = activeRow?.status ?? (sub?.label || 'Subtask');
+            activityText = activeRow?.status ?? (sub?.plateLabel || sub?.label || 'Subtask');
           }
         } else {
           activityText = getActivityText(
@@ -707,7 +696,8 @@ export function ToolOverlay({
             rarity: characterFlair(ch, officeState.models, isShowModelFlairEnabled()).rarity,
           },
         });
-        const hasExtraLines = !!(label || teamRoleLabel || tripwire);
+        const group = sub?.group;
+        const hasExtraLines = !!(label || teamRoleLabel || tripwire || group);
 
         // Context gauge. Every agent gets one — lead, teammate, adopted,
         // headless — as soon as it has taken a turn. Sub-agents never do: they
@@ -759,6 +749,11 @@ export function ToolOverlay({
                 >
                   {activityText}
                 </span>
+                {group && (
+                  <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
+                    {group}
+                  </span>
+                )}
                 {tripwire && (
                   <span
                     className="overflow-hidden text-ellipsis block leading-none cursor-pointer"

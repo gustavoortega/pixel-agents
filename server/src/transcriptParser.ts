@@ -14,6 +14,7 @@ import {
   startWaitingTimer,
 } from './timerManager.js';
 import type { AgentState } from './types.js';
+import { hasWorkflowTool, noteWorkflowRun } from './workflowRuns.js';
 
 /** Empty set used as safe fallback when no HookProvider is registered. */
 const EMPTY_EXEMPT_TOOLS: ReadonlySet<string> = new Set();
@@ -294,10 +295,37 @@ export function processTranscriptLine(
         const blocks = content as Array<{ type: string; tool_use_id?: string; content?: unknown }>;
         const hasToolResult = blocks.some((b) => b.type === 'tool_result');
         if (hasToolResult) {
+          // toolUseResult describes the record's tool_result: trusted only when
+          // there is exactly one.
+          const workflowRun =
+            blocks.filter((b) => b.type === 'tool_result').length === 1
+              ? workflowRunResult(record)
+              : null;
           for (const block of blocks) {
             if (block.type === 'tool_result' && block.tool_use_id) {
               const completedToolId = block.tool_use_id;
               const completedToolName = agent.activeToolNames.get(completedToolId);
+
+              // Workflow tool: the run id rides on toolUseResult, which a lead
+              // restored at end of file still reads without its tool_use.
+              if (
+                workflowRun &&
+                noteWorkflowRun(
+                  agents,
+                  agent,
+                  completedToolId,
+                  workflowRun.runId,
+                  workflowRun.transcriptDir,
+                )
+              ) {
+                if (workflowRun.launched) {
+                  // The run goes on in the background: look for its agents now.
+                  backgroundAgentDetectedCallback?.(agentId);
+                } else {
+                  // A foreground run returns only once it is over.
+                  backgroundAgentCompletedCallback?.(agentId, completedToolId);
+                }
+              }
 
               // Teammate spawn result (newer harnesses: every Agent spawn is a
               // background teammate of an implicit team; the lead's own records
@@ -445,7 +473,11 @@ export function processTranscriptLine(
         const toolIdMatch = content.match(/<tool-use-id>(.*?)<\/tool-use-id>/);
         if (toolIdMatch) {
           const completedToolId = toolIdMatch[1];
-          if (agent.backgroundAgentToolIds.has(completedToolId)) {
+          if (hasWorkflowTool(agent, completedToolId)) {
+            // A Workflow run ended (completed, failed or killed alike): the
+            // host clears every helper of the run.
+            backgroundAgentCompletedCallback?.(agentId, completedToolId);
+          } else if (agent.backgroundAgentToolIds.has(completedToolId)) {
             console.log(
               `[Pixel Agents] Agent ${agentId} background agent done: ${completedToolId}`,
             );
@@ -754,6 +786,24 @@ function linkTeammates(_agentId: number, agent: AgentState, agents: AgentStateSt
       a.leadAgentId = lead.id;
     }
   }
+}
+
+/**
+ * The run a Workflow tool_result reports (`toolUseResult.taskType` is
+ * "local_workflow"). `launched` is the async launch (status "async_launched");
+ * any other status is a foreground run that has already finished.
+ */
+function workflowRunResult(
+  record: Record<string, unknown>,
+): { runId: string; transcriptDir?: string; launched: boolean } | null {
+  const result = record.toolUseResult as Record<string, unknown> | undefined;
+  if (!result || typeof result !== 'object') return null;
+  if (result.taskType !== 'local_workflow' || typeof result.runId !== 'string') return null;
+  return {
+    runId: result.runId,
+    transcriptDir: typeof result.transcriptDir === 'string' ? result.transcriptDir : undefined,
+    launched: result.status === 'async_launched',
+  };
 }
 
 /** Check if a tool_result block indicates an async/background agent launch */
