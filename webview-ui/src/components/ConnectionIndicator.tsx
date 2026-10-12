@@ -7,13 +7,16 @@ const STATE_LABELS: Partial<Record<TransportState, string>> = {
   connecting: 'Connecting…',
   reconnecting: 'Reconnecting…',
   disconnected: 'Disconnected',
+  rejected: 'Server token changed. Open the link printed by the CLI.',
 };
 
 /**
  * Standalone connection status badge. Renders nothing while connected (the happy
  * path, and always in VS Code where the transport is permanently connected), so
- * it is invisible unless the WebSocket drops in standalone mode. Modeled on
- * VersionIndicator's absolute-overlay + pixel-panel convention.
+ * it is invisible unless the WebSocket drops in standalone mode. `rejected` is
+ * terminal, so its notice stays up: only opening the printed link helps, and the
+ * page does not reload itself into that. Modeled on VersionIndicator's
+ * absolute-overlay + pixel-panel convention.
  */
 export function ConnectionIndicator() {
   const [state, setState] = useState<TransportState>(transport.state);
@@ -30,7 +33,10 @@ export function ConnectionIndicator() {
   const dotClass = state === 'connecting' ? 'bg-status-permission' : 'bg-status-error';
 
   return (
-    <div data-testid="connection-indicator" className="absolute top-8 left-1/2 -translate-x-1/2 z-20 pixel-panel py-6 px-12 flex items-center gap-8 text-sm">
+    <div
+      data-testid="connection-indicator"
+      className="absolute top-8 left-1/2 -translate-x-1/2 z-20 pixel-panel py-6 px-12 flex items-center gap-8 text-sm"
+    >
       <span className={`w-8 h-8 rounded-full inline-block shrink-0 ${dotClass} pixel-pulse`} />
       {label}
     </div>

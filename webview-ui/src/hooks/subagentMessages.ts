@@ -3,14 +3,21 @@
  * the office and to the helper lists the overlay reads. DOM-free: the React
  * hook supplies its state setters, tests supply plain ones.
  *
- * Only subagentToolStart and subagentPresent may create a helper. Done,
- * permission and clear for a key with no helper do nothing: a batched done that
- * lands after the helper's clear must not bring it back.
+ * Only subagentToolStart and subagentPresent may create a helper (besides the
+ * agentToolStart of a Task/Agent tool, applyToolStartHelper). Done, permission and
+ * clear for a key with no helper do nothing: a batched done that lands after the
+ * helper's clear must not bring it back.
+ *
+ * Inside a resync window (office/engine/resync.ts) a helper is created with no
+ * spawn effect, and a re-announced one (presence, background spawn start) is
+ * confirmed so the window keeps it.
  */
 
 import { isCrewParentToolId, type OfficeState } from '../office/engine/officeState.js';
-import { extractToolName } from '../office/toolUtils.js';
+import { resync } from '../office/engine/resync.js';
+import { extractToolName, isSubagentToolName } from '../office/toolUtils.js';
 import type { ToolActivity } from '../office/types.js';
+import { reconnectState } from '../transport/reconnect.js';
 
 export interface SubagentCharacter {
   id: number;
@@ -94,17 +101,59 @@ function onToolStart(sink: SubagentSink, msg: SubagentMessage): void {
 }
 
 /** A workflow agent is live: its helper shows now, working, before any tool row. An existing
- *  helper keeps its state. With no rows it never idles: it works until its clear. */
+ *  helper keeps its state (and, re-announced after a reconnect, its id and seat). With no rows
+ *  it never idles: it works until its clear. */
 function onPresent(sink: SubagentSink, msg: SubagentMessage): void {
-  if (sink.os.getSubagentId(msg.id as number, msg.parentToolId as string) !== null) return;
+  const parentToolId = msg.parentToolId as string;
+  confirmIfResyncing(parentToolId);
+  if (sink.os.getSubagentId(msg.id as number, parentToolId) !== null) return;
   sink.os.setAgentActive(createHelper(sink, msg), true);
+}
+
+/**
+ * The helper half of agentToolStart: a Task/Agent tool draws its Subtask helper. That start
+ * always comes from the transcript (the stable toolu_* id), never from a hook:
+ * handlePreToolUse skips these tools. Two exceptions:
+ * - a named spawn: a teammate will represent it, and a helper would be its ghost;
+ * - a background spawn of a lead WITH a teamName: the teammate path (onTeammateDetected)
+ *   creates the teammate. Without a teamName there is no such path, so the helper is the
+ *   background task's only picture.
+ * A background spawn's helper outlives the lead's turn, so its parent tool joins the
+ * background set. Re-sent by the handshake after a reconnect, an existing helper stays as
+ * it is (addSubagent is idempotent) and the resync keeps it.
+ */
+export function applyToolStartHelper(sink: SubagentSink, msg: SubagentMessage): void {
+  const { os } = sink;
+  const id = msg.id as number;
+  const toolId = msg.toolId as string;
+  const status = msg.status as string;
+  const toolName = (msg.toolName as string | undefined) ?? extractToolName(status);
+  const runInBackground = msg.runInBackground as boolean | undefined;
+  if (runInBackground) (sink.background[id] ??= new Set()).add(toolId);
+  const isTeammateSpawn = msg.isTeammateSpawn as boolean | undefined;
+  const parentHasTeam = !!os.characters.get(id)?.teamName;
+  if (isSubagentToolName(toolName) && !isTeammateSpawn && (!runInBackground || !parentHasTeam)) {
+    const label = status.startsWith('Subtask:') ? status.slice('Subtask:'.length).trim() : '';
+    const subId = os.addSubagent(id, toolId, resync.isActive());
+    sink.updateCharacters((prev) => {
+      if (prev.some((s) => s.id === subId)) return prev;
+      return [...prev, { id: subId, parentAgentId: id, parentToolId: toolId, label }];
+    });
+  }
+  if (runInBackground && os.getSubagentId(id, toolId) !== null) confirmIfResyncing(toolId);
+}
+
+/** From the reconnect on (a presence broadcast before the handshake counts too), the server
+ *  re-announcing a helper is what keeps it through the resync. */
+function confirmIfResyncing(parentToolId: string): void {
+  if (resync.isActive() || reconnectState.resyncPending) resync.confirmHelper(parentToolId);
 }
 
 /** Create the helper a start or presence message names, with its workflow label and group. */
 function createHelper(sink: SubagentSink, msg: SubagentMessage): number {
   const id = msg.id as number;
   const parentToolId = msg.parentToolId as string;
-  const subId = sink.os.addSubagent(id, parentToolId);
+  const subId = sink.os.addSubagent(id, parentToolId, resync.isActive());
   const entry: SubagentCharacter = {
     id: subId,
     parentAgentId: id,

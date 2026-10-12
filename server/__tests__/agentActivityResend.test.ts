@@ -164,6 +164,39 @@ describe('resendAgentActivity', () => {
     expect(sent[1]).toEqual({ type: 'agentStatus', id: 1, status: 'active' });
   });
 
+  it('restates a pending permission prompt on every tool start, regular and background', () => {
+    // A client takes a start without the flag as the prompt answered and drops its bubble.
+    const withTools = (id: number, permissionSent: boolean) =>
+      createTestAgent({
+        id,
+        permissionSent,
+        activeToolStatuses: new Map([
+          ['run', 'Running: build'],
+          ['spawn', 'Subtask: scan'],
+        ]),
+        activeToolNames: new Map([
+          ['run', 'Bash'],
+          ['spawn', 'Agent'],
+        ]),
+        backgroundAgentToolIds: new Set(['spawn']),
+      });
+    const store = new AgentStateStore();
+    store.set(1, withTools(1, true));
+    store.set(2, withTools(2, false));
+    const sent: Array<Record<string, unknown>> = [];
+    resendActivityWithoutTitlesOrAlarms(sent, store);
+
+    const starts = sent
+      .filter((m) => m.type === 'agentToolStart')
+      .map((m) => [m.id, m.toolId, m.permissionActive]);
+    expect(starts).toEqual([
+      [1, 'run', true],
+      [1, 'spawn', true],
+      [2, 'run', undefined],
+      [2, 'spawn', undefined],
+    ]);
+  });
+
   it('handles background tools with flags and promoted skip logic', () => {
     const store = new AgentStateStore();
     // Lead with three background tools: unnamed, named spawn, and promoted

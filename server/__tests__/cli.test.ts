@@ -119,6 +119,27 @@ describe('parseArgs', () => {
   it('parses --host', () => {
     expect(parseArgs(['--host', '0.0.0.0']).host).toBe('0.0.0.0');
   });
+
+  // --token is a bearer secret in the printed URL: 16-128 URL-safe characters, and a
+  // rejected value is never echoed back to the terminal.
+  it('accepts a 16-128 character URL-safe --token and rejects anything else', () => {
+    expect(parseArgs(['--token', 'Ab0._-Ab0._-Ab0.']).token).toBe('Ab0._-Ab0._-Ab0.');
+    expect(parseArgs(['--token', 'a'.repeat(128)]).token).toBe('a'.repeat(128));
+    const rejection = (argv: string[]): string => {
+      try {
+        parseArgs(argv);
+      } catch (err) {
+        if (err instanceof CliArgsError) return err.message;
+      }
+      return 'accepted';
+    };
+    for (const value of ['a'.repeat(15), 'a'.repeat(129), 'secret-but-unsafe!']) {
+      const message = rejection(['--token', value]);
+      expect(message).toMatch(/^invalid --token/);
+      expect(message).not.toContain(value);
+    }
+    expect(rejection(['--token'])).toMatch(/^invalid --token/);
+  });
 });
 
 // The TTY consent prompt is gone: first-run consent is asked in the app, as
@@ -170,14 +191,19 @@ describe('dist/cli.js entry-point guard', () => {
     tmpHome: string,
     body: (ctx: { output: () => string; port: number }) => Promise<void>,
     host = '127.0.0.1',
+    extraArgs: string[] = [],
   ): Promise<void> {
     const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cli-workspace-'));
     const port = await getFreePort();
-    const child = spawn(process.execPath, [CLI_BUNDLE, '--port', port.toString(), '--host', host], {
-      cwd: workspaceDir,
-      env: { ...process.env, HOME: tmpHome, USERPROFILE: tmpHome },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const child = spawn(
+      process.execPath,
+      [CLI_BUNDLE, '--port', port.toString(), '--host', host, ...extraArgs],
+      {
+        cwd: workspaceDir,
+        env: { ...process.env, HOME: tmpHome, USERPROFILE: tmpHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
     let output = '';
     child.stdout.on('data', (chunk: Buffer) => (output += chunk.toString()));
     child.stderr.on('data', (chunk: Buffer) => (output += chunk.toString()));
@@ -240,6 +266,30 @@ describe('dist/cli.js entry-point guard', () => {
       expect(await response.text()).toContain('<div id="root">');
     });
   });
+
+  // --token pins the URL for a run (the e2e hosts restart with it) and must leave the
+  // saved token alone: the next plain start still serves the tabs it printed for.
+  itBuilt(
+    'serves and prints the --token it was given and leaves the saved token alone',
+    async () => {
+      const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cli-token-'));
+      const tokenFile = path.join(tmpHome, '.pixel-agents', 'server-token');
+      fs.mkdirSync(path.dirname(tokenFile), { recursive: true });
+      fs.writeFileSync(tokenFile, 'saved-token-0123456789');
+      const given = 'given-token-0123456789';
+      await runCliServer(
+        tmpHome,
+        async ({ output }) => {
+          await waitForCondition(() => URL_LINE.test(output()));
+          expect(printedUrl(output()).searchParams.get('token')).toBe(given);
+          expect(mintedToken(tmpHome)).toBe(given);
+          expect(fs.readFileSync(tokenFile, 'utf-8')).toBe('saved-token-0123456789');
+        },
+        '127.0.0.1',
+        ['--token', given],
+      );
+    },
+  );
 
   // `--host 0.0.0.0` is a BIND target, not an address to browse to: printing
   // `http://0.0.0.0:PORT` hands the operator a URL that is dead on Windows and

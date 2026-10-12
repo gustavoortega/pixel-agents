@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { Page } from '@playwright/test';
+
 import { expect, test } from '../../fixtures/standalone';
 import type { TestHooksWindow } from '../../helpers/editor';
 import { sendHookEvent, sessionStartStartup } from '../../helpers/hooks';
@@ -11,6 +13,7 @@ import {
   expectOverlayCount,
   expectOverlayVisible,
 } from '../../helpers/office';
+import type { RecordedServerMessage } from '../../helpers/standalone';
 import { openSettingsModal, setSettings } from '../../helpers/webview';
 
 // The DebugView diagnostics block polls every 2s (see DebugView.tsx); allow a
@@ -19,9 +22,46 @@ const DIAGNOSTICS_POLL_TIMEOUT_MS = 15_000;
 // onReloadAssets does its filesystem work after the externalAssetDirectoriesUpdated
 // reply, so the re-broadcast lands slightly later than the dir-list update.
 const ASSET_RELOAD_TIMEOUT_MS = 15_000;
-// WebSocketTransport reconnects with capped exponential backoff (up to 4s);
-// allow a couple of retry cycles for the state to settle both ways.
+// WebSocketTransport reconnects with exponential backoff: 1 s, doubling, capped at
+// 30 s. A stop and restart spans the first few steps; allow a couple of them.
 const CONNECTION_STATE_TIMEOUT_MS = 15_000;
+// Longer than one backoff step after a quick reconnect: a refused reconnect would
+// bring the indicator back (or take the notice away) within it.
+const STEADY_MS = 3_000;
+
+/** Assert `holds` at every look for `ms`: one look at the end would miss a flap. */
+async function expectSteadyFor(page: Page, ms: number, holds: () => Promise<boolean>) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    expect(await holds()).toBe(true);
+    await page.waitForTimeout(100);
+  }
+}
+
+/** Top-level agents the office draws: helpers have negative ids, the greeter is no agent. */
+async function officeAgentIds(page: Page): Promise<number[]> {
+  return await page.evaluate(() => {
+    interface CharacterHooks {
+      getCharacters?: () => Array<{ id: number; isGreeter?: boolean }>;
+    }
+    const hooks = (window as { __pixelAgentsTestHooks?: CharacterHooks }).__pixelAgentsTestHooks;
+    return (hooks?.getCharacters?.() ?? [])
+      .filter((c) => c.id > 0 && !c.isGreeter)
+      .map((c) => c.id)
+      .sort((a, b) => a - b);
+  });
+}
+
+/** The agents a host holds, as its messages since its last existingAgents say. */
+function hostAgentIds(messages: RecordedServerMessage[]): number[] {
+  const at = messages.map((m) => m.type).lastIndexOf('existingAgents');
+  const ids = new Set(at >= 0 ? (messages[at].agents as number[]) : []);
+  for (const m of messages.slice(at + 1)) {
+    if (m.type === 'agentCreated') ids.add(m.id as number);
+    if (m.type === 'agentClosed') ids.delete(m.id as number);
+  }
+  return [...ids].sort((a, b) => a - b);
+}
 
 test.describe('Standalone / UI', () => {
   test('closeAgent despawns the character @area:standalone', async ({ page, standalone }) => {
@@ -172,11 +212,33 @@ test.describe('Standalone / UI', () => {
     }
   });
 
-  test('ConnectionIndicator appears when the WebSocket connection drops @area:standalone', async ({
+  test('ConnectionIndicator shows a drop, and a host restarted with the same token resyncs the page without a reload @area:standalone', async ({
     page,
     standalone,
   }) => {
+    await setSettings(page, { hooksEnabled: true, watchAllSessions: true });
+    // A session start, confirmed by its first tool call (the closeAgent flow above).
+    const startSession = async (sessionId: string) => {
+      await sendHookEvent(
+        standalone.hookServerConfig,
+        sessionStartStartup(sessionId, standalone.workspaceDir),
+      );
+      await sendHookEvent(standalone.hookServerConfig, {
+        session_id: sessionId,
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Read',
+        tool_input: { file_path: path.join(standalone.workspaceDir, `${sessionId}.ts`) },
+      });
+    };
+    // Only this host knows the session: hook-only, no transcript, so a restart cannot
+    // restore it.
+    await startSession('standalone-reconnect-ended');
+    await expect.poll(() => officeAgentIds(page)).toHaveLength(1);
+    const [endedId] = await officeAgentIds(page);
     await standalone.drainMessages();
+    await page.evaluate(() => {
+      (window as { __beforeRestart?: boolean }).__beforeRestart = true;
+    });
 
     // Settle wait before the negative assertion (office.ts wait-strategy
     // convention): give the runtime a chance to render the indicator wrongly
@@ -187,15 +249,53 @@ test.describe('Standalone / UI', () => {
     // Fallback for assumption A1: `page.context().setOffline(true)` does not
     // reliably close an already-open WebSocket on this Chromium build (verified
     // empirically — the indicator never appeared). Stopping the real host
-    // process closes the socket from the server side instead.
+    // process closes the socket from the server side instead. A crash, not a
+    // shutdown: a graceful stop sends agentClosed for every agent first, and the
+    // page must learn that this one ended from the resync alone.
+    await standalone.stopHost({ crash: true });
+    await expect(page.getByText(/Reconnecting|Disconnected/)).toBeVisible({
+      timeout: CONNECTION_STATE_TIMEOUT_MS,
+    });
+
+    await standalone.startHost(standalone.token);
+    const indicator = page.getByTestId('connection-indicator');
+    await expect(indicator).toHaveCount(0, { timeout: CONNECTION_STATE_TIMEOUT_MS });
+    await expectSteadyFor(page, STEADY_MS, async () => (await indicator.count()) === 0);
+
+    // The office shows the second host's agents: the first host's session went with it,
+    // and one the second host adopts appears.
+    const received = await standalone.drainMessages();
+    const atResync = hostAgentIds(received);
+    expect(atResync).not.toContain(endedId);
+    await expect.poll(() => officeAgentIds(page)).toEqual(atResync);
+    await startSession('standalone-reconnect-new');
+    await expect
+      .poll(async () => {
+        received.push(...(await standalone.drainMessages()));
+        const host = hostAgentIds(received);
+        const office = await officeAgentIds(page);
+        return host.length > atResync.length && office.join() === host.join();
+      })
+      .toBe(true);
+    expect(
+      await page.evaluate(() => (window as { __beforeRestart?: boolean }).__beforeRestart),
+    ).toBe(true);
+  });
+
+  test('a host restarted with another token leaves a lasting notice instead of a reconnect loop @area:standalone', async ({
+    page,
+    standalone,
+  }) => {
+    await standalone.drainMessages();
     await standalone.stopHost();
     await expect(page.getByText(/Reconnecting|Disconnected/)).toBeVisible({
       timeout: CONNECTION_STATE_TIMEOUT_MS,
     });
 
+    // No token: the restarted host mints its own, which the page's URL does not carry.
     await standalone.startHost();
-    await expect(page.getByText(/Reconnecting|Disconnected/)).toHaveCount(0, {
-      timeout: CONNECTION_STATE_TIMEOUT_MS,
-    });
+    const notice = page.getByText('Server token changed. Open the link printed by the CLI.');
+    await expect(notice).toBeVisible({ timeout: CONNECTION_STATE_TIMEOUT_MS });
+    await expectSteadyFor(page, STEADY_MS, () => notice.isVisible());
   });
 });

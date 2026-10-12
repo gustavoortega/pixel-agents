@@ -14,9 +14,7 @@ import {
   playPermissionSound,
   setSoundEnabled,
 } from '../notificationSound.js';
-import { applyAgentStatus } from '../office/engine/agentStatus.js';
-import type { ExistingAgentMeta, PendingAgent } from '../office/engine/existingAgents.js';
-import { reconcileExistingAgents } from '../office/engine/existingAgents.js';
+import type { PendingAgent } from '../office/engine/existingAgents.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import {
   setCozyLighting as setRendererCozyLighting,
@@ -29,28 +27,31 @@ import { migrateLayoutColors } from '../office/layout/layoutSerializer.js';
 import { setCarpetSprites } from '../office/sprites/carpetTiles.js';
 import { setPetTemplates } from '../office/sprites/petSpriteData.js';
 import { setCharacterTemplates } from '../office/sprites/spriteData.js';
-import { shouldPlayTripwireSound, type TripwireSeverity } from '../office/toolUtils.js';
-import {
-  extractToolName,
-  isSubagentToolName,
-  setProviderCapabilities,
-} from '../office/toolUtils.js';
+import { setProviderCapabilities } from '../office/toolUtils.js';
 import type { OfficeLayout, ToolActivity } from '../office/types.js';
 import { setWallSprites } from '../office/wallTiles.js';
-import { isBrowserRuntime, isE2E } from '../runtime.js';
+import { isE2E } from '../runtime.js';
 import { transport } from '../transport/index.js';
-import { applySubagentMessage, type SubagentCharacter } from './subagentMessages.js';
-
-/**
- * A Headless agent is one the office adopted from outside (`claude -p`, a session
- * picked up by Watch All Sessions) and therefore has no terminal to focus. Its
- * character renders translucent so it reads as untouchable at a glance.
- *
- * Standalone is exempt: that adapter has no terminals at all, so every agent
- * would qualify and the cue would distinguish nothing.
- */
-const isHeadlessAgent = (isExternal: boolean | undefined): boolean =>
-  isExternal === true && !isBrowserRuntime;
+import {
+  type AgentListSink,
+  applyAgentClosed,
+  applyAgentTeamInfo,
+  applyExistingAgents,
+  applyHandshakeDone,
+  isHeadlessAgent,
+} from './agentListMessages.js';
+import {
+  applyAgentStatusMessage,
+  applyAgentToolStart,
+  applyAgentTripwireMessage,
+} from './agentMessages.js';
+import { admitLayoutLoaded } from './layoutLoadedGate.js';
+import {
+  applySubagentMessage,
+  applyToolStartHelper,
+  type SubagentCharacter,
+  type SubagentSink,
+} from './subagentMessages.js';
 
 interface FurnitureAsset {
   id: string;
@@ -137,7 +138,6 @@ function saveAgentSeats(os: OfficeState): void {
 export function useExtensionMessages(
   getOfficeState: () => OfficeState,
   onLayoutLoaded?: (layout: OfficeLayout) => void,
-  isEditDirty?: () => boolean,
 ): ExtensionMessageState {
   const [agents, setAgents] = useState<number[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<number | null>(null);
@@ -166,9 +166,9 @@ export function useExtensionMessages(
   const [hooksInstalled, setHooksInstalled] = useState<Record<string, boolean>>({});
   const [hooksStatusSeq, setHooksStatusSeq] = useState<Record<string, number>>({});
   const [hooksInfoShown, setHooksInfoShown] = useState(true);
-  // FIFO of pending consent asks, at most one per provider (a re-ask replaces that provider's entry in place). The
-  // HEAD is what the Intro renders; answering, dismissing, or mooting it advances to the next provider's ask rather
-  // than dropping it — the server sends one request per provider on the same handshake.
+  // FIFO of pending consent asks, at most one per provider (consentAskSeenRef admits one per page load). The HEAD is
+  // what the Intro renders; answering, dismissing, or mooting it advances to the next provider's ask rather than
+  // dropping it: the server sends one request per provider on the same handshake.
   const [consentQueue, setConsentQueue] = useState<HooksConsentRequest[]>([]);
   const consentRequest = consentQueue[0] ?? null;
   const [areaMappings, setAreaMappings] = useState<Record<string, string[]>>({});
@@ -204,6 +204,16 @@ export function useExtensionMessages(
   // character to a new tile every turn. Cleared by subagentClear/agentClosed.
   const backgroundParentToolIdsRef = useRef<Record<number, Set<string>>>({});
 
+  // Each agent's team as its latest agentTeamInfo said, read by the resync's helper sweep.
+  // A ref mirrored on write: the handler below is bound once, so state it read would be
+  // the mount-time value.
+  const agentTeamInfoRef = useRef<Record<number, string | undefined>>({});
+
+  // Providers whose consent ask already reached this page. The handshake after a
+  // reconnect asks again; queueing that would replay an Intro the user already answered
+  // or closed. An unanswered ask returns on the next page load.
+  const consentAskSeenRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     // Buffer agents from existingAgents until layout is loaded
     let pendingAgents: PendingAgent[] = [];
@@ -215,6 +225,27 @@ export function useExtensionMessages(
       if (!name) return;
       setAgentFolderNames((prev) => (prev.includes(name) ? prev : [...prev, name]));
     };
+
+    const subagentSink = (os: OfficeState): SubagentSink => ({
+      os,
+      background: backgroundParentToolIdsRef.current,
+      updateTools: setSubagentTools,
+      updateCharacters: setSubagentCharacters,
+    });
+
+    // Built per message: `pendingAgents` is replaced at every layoutLoaded.
+    const agentListSink = (os: OfficeState): AgentListSink => ({
+      ...subagentSink(os),
+      teams: agentTeamInfoRef.current,
+      pending: pendingAgents,
+      layoutReady: layoutReadyRef.current,
+      updateAgents: setAgents,
+      updateSelectedAgent: setSelectedAgent,
+      updateAgentTools: setAgentTools,
+      updateAgentStatuses: setAgentStatuses,
+      noteFolderName,
+      saveSeats: () => saveAgentSeats(os),
+    });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handler = (msg: any) => {
@@ -249,9 +280,10 @@ export function useExtensionMessages(
       }
 
       if (msg.type === 'layoutLoaded') {
-        // Skip external layout updates while editor has unsaved changes
-        if (layoutReadyRef.current && isEditDirty?.()) {
-          console.log('[Webview] Skipping external layout update — editor has unsaved changes');
+        if (!admitLayoutLoaded(msg)) {
+          console.log(
+            '[Webview] Skipping layout update: unsaved editor changes, or a resync restating the current layout',
+          );
           return;
         }
         const rawLayout = msg.layout as OfficeLayout | null;
@@ -337,122 +369,15 @@ export function useExtensionMessages(
         }
         saveAgentSeats(os);
       } else if (msg.type === 'agentClosed') {
-        const id = msg.id as number;
-        setAgents((prev) => prev.filter((a) => a !== id));
-        setSelectedAgent((prev) => (prev === id ? null : prev));
-        setAgentTools((prev) => {
-          if (!(id in prev)) return prev;
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        });
-        setAgentStatuses((prev) => {
-          if (!(id in prev)) return prev;
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        });
-        setSubagentTools((prev) => {
-          if (!(id in prev)) return prev;
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        });
-        // Remove all sub-agent characters belonging to this agent
-        delete backgroundParentToolIdsRef.current[id];
-        os.removeAllSubagents(id);
-        setSubagentCharacters((prev) => prev.filter((s) => s.parentAgentId !== id));
-        os.removeAgent(id);
+        applyAgentClosed(agentListSink(os), msg);
       } else if (msg.type === 'existingAgents') {
-        const incoming = msg.agents as number[];
-        const meta = (msg.agentMeta || {}) as Record<number, ExistingAgentMeta>;
-        const folderNames = (msg.folderNames || {}) as Record<number, string>;
-        const externalAgents = (msg.externalAgents || {}) as Record<number, boolean>;
-        const headlessAgents: Record<number, boolean> = {};
-        for (const id of incoming) {
-          noteFolderName(folderNames[id]);
-          if (isHeadlessAgent(externalAgents[id])) headlessAgents[id] = true;
-        }
-        // Order-independent restore: add agents now if the layout (and its seats)
-        // is already built, otherwise buffer them for the next layoutLoaded.
-        // Depending on layoutLoaded always arriving last stranded restored agents
-        // on surfaces that send layout first (issue #334).
-        if (
-          reconcileExistingAgents(
-            os,
-            incoming,
-            meta,
-            folderNames,
-            layoutReadyRef.current,
-            pendingAgents,
-            headlessAgents,
-          )
-        ) {
-          saveAgentSeats(os);
-        }
-        setAgents((prev) => {
-          const ids = new Set(prev);
-          const merged = [...prev];
-          for (const id of incoming) {
-            if (!ids.has(id)) {
-              merged.push(id);
-            }
-          }
-          return merged.sort((a, b) => a - b);
-        });
+        applyExistingAgents(agentListSink(os), msg);
+      } else if (msg.type === 'handshakeDone') {
+        applyHandshakeDone(agentListSink(os));
       } else if (msg.type === 'agentToolStart') {
-        const id = msg.id as number;
-        const toolId = msg.toolId as string;
-        const status = msg.status as string;
-        const permissionActive = msg.permissionActive as boolean | undefined;
-        setAgentTools((prev) => {
-          const list = prev[id] || [];
-          if (list.some((t) => t.toolId === toolId)) return prev;
-          return {
-            ...prev,
-            [id]: [
-              ...list,
-              { toolId, status, done: false, permissionWait: permissionActive || false },
-            ],
-          };
-        });
-        const toolName = (msg.toolName as string | undefined) ?? extractToolName(status);
-        os.setAgentTool(id, toolName);
-        os.setAgentActive(id, true);
-        // Don't clear the permission bubble if the hook already confirmed permission is needed
-        if (!permissionActive) {
-          os.clearPermissionBubble(id);
-        }
-        // Create sub-agent character for Task/Agent tool subtasks.
-        // agentToolStart for Task/Agent is always emitted via JSONL (with the stable
-        // toolu_* id), never from the hook path — handlePreToolUse skips these tools.
-        // runInBackground routing:
-        //   - parent HAS teamName: teammate path (onTeammateDetected) creates the
-        //     teammate; we skip here so we don't spawn a ghost sub-agent alongside.
-        //   - parent has NO teamName: no teammate path exists, so we must still
-        //     create the Subtask sub-character or the background task is invisible.
-        const runInBackground = msg.runInBackground as boolean | undefined;
-        if (runInBackground) {
-          const set = (backgroundParentToolIdsRef.current[id] ??= new Set());
-          set.add(toolId);
-        }
-        // Named spawns are Teammates-to-be: a teammate character will represent
-        // them, so never create the Subtask ghost the teammate would replace.
-        const isTeammateSpawn = msg.isTeammateSpawn as boolean | undefined;
-        const parentChar = os.characters.get(id);
-        const parentHasTeam = !!parentChar?.teamName;
-        if (
-          isSubagentToolName(toolName) &&
-          !isTeammateSpawn &&
-          (!runInBackground || !parentHasTeam)
-        ) {
-          const label = status.startsWith('Subtask:') ? status.slice('Subtask:'.length).trim() : '';
-          const subId = os.addSubagent(id, toolId);
-          setSubagentCharacters((prev) => {
-            if (prev.some((s) => s.id === subId)) return prev;
-            return [...prev, { id: subId, parentAgentId: id, parentToolId: toolId, label }];
-          });
-        }
+        applyAgentToolStart(os, setAgentTools, msg);
+        // A Task/Agent tool draws its Subtask helper; the runInBackground routing lives there.
+        applyToolStartHelper(subagentSink(os), msg);
       } else if (msg.type === 'agentToolDone') {
         const id = msg.id as number;
         const toolId = msg.toolId as string;
@@ -529,10 +454,7 @@ export function useExtensionMessages(
           }
           return { ...prev, [id]: status };
         });
-        const wasActive = os.characters.get(id)?.isActive === true;
-        if (applyAgentStatus(os, id, status, msg.awaitingInput === true, wasActive)) {
-          playDoneSound();
-        }
+        applyAgentStatusMessage(os, msg, playDoneSound);
       } else if (msg.type === 'agentToolPermission') {
         const id = msg.id as number;
         setAgentTools((prev) => {
@@ -552,15 +474,7 @@ export function useExtensionMessages(
         msg.type === 'subagentClear' ||
         msg.type === 'subagentToolPermission'
       ) {
-        applySubagentMessage(
-          {
-            os,
-            background: backgroundParentToolIdsRef.current,
-            updateTools: setSubagentTools,
-            updateCharacters: setSubagentCharacters,
-          },
-          msg,
-        );
+        applySubagentMessage(subagentSink(os), msg);
       } else if (msg.type === 'agentToolPermissionClear') {
         const id = msg.id as number;
         setAgentTools((prev) => {
@@ -684,19 +598,17 @@ export function useExtensionMessages(
           typeof msg.headline === 'string' &&
           typeof msg.disclosure === 'string'
         ) {
+          const providerId = msg.providerId as string;
+          // Once per provider per page load: a reconnect's handshake asks again.
+          if (consentAskSeenRef.current.has(providerId)) return;
+          consentAskSeenRef.current.add(providerId);
           const request: HooksConsentRequest = {
             type: 'hooksConsentRequest',
-            providerId: msg.providerId as string,
+            providerId,
             headline: msg.headline as string,
             disclosure: msg.disclosure as string,
           };
-          setConsentQueue((q) => {
-            const i = q.findIndex((r) => r.providerId === request.providerId);
-            if (i === -1) return [...q, request];
-            const next = q.slice();
-            next[i] = request; // a re-ask carries the freshest copy
-            return next;
-          });
+          setConsentQueue((q) => [...q, request]);
         }
       } else if (msg.type === 'externalAssetDirectoriesUpdated') {
         if (Array.isArray(msg.dirs)) {
@@ -714,15 +626,7 @@ export function useExtensionMessages(
           console.error(`❌ Webview: Error processing furnitureAssetsLoaded:`, err);
         }
       } else if (msg.type === 'agentTeamInfo') {
-        const id = msg.id as number;
-        os.setTeamInfo(
-          id,
-          msg.teamName as string | undefined,
-          msg.agentName as string | undefined,
-          msg.isTeamLead as boolean | undefined,
-          msg.leadAgentId as number | undefined,
-          msg.teamUsesTmux as boolean | undefined,
-        );
+        applyAgentTeamInfo(agentListSink(os), msg);
       } else if (msg.type === 'agentContextUsage') {
         const id = msg.id as number;
         os.setAgentContext(id, msg.contextTokens as number, msg.maxContextTokens as number);
@@ -745,14 +649,7 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentShells') {
         os.setAgentShells(msg.id as number, msg.running as number);
       } else if (msg.type === 'agentTripwire') {
-        const id = msg.id as number;
-        const alarm = {
-          ruleName: msg.ruleName as string,
-          severity: msg.severity as TripwireSeverity,
-          count: msg.count as number,
-        };
-        if (shouldPlayTripwireSound(os.tripwires.get(id), alarm)) playAlarmSound();
-        os.setTripwire(id, alarm);
+        applyAgentTripwireMessage(os, msg, playAlarmSound);
       } else if (msg.type === 'agentTripwireClear') {
         os.setTripwire(msg.id as number, undefined);
       } else if (msg.type === 'agentRoster') {
@@ -823,7 +720,8 @@ export function useExtensionMessages(
     // Called when a tour ends (answer + Let's Go, the X, Escape) with the providerId that tour was ABOUT, removing
     // that entry so the next provider's ask becomes the head. Keyed by id, not a blind shift: an answered ask's own
     // installed:true moot may already have removed the head, and a shift would then drop the NEXT provider's ask
-    // unanswered. An aborted ask returns on the next connect; the queue never re-adds it here.
+    // unanswered. An aborted ask returns on the next page load (in-session reconnects are deduped by the webview);
+    // the queue never re-adds it here.
     dismissConsentRequest: useCallback(
       (providerId: string | null) =>
         setConsentQueue((q) =>

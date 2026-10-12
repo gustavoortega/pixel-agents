@@ -234,6 +234,19 @@ describe('PixelAgentsServer', () => {
     standalone.stop();
   });
 
+  // A standalone tab carries the token in its URL: a restart minting a new one would
+  // refuse every open tab (4001), so the token is saved and reused. Embedded keeps a
+  // per-start token of its own (test 15 pins that the two differ).
+  it('a standalone server reuses its saved token across restarts', async () => {
+    const first = await server.start({ embedded: false });
+    server.stop();
+    server = new PixelAgentsServer();
+    const second = await server.start({ embedded: false });
+
+    expect(second.token).toBe(first.token);
+    expect(fs.readFileSync(path.join(serverJsonDir, 'server-token'), 'utf-8')).toBe(first.token);
+  });
+
   // 16. Dead-pid registry entries are pruned on start, never reused
   it('prunes dead-pid registry entries on start instead of reusing them', async () => {
     fs.mkdirSync(registryDir, { recursive: true });

@@ -15,6 +15,7 @@ import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
 import { UsagePanel } from './components/UsagePanel.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
+import { isEditDirty, noteLayoutSent } from './hooks/layoutLoadedGate.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
@@ -22,7 +23,7 @@ import { useIntroTour } from './hooks/useIntroTour.js';
 import { AutoFit } from './office/camera.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
-import { EditorState } from './office/editor/editorState.js';
+import { editorState } from './office/editor/editorState.js';
 import { EditorToolbar } from './office/editor/EditorToolbar.js';
 import { OfficeState } from './office/engine/officeState.js';
 import { exportLayoutToFile } from './office/layout/exportLayout.js';
@@ -36,7 +37,6 @@ import { transport } from './transport/index.js';
 
 // Game state lives outside React — updated imperatively by message handlers
 const officeStateRef = { current: null as OfficeState | null };
-const editorState = new EditorState();
 
 // Test-only observability hooks (message/sound logs, addAgent wrapper, selectAgent).
 // Installed only under the e2e harness so they never patch prototypes or grow
@@ -87,11 +87,6 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const isEditDirty = useCallback(
-    () => editor.isEditMode && editor.isDirty,
-    [editor.isEditMode, editor.isDirty],
-  );
-
   const {
     agents,
     selectedAgent,
@@ -126,7 +121,7 @@ function App() {
     showAreas,
     setShowAreas,
     tokenUsage,
-  } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty);
+  } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout);
 
   // Show migration notice once layout reset is detected
   const [migrationNoticeDismissed, setMigrationNoticeDismissed] = useState(false);
@@ -327,6 +322,7 @@ function App() {
           const migrated = migrateLayoutColors(imported as unknown as OfficeLayout);
           getOfficeState().rebuildFromLayout(migrated);
           editor.setLastSavedLayout(migrated);
+          noteLayoutSent(migrated);
           transport.send({
             type: 'saveLayout',
             layout: migrated as unknown as Record<string, unknown>,
@@ -338,7 +334,7 @@ function App() {
       };
       reader.readAsText(file);
     },
-    [isEditDirty, editor],
+    [editor],
   );
 
   // Force dependency on editorTickForKeyboard to propagate keyboard-triggered re-renders

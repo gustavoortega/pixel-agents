@@ -46,6 +46,7 @@ import type {
 import { EditTool } from '../office/types.js';
 import { TileType } from '../office/types.js';
 import { transport } from '../transport/index.js';
+import { noteLayoutSent } from './layoutLoadedGate.js';
 
 interface EditorActions {
   isEditMode: boolean;
@@ -145,6 +146,7 @@ export function useEditorActions(
   const saveLayout = useCallback((layout: OfficeLayout) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
+      noteLayoutSent(layout);
       transport.send({ type: 'saveLayout', layout: layout as unknown as Record<string, unknown> });
     }, LAYOUT_SAVE_DEBOUNCE_MS);
   }, []);
@@ -537,6 +539,7 @@ export function useEditorActions(
     const os = getOfficeState();
     const layout = os.getLayout();
     lastSavedLayoutRef.current = structuredClone(layout);
+    noteLayoutSent(layout);
     transport.send({ type: 'saveLayout', layout: layout as unknown as Record<string, unknown> });
     editorState.isDirty = false;
     setIsDirty(false);

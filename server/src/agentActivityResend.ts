@@ -44,6 +44,9 @@ export function agentStatusMessage(id: number, agent: AgentState): Record<string
  * 7b. Session signals: cache clock, permission mode, background shells
  * 8. Tripwire alarm
  * 9. Roster member (only for agents that hold one; mood depends on the alarm, so it follows it)
+ *
+ * Tool starts carry permissionActive while a permission prompt is pending: a client takes
+ * a start without it as the prompt answered and drops the bubble.
  */
 export function resendAgentActivity(
   send: (message: Record<string, unknown>) => void,
@@ -77,6 +80,7 @@ export function resendAgentActivity(
         toolId,
         status,
         toolName,
+        permissionActive: agent.permissionSent || undefined,
       });
     }
 
@@ -95,6 +99,7 @@ export function resendAgentActivity(
         toolId,
         status,
         toolName,
+        permissionActive: agent.permissionSent || undefined,
         runInBackground: true,
         isTeammateSpawn: agent.teammateSpawnToolIds?.has(toolId) || undefined,
       });
