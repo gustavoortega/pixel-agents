@@ -25,6 +25,8 @@ vi.mock('os', async () => {
 
 // Must import AFTER mock setup
 const { PixelAgentsServer } = await import('../src/server.js');
+const { AgentStateStore } = await import('../src/agentStateStore.js');
+const { UsageLimitsStore } = await import('../src/usage/usageLimitsStore.js');
 
 async function postHook(
   port: number,
@@ -353,5 +355,71 @@ describe('PixelAgentsServer', () => {
     );
 
     expect(received).toHaveLength(0);
+  });
+
+  // C4: the status line wrapper's ingress takes the hook token and nothing but the two windows.
+  describe('POST /api/statusline/:providerId', () => {
+    const LIMITS = {
+      fiveHour: { usedPercentage: 37.5, resetsAt: 1_760_000_000 },
+      sevenDay: { usedPercentage: 12, resetsAt: 1_760_400_000 },
+    };
+
+    async function startWithLimits(): Promise<{
+      port: number;
+      token: string;
+      limits: InstanceType<typeof UsageLimitsStore>;
+    }> {
+      const limits = new UsageLimitsStore(new AgentStateStore());
+      const config = await server.start({ usageLimits: limits });
+      return { port: config.port, token: config.token, limits };
+    }
+
+    function postLimits(port: number, token: string | null, body: unknown): Promise<Response> {
+      return fetch(`http://127.0.0.1:${port}/api/statusline/claude-statusline`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token !== null && { Authorization: `Bearer ${token}` }),
+        },
+        body: JSON.stringify(body),
+      });
+    }
+
+    it('refuses a post without the bearer token', async () => {
+      const { port, limits } = await startWithLimits();
+
+      const res = await postLimits(port, null, LIMITS);
+
+      expect(res.status).toBe(401);
+      expect(limits.latest().receivedAt).toBe(0);
+    });
+
+    it('accepts the two windows and hands them to the store', async () => {
+      const { port, token, limits } = await startWithLimits();
+
+      const res = await postLimits(port, token, LIMITS);
+
+      expect(res.status).toBe(200);
+      expect(limits.latest()).toMatchObject({
+        fiveHour: { usedPercentage: 37.5, resetsAt: 1_760_000_000_000 },
+        sevenDay: { usedPercentage: 12, resetsAt: 1_760_400_000_000 },
+      });
+    });
+
+    it.each([
+      ['a body carrying more than the two windows', { ...LIMITS, cwd: '/home/someone/repo' }],
+      [
+        'an out-of-range percentage',
+        { ...LIMITS, fiveHour: { ...LIMITS.fiveHour, usedPercentage: 5000 } },
+      ],
+      ['two null windows', { fiveHour: null, sevenDay: null }],
+    ])('answers 400 to %s and stores nothing', async (_case, body) => {
+      const { port, token, limits } = await startWithLimits();
+
+      const res = await postLimits(port, token, body);
+
+      expect(res.status).toBe(400);
+      expect(limits.latest().receivedAt).toBe(0);
+    });
   });
 });

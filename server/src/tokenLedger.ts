@@ -3,7 +3,12 @@ import * as os from 'os';
 import * as path from 'path';
 
 import type { TokenUsage, TokenWindow } from '../../core/src/messages.js';
-import type { TranscriptUsageSource, UsageLine, UsageTranscript } from '../../core/src/provider.js';
+import type {
+  QuotaSignal,
+  TranscriptUsageSource,
+  UsageLine,
+  UsageTranscript,
+} from '../../core/src/provider.js';
 import {
   LAYOUT_FILE_DIR,
   TOKEN_LEDGER_CACHE_FILE,
@@ -13,7 +18,7 @@ import {
   TOKEN_LEDGER_WINDOW_MS,
 } from './constants.js';
 import { folderNameFromProjectDir } from './folderName.js';
-import type { LedgerRecord, QuotaState, Usage4 } from './tokenAggregate.js';
+import type { LedgerRecord, QuotaAnchor, QuotaState, Usage4 } from './tokenAggregate.js';
 import { aggregateWindow, biggestBlockTotal, resolveWindows } from './tokenAggregate.js';
 
 /**
@@ -72,6 +77,19 @@ function isUsage4(u: unknown): u is Usage4 {
     Array.isArray(u) &&
     u.length === 4 &&
     u.every((n) => typeof n === 'number' && Number.isFinite(n))
+  );
+}
+
+const QUOTA_WINDOWS: readonly QuotaSignal['window'][] = ['block', 'week'];
+
+function isQuotaAnchor(q: unknown): q is QuotaAnchor {
+  if (!q || typeof q !== 'object') return false;
+  const { ts, resetsAt } = q as Record<string, unknown>;
+  return (
+    typeof ts === 'number' &&
+    Number.isFinite(ts) &&
+    typeof resetsAt === 'number' &&
+    Number.isFinite(resetsAt)
   );
 }
 
@@ -163,6 +181,14 @@ export class TokenLedger {
   /** Re-aggregate and emit now (budgets or area mappings changed). */
   refresh(): void {
     this.emitIfChanged(true);
+  }
+
+  /** A reset time reported outside the transcripts (the status line's official limits). Same rule as a transcript
+   *  quota record, so the window it anchors reads `quota`; emitted only when the aggregate changed. */
+  anchorQuota(quota: QuotaSignal): void {
+    if (!this.ingestQuota(quota)) return;
+    this.dirty = true;
+    this.emitIfChanged(false);
   }
 
   /** The current message, for a client that just connected. */
@@ -271,13 +297,7 @@ export class TokenLedger {
       if (line.title.aiTitle) cur.a = line.title.aiTitle;
       this.titles.set(line.title.sessionId, cur);
     }
-    if (line.quota) {
-      const key = line.quota.window;
-      const cur = this.quota[key];
-      if (!cur || line.quota.ts > cur.ts) {
-        this.quota[key] = { ts: line.quota.ts, resetsAt: line.quota.resetsAt };
-      }
-    }
+    if (line.quota) this.ingestQuota(line.quota);
     const u = line.usage;
     if (!u) return;
     // A session's first record fixes attribution even when that record is too old to be summed.
@@ -303,6 +323,14 @@ export class TokenLedger {
     for (let i = 0; i < 4; i++) rec.u[i] = Math.max(rec.u[i], u.usage[i]);
     if (folder < rec.f) rec.f = folder;
     if (u.sessionId !== rec.s && !rec.x?.includes(u.sessionId)) (rec.x ??= []).push(u.sessionId);
+  }
+
+  /** The newer announcement per window wins. Returns whether it replaced the stored one. */
+  private ingestQuota(quota: QuotaSignal): boolean {
+    const cur = this.quota[quota.window];
+    if (cur && quota.ts <= cur.ts) return false;
+    this.quota[quota.window] = { ts: quota.ts, resetsAt: quota.resetsAt };
+    return true;
   }
 
   private prune(transcripts: readonly UsageTranscript[], now: number): void {
@@ -376,7 +404,17 @@ export class TokenLedger {
     for (const [sid, t] of Object.entries(parsed.titles ?? {})) {
       if (t && typeof t === 'object') this.titles.set(sid, t);
     }
-    this.quota = parsed.quota && typeof parsed.quota === 'object' ? parsed.quota : {};
+    // Merged, not assigned: the status line can anchor a window before this first pass, and its store reports a
+    // reset time only once. The newer announcement per window wins, as everywhere else.
+    const quota: unknown = parsed.quota;
+    if (quota && typeof quota === 'object') {
+      for (const window of QUOTA_WINDOWS) {
+        const anchor = (quota as Record<string, unknown>)[window];
+        if (isQuotaAnchor(anchor)) {
+          this.ingestQuota({ window, ts: anchor.ts, resetsAt: anchor.resetsAt });
+        }
+      }
+    }
   }
 
   private async flushCache(sync: boolean): Promise<void> {

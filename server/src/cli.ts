@@ -34,6 +34,7 @@ import { PixelAgentsServer } from './server.js';
 import { isValidServerToken } from './serverToken.js';
 import { TokenLedger } from './tokenLedger.js';
 import { loadTripwireRules } from './tripwireConfig.js';
+import { UsageLimitsStore } from './usage/usageLimitsStore.js';
 
 // ── Argument parsing ──────────────────────────────────────────
 
@@ -109,12 +110,13 @@ Options:
 // migration below (our hooks already installed by a pre-consent version).
 
 /**
- * Copy the bundled hook script into ~/.pixel-agents/hooks/, reporting failure.
+ * Copy the bundled scripts (hook script and status line wrapper) into
+ * ~/.pixel-agents/hooks/, reporting failure.
  *
  * Callers run this BEFORE installing the settings.json entries and abort when
  * it returns false: an entry whose command points at a missing script makes
- * Claude Code spawn a dead `node` process for every event, which is strictly
- * worse than no hooks at all.
+ * Claude Code spawn a dead `node` process for every event (or blanks the
+ * status line), which is strictly worse than no install at all.
  */
 function copyHookScriptOrReport(packageRoot: string, context = ''): boolean {
   if (copyHookScript(packageRoot)) return true;
@@ -185,6 +187,16 @@ async function main(): Promise<void> {
         })
       : undefined;
 
+    // Official limits from the status line wrapper. A new reset time anchors the
+    // ledger's block/week, so its captions read the quota while the wrapper posts.
+    const usageLimits = new UsageLimitsStore(store, (window, resetsAt, now) => {
+      tokenLedger?.anchorQuota({
+        window: window === 'fiveHour' ? 'block' : 'week',
+        ts: now,
+        resetsAt,
+      });
+    });
+
     // Wire hook events: HTTP POST -> runtime -> hookEventHandler -> agents
     server.onHookEvent((providerId, event) => {
       runtime.handleHookEvent(providerId, event);
@@ -199,15 +211,13 @@ async function main(): Promise<void> {
       const provider = hookProviderById(providerId);
       if (!provider) return; // unknown id: nothing to install into
       if (enabled) {
-        // An explicit toggle in the UI IS the consent to modify the
-        // provider's settings file. The bundled claude-hook.js script belongs
-        // to the Claude provider alone; another provider's install must
-        // neither copy it nor be blocked by it.
+        // Reached by a toggle whose ask was already answered, or by an Install
+        // answer (clientMessageHandler asks first when it was not): either way
+        // the user has approved modifying the provider's settings file. Every
+        // registered provider runs one of the bundled scripts, so they are
+        // copied before any install.
         grantHooksConsent(provider.id);
-        if (
-          provider.id === claudeProvider.id &&
-          !copyHookScriptOrReport(packageRoot, ' (user toggle)')
-        ) {
+        if (!copyHookScriptOrReport(packageRoot, ' (user toggle)')) {
           return;
         }
         try {
@@ -279,6 +289,7 @@ async function main(): Promise<void> {
       onReloadAssets,
       tokenLedger,
       token: args.token,
+      usageLimits,
     });
     currentConfig = { port: config.port, token: config.token };
 

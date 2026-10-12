@@ -9,6 +9,7 @@ import {
   clearHooksAnswer,
   clearHooksConsent,
   getHooksConsent,
+  hooksPreferenceRaisedFromDefault,
   recordHooksDecline,
 } from '../../configPersistence.js';
 import { consentActionFor } from './consentGate.js';
@@ -80,14 +81,19 @@ async function runConsentChoice(
   // uninstall on a guess.
   const installed = await effects.areHooksInstalled().catch(() => false);
   const consent = getHooksConsent(providerId);
+  const preferenceRaised = hooksPreferenceRaisedFromDefault(providerId);
+  // A revision that clears the consent record also takes back a preference a Settings toggle raised from an
+  // off-by-default provider's default: left behind, it would make every later handshake ask on its own.
+  const clearRecord = (): void =>
+    preferenceRaised ? clearHooksAnswer(providerId) : clearHooksConsent(providerId);
 
-  switch (consentActionFor(choice, { installed, consent })) {
+  switch (consentActionFor(choice, { installed, consent, preferenceRaised })) {
     case 'install':
-      // Clicking Install IS the consent grant, exactly like the Settings
-      // toggle — so it takes that same path, which grants, installs, then
-      // re-derives the on-disk state before persisting the preference.
+      // Clicking Install IS the consent grant. It runs the Settings toggle's
+      // install path, the one that does not ask: grant, install, then
+      // re-derive the on-disk state before persisting the preference.
       // Reimplementing the grant here would drop that last step. An earlier
-      // decline is replaced by the toggle path's grant.
+      // decline is replaced by that path's grant.
       await effects.setHooksEnabled(true);
       break;
 
@@ -103,21 +109,30 @@ async function runConsentChoice(
 
     case 'revert': {
       // A revised "not now" over a grant (or an install): undo what that answer left, clearing the consent record but
-      // leaving the PREFERENCE alone (the grant never wrote it), so the world reads as if never answered.
+      // leaving the PREFERENCE alone (the grant never wrote it), so the world reads as if never answered. The one
+      // preference it does take back is a toggle's raise from an off-by-default provider's default (clearRecord).
       if (installed) {
         await effects.uninstallHooks();
         // Clear only once the removal verifiably landed; an unreadable file
         // resolves to "still there", which keeps the grant and leaves the
         // Settings toggle as the removal route.
         if (!(await effects.areHooksInstalled().catch(() => true))) {
-          clearHooksConsent(providerId);
+          clearRecord();
         }
-        console.log('[Pixel Agents] Hook install undone — you will be asked again next time.');
+        console.log(
+          preferenceRaised
+            ? '[Pixel Agents] Install undone; the setting is back to its default.'
+            : '[Pixel Agents] Hook install undone — you will be asked again next time.',
+        );
       } else {
         // Nothing on disk: the grant is all that answer left (an Install recorded, then failed to write). Nothing to
         // uninstall and no settings-file read to go wrong, so clearing our own config.json is unconditional.
-        clearHooksConsent(providerId);
-        console.log('[Pixel Agents] Hook approval withdrawn — you will be asked again next time.');
+        clearRecord();
+        console.log(
+          preferenceRaised
+            ? '[Pixel Agents] Approval withdrawn; the setting is back to its default.'
+            : '[Pixel Agents] Hook approval withdrawn — you will be asked again next time.',
+        );
       }
       await effects.reportHooksStatus();
       break;
@@ -136,7 +151,11 @@ async function runConsentChoice(
         }
       }
       clearHooksAnswer(providerId);
-      console.log('[Pixel Agents] Hook decline withdrawn — you will be asked again next time.');
+      console.log(
+        consent === 'declined'
+          ? '[Pixel Agents] Hook decline withdrawn — you will be asked again next time.'
+          : '[Pixel Agents] Install not approved; the setting is back to its default.',
+      );
       await effects.reportHooksStatus();
       break;
     }

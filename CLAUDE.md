@@ -27,13 +27,19 @@ server/                              Lifecycle runtime + Fastify HTTP/WS server
     providers/hook/claude/           Reference HookProvider — only place that knows Claude specifics
       claude.ts                      normalizeHookEvent for 11 Claude events, formatToolStatus, file fallback, XP signals (toolVerdicts, resultSignals)
       claudeTeamProvider.ts          TeamProvider: reads ~/.claude/teams/<name>/config.json
-      claudeHookInstaller.ts         Consent-gated install/uninstall in ~/.claude/settings.json (abort on unparseable file or non-array hooks.<Event>; one-time .pixel-agents.backup, exclusive-create, no backup ⇒ no write — but skipped when the replaced content is entirely our own install's output, since backing up our own file masquerades as the user's original (`settingsHoldOnlyOurHooks`, compared against makeHookEntry — the WRITER — so a field added to what we write can't silently revive the bug; only `command`/`timeout` may differ, they vary across installs); every write failure THROWS; mode preserved, 0600 on create; re-read verify immediately before rename + retry; hook identity = `/.pixel-agents/hooks/claude-hook.js` suffix anchored at both ends of the command's first token, case-insensitive; `areHooksInstalled` = ANY of our commands on ANY event)
-      consentCopy.ts                 Claude's first-run consent disclosure text (scope/data/undo), served through consentDisclosure()
-      constants.ts                   Claude hook event names, script path
+      claudeHookInstaller.ts         Consent-gated install/uninstall in ~/.claude/settings.json (abort on unparseable file or non-array hooks.<Event>; one-time .pixel-agents.backup, exclusive-create, no backup ⇒ no write — but skipped when the replaced content is entirely our own install's output, since backing up our own file masquerades as the user's original (`settingsHoldOnlyOurs`, compared against makeHookEntry — the WRITER — so a field added to what we write can't silently revive the bug; only `command`/`timeout` may differ, they vary across installs; a `statusLine` counts as ours only as makeTeeOnlyStatusLine(), the wrapper with no argument); every write failure THROWS; mode preserved, 0600 on create; re-read verify immediately before rename + retry; hook identity = `/.pixel-agents/hooks/claude-hook.js` suffix anchored at both ends of the command's first token, case-insensitive; `areHooksInstalled` = ANY of our commands on ANY event)
+      consentCopy.ts                 Consent disclosure text (scope/data/undo) for the hooks and for the status line wrapper, served through consentDisclosure()
+      constants.ts                   Claude hook event names, bundled script names, the wrapper's stdin cap and POST budget
       hooks/claude-hook.ts           Hook script (CJS+shebang, bundled to dist/hooks/claude-hook.js)
+      hooks/statusline-tee.ts        Status line wrapper (bundled to dist/hooks/statusline-tee.js): runs the user's statusLine command untouched, POSTs only rate_limits.five_hour/seven_day
+      hooks/scriptDebugLog.ts        Opt-in PIXEL_AGENTS_DEBUG_LOG file logger shared by both bundled scripts
+      serverTargets.ts               readServerTargets(home): live servers/*.json entries, else the legacy server.json (both scripts fan out alike)
+      claudeStatusline.ts            claudeStatuslineProvider ('claude-statusline', off by default): the wrapper as a second provider, so it reuses the consent machinery; hook-event members are inert
+      claudeStatuslineInstaller.ts   Chains/unchains the wrapper in statusLine.command through claudeHookInstaller's guarded write; restore source = the chained command's argument (docs/adr/0002)
+      commandIdentity.ts             Leaf module: the script-token rule both installers share, plus the wrapper command's writer and parser
     providers/hook/consentGate.ts    Provider-agnostic consent POLICY: when to ask (hooksConsentRequest per provider) and what an answer means (consentActionFor(choice, {installed, consent}) — see docs/adr/0001)
     providers/hook/consentExecutor.ts Provider-agnostic consent EXECUTION: applyConsentChoice(providerId, choice, ConsentEffects) runs the six actions in one order for both surfaces, and SERIALIZES answers per process across ALL providers
-    providers/index.ts               Provider registry (claudeProvider + the hookProviders list the consent gate loops over)
+    providers/index.ts               Provider registry (claudeProvider + claudeStatuslineProvider, the hookProviders list the consent gate loops over)
     agentRuntime.ts                  Lifecycle core: timers, scanners, HookEventHandler, SessionRouter, DismissalTracker
     agentStateStore.ts               EventEmitter-backed single source of truth (typed mutations + events)
     sessionRouter.ts                 session_id → agent_id mapping, event buffering, pending external sessions
@@ -59,13 +65,15 @@ server/                              Lifecycle runtime + Fastify HTTP/WS server
     hookSubRows.ts                   SubagentStart rows bound to the hook's agent_id (only that sub-agent's Stop ends one)
     subagentWatch.ts                 Shadow store watching sub-agent transcripts (background spawns, workflow agents)
     workflowRuns.ts                  Workflow crews: run journals -> one watched helper per live workflow agent
-    httpServer.ts                    Fastify: POST /api/hooks/:providerId, GET /api/health, GET /ws, SPA (standalone)
+    httpServer.ts                    Fastify: POST /api/hooks/:providerId, POST /api/statusline/:providerId, GET /api/health, GET /ws, SPA (standalone)
+    usage/usageLimitsBody.ts         Hand-checked body of POST /api/statusline (no Fastify schema: AJV would strip extra keys and coerce types)
+    usage/usageLimitsStore.ts        Official 5 h / weekly limits in memory: one sample per window, replaced only by one not older; broadcasts usageLimits
     clientMessageHandler.ts          Single dispatch point for ClientMessage from webview
     server.ts                        Top-level composition
     serverToken.ts                   Standalone token: ~/.pixel-agents/server-token (0600), reused across restarts
     cli.ts                           npx pixel-agents entry (npm bin)
     fileStateAdapter.ts              Namespaced ~/.pixel-agents/ persistence
-    configPersistence.ts             { vscode, standalone, externalAssetDirectories, hooksConsent: {providerId: granted|declined}, hooksEnabled: {providerId: boolean} }
+    configPersistence.ts             { vscode, standalone, externalAssetDirectories, hooksConsent: {providerId: granted|declined}, hooksEnabled: {providerId: boolean} } (absent preference = HookProvider.defaultEnabled, true unless off by default)
     layoutPersistence.ts             ~/.pixel-agents/layout.json with atomic tmp+rename
     fileWatcher.ts                   Hybrid fs.watch + 500ms polling, JSONL line buffering, /clear detection
     transcriptParser.ts              JSONL parsing for heuristic / file-fallback mode
@@ -82,7 +90,7 @@ adapters/vscode/                     VS Code surface — composes core + server
   PixelAgentsViewProvider.ts         WebviewViewProvider, thin bridge to AgentRuntime
   agentManager.ts                    Terminal lifecycle (claude --session-id <uuid>), restore, persist
   vscodeTerminalAdapter.ts           TerminalAdapter implementation
-  uninstall.ts                       vscode:uninstall hook — removes hook entries + factory-resets hooks config after extension removal
+  uninstall.ts                       vscode:uninstall hook: uninstalls every registered provider (hook entries, status line restore), then factory-resets hooks config
   migrateVsCodeState.ts              One-time legacy state migration (verify-before-clear)
   constants.ts                       VS Code IDs, command names, key names
 
@@ -105,8 +113,10 @@ webview-ui/                          React 19 + Canvas UI (depends only on core/
     components/                      React UI (toolbars, modals, settings)
       BottomToolbar.tsx, HudCard.tsx, SettingsModal.tsx, InfoModal.tsx,
       Tooltip.tsx, DebugView.tsx, ui/Button.tsx, ...
+      limitsPace.ts                  Pure view-model for the official limits (pace, run-out, nudge, colors) behind UsagePanel and HudCard
     hooks/
       useExtensionMessages.ts        Message handler — translates ServerMessage into OfficeState mutations
+      useNow.ts                      Epoch ms on an interval (the Usage panel's countdowns)
       subagentMessages.ts            subagentToolStart/Present/Done/Clear/Permission and agentToolStart's helper -> helpers (DOM-free, the hook delegates)
       agentMessages.ts               agentToolStart's lead half (row, pose, permission bubble), agentStatus chime, agentTripwire alarm (DOM-free, resync-aware)
       agentListMessages.ts           existingAgents (and the resync window it opens), handshakeDone, agentTeamInfo, agentClosed (DOM-free, the hook delegates)
@@ -202,11 +212,11 @@ Two artifacts from one source tree:
 - **VS Code extension** (`.vsix`) — `pablodelucca.pixel-agents` on VS Code Marketplace and Open VSX. Bundles VS Code adapter + webview SPA + assets + hook scripts.
 - **npm package** (`pixel-agents`) — `npx pixel-agents [--port 3100]` runs the Fastify server and serves the SPA on the same port. Bundles CLI + webview SPA + assets + hook scripts + `core/asyncapi.yaml` (so third-party clients can regenerate from it).
 
-`package.json:files` allowlist controls the npm tarball: `dist/cli.js{,.map}`, `dist/webview/`, `dist/assets/`, `dist/hooks/`, `core/asyncapi.yaml`, `icon.png`. `dist/extension.js` is intentionally excluded since the VS Code entry ships through the `.vsix`.
+`package.json:files` allowlist controls what ships in the npm tarball and the `.vsix`: `CHANGELOG.md`, `LICENSE`, `dist/cli.js`, `dist/extension.js`, `dist/uninstall.js`, both bundled scripts (`dist/hooks/claude-hook.js`, `dist/hooks/statusline-tee.js`), `dist/assets/`, `dist/webview/`, `icon.png`. `scripts/npm-package-contract.mjs` and `scripts/verify-vsix-package.mjs` fail a package missing either script.
 
 ## Communication Flow
 
-Hub-and-spoke. The server is the single aggregation point for all agent activity, regardless of source.
+Hub-and-spoke. The server is the single aggregation point for all agent activity, regardless of source. The status line wrapper is a third ingress, `POST /api/statusline/:providerId`, for Claude Code's official usage limits only (see Official usage limits).
 
 ```
 Hook scripts ─POST /api/hooks/:providerId─┐
@@ -233,7 +243,7 @@ Adding a new CLI integration is one subdirectory under `server/src/providers/hoo
 
 `core/asyncapi.yaml` is the contract. Pinned to **3.0.0** because `@asyncapi/modelina@5.10.1` declares `supportedVersions: ['3.0.0']` only; bumping to 3.1.0 produces `export type Root = any`. Revisit when Modelina ships 3.1.0 support.
 
-- **43 ServerMessage variants** (server → client): agent lifecycle (incl. `handshakeDone`, the end of a standalone handshake's catch-up), agent activity, sub-agent activity (incl. `subagentPresent`), team + context usage + model look (`agentModel`) + session title + session signals (`agentCache`, `agentMode`, `agentShells`) + tripwire (`agentTripwire`, `agentTripwireClear`), assets, settings + workspace, token usage, diagnostics.
+- **44 ServerMessage variants** (server → client): agent lifecycle (incl. `handshakeDone`, the end of a standalone handshake's catch-up), agent activity, sub-agent activity (incl. `subagentPresent`), team + context usage + model look (`agentModel`) + session title + session signals (`agentCache`, `agentMode`, `agentShells`) + tripwire (`agentTripwire`, `agentTripwireClear`), assets, settings + workspace, token ledger (`tokenUsage`) + official limits (`usageLimits`), diagnostics.
 - **21 ClientMessage variants** (client → server): tripwire ack (`ackTripwire`), lifecycle (`webviewReady`, `launchAgent`, `focusAgent`, `closeAgent`), layout (`saveAgentSeats`, `saveLayout`, `exportLayout`, `importLayout`), settings (`setSoundEnabled`, `setShowModelFlair`, `setCozyLighting`, `setHooksEnabled`, `setWatchAllSessions`, `setAlwaysShowLabels`, `setHooksInfoShown`, `setLastSeenVersion`), discovery + assets, diagnostics.
 
 Both unions use `oneOf` with `discriminator: type`. Every concrete message sets `additionalProperties: false`.
@@ -282,6 +292,7 @@ The standalone server keeps its token in `~/.pixel-agents/server-token` (0600, m
 - **Optional file fallback**: `getSessionDirs(workspace)`, `getAllSessionRoots()`, `sessionFilePattern`, `parseTranscriptLine(line)`, `buildLaunchCommand(sessionId, cwd, opts)`. Used when hooks aren't installed.
 - **Optional team extension**: `team?: TeamProvider` for Lead + Teammates support.
 - **Optional XP signals**: `toolVerdicts(name, input)` at a tool_use and `resultSignals(verdicts, record)` at its single tool_result. Only verdicts and hashed keys leave the provider. A provider without both earns no XP.
+- **Optional default**: `defaultEnabled` (absent = true). An off-by-default provider (the status line wrapper) is never asked about at startup; only a Settings toggle-on asks.
 
 `AgentEvent.kind` values: `toolStart`, `toolEnd`, `turnEnd`, `subagentStart`, `subagentEnd`, `subagentTurnEnd`, `progress`, `permissionRequest`, `sessionStart`, `sessionEnd`. The runtime dispatches on `kind`, never on CLI-specific tool names.
 
@@ -360,12 +371,13 @@ Two extracted classes that replaced ad-hoc module state. `SessionRouter` owns `s
 
 Fastify v5 with `@fastify/websocket`, and (in standalone) `@fastify/static`:
 
-| Method | Path                     | Purpose                                 |
-| ------ | ------------------------ | --------------------------------------- |
-| POST   | `/api/hooks/:providerId` | Bearer-authenticated hook event ingress |
-| GET    | `/api/health`            | Liveness: `{ ok, version, port, pid }`  |
-| GET    | `/ws`                    | Bidirectional protocol channel          |
-| GET    | `/*` (standalone only)   | Webview SPA via `@fastify/static`       |
+| Method | Path                          | Purpose                                                                                                       |
+| ------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| POST   | `/api/hooks/:providerId`      | Bearer-authenticated hook event ingress                                                                       |
+| POST   | `/api/statusline/:providerId` | Bearer-authenticated official usage limits from the status line wrapper; 400 for anything but the two windows |
+| GET    | `/api/health`                 | Liveness: `{ ok, version, port, pid }`                                                                        |
+| GET    | `/ws`                         | Bidirectional protocol channel                                                                                |
+| GET    | `/*` (standalone only)        | Webview SPA via `@fastify/static`                                                                             |
 
 `/ws` is gated in **two tiers**, because `setHooksEnabled(true)` over this socket is a durable, machine-wide consent grant plus a hook install.
 
@@ -378,7 +390,7 @@ Server discovery written to `~/.pixel-agents/server.json` with `{ port, pid, aut
 
 ### ClientMessageHandler
 
-Single dispatch point for `ClientMessage`. Each variant calls into `AgentRuntime`, `AgentStateStore`, `LayoutPersistence`, or `FileStateAdapter`, or delegates to host-specific callbacks (`onLaunchAgent`, `onOpenSessionsFolder`, `onExportLayout`, `onImportLayout`, `onSetHooksEnabled`). Both surfaces wire the same handler.
+The standalone dispatch point for `ClientMessage` (every `/ws` socket). Each variant calls into `AgentRuntime`, `AgentStateStore`, `LayoutPersistence`, or `FileStateAdapter`, or delegates to host-specific callbacks (`onLaunchAgent`, `onOpenSessionsFolder`, `onExportLayout`, `onImportLayout`, `onSetHooksEnabled`). VS Code never calls it: `PixelAgentsViewProvider` dispatches its webview's messages itself, so a rule both surfaces must share (the consent gate, the toggle's ask-first rule) lives in `server/src/providers/hook/` and each dispatch calls it.
 
 ### ServerAgentState (server/src/types.ts)
 
@@ -396,6 +408,7 @@ Per-agent runtime data: provider reference, session key, transcript-fallback fie
   server.json              { port, pid, authToken }
   server-token             Standalone server token (0600), reused across restarts; not read or written with --token
   hooks/claude-hook.js     Bundled hook script (CJS, shebang)
+  hooks/statusline-tee.js  Bundled status line wrapper; kept on uninstall, so a wrapper still in statusLine keeps running the user's command
 ```
 
 `FileStateAdapter({ namespace })` backs both runtimes. Per-namespace settings: `soundEnabled`, `lastSeenVersion`, `alwaysShowLabels` (no longer read by the UI: nameplates are permanent), `cozyLighting`, `watchAllSessions`, `hooksInfoShown` (the hooks preference is per-provider and machine-global, at the config top level). Running both surfaces in parallel never clobbers either.
@@ -488,6 +501,16 @@ XP pays for real work only; activity (turns, tool calls, sub-agents) pays nothin
 - **Mood**: `streak` counts awards since the last failed tool (happy at 1). PostToolUseFailure adds a consecutive failure (frustrated at 3), PostToolUse clears them; PreToolUse feeds nothing, or the count would reset before every failure.
 - **Wire**: one `rosterEvent` per award carrying `signal`; `level` only on `levelUp` (the contract's minimum is 2). The webview pop reads "+60 commit", "+120 PR", "+200 merged" or "+40 tests green" (`xpPopLabel`, which also sizes the pop's box), at most once per `XP_POP_COOLDOWN_MS` (1.5 s) per agent.
 
+### Official usage limits (statusline-tee.js, server/src/usage/)
+
+Claude Code passes its status line command a JSON on stdin that carries the official `rate_limits.five_hour` and `rate_limits.seven_day` (`used_percentage`, `resets_at` in epoch seconds). The ledger only estimates those windows from tokens, so a wrapper reads them. Design record: `docs/adr/0002`.
+
+- **The wrapper** is provider `claude-statusline` (`claudeStatusline.ts`), off by default and consent-gated like the hooks. Installed, `statusLine.command` is `node "<~/.pixel-agents/hooks/statusline-tee.js>" '<original>'` (sh single-quote escaping, no argument when there was no status line). It spawns the original at once with `shell: true`, inherited env, cwd, stdout and stderr (ANSI and OSC 8 bytes never pass through it), forwards stdin chunk by chunk, and exits with the original's code (128 + signal; 127 if it cannot start). Up to 256 KiB of stdin is parsed; the body is built from scratch (`{fiveHour, sevenDay}`, each null or `{usedPercentage, resetsAt}`) and POSTed to every `readServerTargets` target, each request destroyed 150 ms after creation. It prints nothing; the only log is the opt-in debug file. POSIX only: the provider's install throws on win32.
+- **Install / uninstall** (`claudeStatuslineInstaller.ts`, through the hook installer's guarded write): no statusLine → the wrapper alone; `{type: 'command', command}` → only the command is replaced, every other field kept; already ours → no-op; anything else → refused naming the keys found. Uninstall reads the original back out of the wrapper's argument; a statusLine that is not ours by identity (hook rule plus "nothing, or exactly one single-quoted word") is left as is and logged. Extension removal restores it too (`uninstall.ts`).
+- **Route + store**: `parseUsageLimitsBody` refuses anything but the two windows (an extra key at either level, a non-number, out of range, both null) with 400. `UsageLimitsStore` keeps one sample per window and replaces it only with one not older (later `resetsAt`, or the same with equal or higher usage), since every session posts the same account-wide limits and an idle one re-posts its last snapshot; an accepted post advances `receivedAt` and broadcasts `usageLimits`. A new reset time anchors the token ledger (`anchorQuota`), so its window captions read `quota`.
+- **Handshake**: the process that owns the HTTP server sends `usageLimits` on every connect, with both windows null and `receivedAt` 0 before the first reading. A VS Code window reusing another window's server sends none, so its panel shows nothing new rather than waiting forever.
+- **Webview** (`limitsPace.ts`): the Usage panel shows one official row for the open tab above the token totals, whatever state they are in; fresh under 10 minutes, then dimmed with its age until that window's reset, then absent (never 0). Pace is computed at `receivedAt`: projection = used / elapsed fraction (skipped in the first 5 % of the window or with nothing used), a run-out time once it passes 100 %, and at most one nudge, the weekly window first. Not installed: a hint to turn it on. The HUD card adds `5h 37% · 7d 12%` while a window is live.
+
 ## Office UI
 
 **Rendering**: Game state in imperative `OfficeState` class (not React state). Zoom = device px per WORLD px, restricted to `ZOOM_LEVELS` {1, 2, 4, ..., 20}; art is `ART_DENSITY` (2) art px per world px, so an art px is zoom/2 device px and zoom 1 draws a 2x2 alpha-weighted downsample. The badge shows zoom/2; fit, +/- and the wheel walk the levels (`snapZoom`, `stepZoom`). No `ctx.scale(dpr)`. Default zoom = `Math.round(2 * devicePixelRatio)` snapped down to a level. World->device is `worldToDevice` (scale, then round once), shared by the canvas and the DOM overlays. Z-sort all entities by Y. Pan via middle-mouse drag (`panRef`). **Camera follow**: `cameraFollowId` (separate from `selectedAgentId`) smoothly centers camera on the followed agent; set on agent click, cleared on deselection or manual pan.
@@ -576,26 +599,30 @@ Three tiers, each with its own framework.
 
 `server/__tests__/` covers the shared runtime, persistence, providers, HTTP/WebSocket server, CLI, diagnostics, asset reloads, and the e2e scenario runner. Representative suites include:
 
-| File                           | Coverage                                                                                                                                       |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agentStateStore.test.ts`      | Mutations, EventEmitter events, snapshot                                                                                                       |
-| `hookEventHandler.test.ts`     | Routing, buffering, normalized dispatch, team gating                                                                                           |
-| `sessionRouter.test.ts`        | session_id mapping, pending sessions, buffer flush                                                                                             |
-| `fileWatcherDismissal.test.ts` | DismissalTracker integration                                                                                                                   |
-| `fileStateAdapter.test.ts`     | Namespaced persistence, allowlist, settings round-trip                                                                                         |
-| `migrateVsCodeState.test.ts`   | Verify-before-clear, partial migration                                                                                                         |
-| `teamUtils.test.ts`            | Inline-teammate helpers                                                                                                                        |
-| `claudeTeamProvider.test.ts`   | Discovery, membership, metadata extraction                                                                                                     |
-| `claude.test.ts`               | `normalizeHookEvent` per Claude event, file fallback                                                                                           |
-| `claudeHookInstaller.test.ts`  | Atomic install/uninstall, unparseable-file + non-array abort, throwing writes, mode preservation, backup, hook identity, event-scope migration |
-| `consentFlow.test.ts`          | In-app consent over the wire: who is asked, what each answer writes, Back-and-revise semantics, answer serialization                           |
-| `claude-hook.test.ts`          | Spawned hook script integration (needs `dist/hooks/claude-hook.js`)                                                                            |
-| `server.test.ts`               | HTTP lifecycle, auth, `/ws`, broadcast                                                                                                         |
-| `httpServerWs.test.ts`         | `/ws` gate: standalone same-origin, embedded Bearer                                                                                            |
-| `mockClaudeRunner.test.ts`     | E2E scenario runner sanity                                                                                                                     |
-| `memoryTools.test.ts`          | Memory tools over synthetic transcripts: scope, asked/ended, commits/PRs, files, tests, budgets, cap ladder, last_update, `under`              |
-| `memoryServer.test.ts`         | The committed memory bundle over stdio: ids, notifications, error codes, `_meta`, stderr carries no transcript text                            |
-| `memoryRedact.test.ts`         | Redaction table: each rule's positive and negative case                                                                                        |
+| File                                                  | Coverage                                                                                                                                                |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agentStateStore.test.ts`                             | Mutations, EventEmitter events, snapshot                                                                                                                |
+| `hookEventHandler.test.ts`                            | Routing, buffering, normalized dispatch, team gating                                                                                                    |
+| `sessionRouter.test.ts`                               | session_id mapping, pending sessions, buffer flush                                                                                                      |
+| `fileWatcherDismissal.test.ts`                        | DismissalTracker integration                                                                                                                            |
+| `fileStateAdapter.test.ts`                            | Namespaced persistence, allowlist, settings round-trip                                                                                                  |
+| `migrateVsCodeState.test.ts`                          | Verify-before-clear, partial migration                                                                                                                  |
+| `teamUtils.test.ts`                                   | Inline-teammate helpers                                                                                                                                 |
+| `claudeTeamProvider.test.ts`                          | Discovery, membership, metadata extraction                                                                                                              |
+| `claude.test.ts`                                      | `normalizeHookEvent` per Claude event, file fallback                                                                                                    |
+| `claudeHookInstaller.test.ts`                         | Atomic install/uninstall, unparseable-file + non-array abort, throwing writes, mode preservation, backup, hook identity, event-scope migration          |
+| `consentFlow.test.ts`                                 | In-app consent over the wire: who is asked, what each answer writes, Back-and-revise semantics, answer serialization                                    |
+| `claude-hook.test.ts`                                 | Spawned hook script integration (needs `dist/hooks/claude-hook.js`)                                                                                     |
+| `statusline-tee.test.ts`                              | Spawned status line wrapper (needs `dist/hooks/statusline-tee.js`): only the two windows leave, byte-exact output and exit code, POST budget, stdin cap |
+| `claudeStatuslineInstaller.test.ts`                   | statusLine chain and exact restore, hand edits left alone, wrapper identity, no backup of our own output                                                |
+| `usageLimitsBody.test.ts`, `usageLimitsStore.test.ts` | Statusline route body contract; per-window merge and ledger anchoring                                                                                   |
+| `uninstall.test.ts`                                   | Spawned `dist/uninstall.js`: every provider leaves settings.json, the status line comes back                                                            |
+| `server.test.ts`                                      | HTTP lifecycle, auth, `/ws`, broadcast                                                                                                                  |
+| `httpServerWs.test.ts`                                | `/ws` gate: standalone same-origin, embedded Bearer                                                                                                     |
+| `mockClaudeRunner.test.ts`                            | E2E scenario runner sanity                                                                                                                              |
+| `memoryTools.test.ts`                                 | Memory tools over synthetic transcripts: scope, asked/ended, commits/PRs, files, tests, budgets, cap ladder, last_update, `under`                       |
+| `memoryServer.test.ts`                                | The committed memory bundle over stdio: ids, notifications, error codes, `_meta`, stderr carries no transcript text                                     |
+| `memoryRedact.test.ts`                                | Redaction table: each rule's positive and negative case                                                                                                 |
 
 Run: `npm run test:server` (or `npm test` for all).
 
@@ -651,7 +678,7 @@ npm run e2e                # Playwright
 
 1. **Extension** (`dist/extension.js`) from `adapters/vscode/extension.ts`. External: `vscode`.
 2. **CLI** (`dist/cli.js`) from `server/src/cli.ts`. Externals pulled at install time (`fastify`, `@fastify/*`).
-3. **Hook scripts** (`dist/hooks/claude-hook.js`) from `server/src/providers/hook/claude/hooks/claude-hook.ts`. CJS, shebang.
+3. **Claude scripts** (`dist/hooks/claude-hook.js`, `dist/hooks/statusline-tee.js`) from `server/src/providers/hook/claude/hooks/`. CJS, shebang. Both sources sit in that one directory on purpose: entry points in different directories make esbuild nest the output under their common base. Watch builds skip them.
 4. **Memory MCP** (`plugin/server/memory-mcp.cjs` + `dist/memory-mcp.cjs`) from `server/src/memory/mcpMain.ts`. Fixed options in every mode (node18 CJS, no minify, no sourcemap), so CI's `--production` build and `npm run plugin:build` (this bundle only) write the same bytes.
 
 `define: { 'process.env.PIXEL_AGENTS_VERSION': JSON.stringify(version) }` stamps the package version into all bundles.
@@ -763,8 +790,8 @@ Supporting: `wall-tile-editor.html` (wall sprite editing), `jsonl-viewer.html` (
 - **Inline esbuild problem matcher** (no extra extension needed).
 - **`erasableSyntaxOnly`** in webview forbids `enum` — use `as const` objects.
 - **Server always starts** regardless of hooks toggle. Only hook installation is gated by the setting.
-- **Consent before any FIRST settings-file write**, per provider (`hooksConsent: {providerId: 'granted'|'declined'}`, absent = unanswered; the `hooksEnabled` preference beside it is per-provider and machine-global). **Exactly one population is asked: the one with nothing of ours installed** — hooks already on disk are granted silently at startup, since that install only ever removes events. The ask is one step of the Intro, the four-step first-run tour a greeter character speaks in-app on both surfaces (`IntroBubble.tsx`); the server sends `hooksConsentRequest` during the `webviewReady` handshake, one per provider, privileged connections only, carrying the provider's own `consentDisclosure()` so no client-side copy can drift. The ask-or-not predicate, the choice→action rule, and the execution live ONCE in `server/src/providers/hook/` (`consentGate.ts` decides, `consentExecutor.ts` performs); surfaces supply only their effects. **A choice is an absolute state command, not an event** — Back re-opens the ask, so a revision undoes whatever the earlier answer left: hooks on disk, a grant a failed install recorded, or a decline's own persisted hooks-off. That is why the consent record is a tri-state and each answer commits in ONE config write; the full rule and its rejected alternatives are `docs/adr/0001`. An abort (close x, Escape) sends nothing and the whole Intro returns on the next page load (in-session reconnects are deduped by the webview); the closing step reports the install OUTCOME, not the click.
-- **`hooksStatus` is install state, `hooksEnabled` is preference.** The Settings checkbox binds to `hooksInstalled` and toggles the _displayed_ state with no optimistic local update, so it can't read "on" over an untouched settings.json and lands correct rather than flickering when an install fails. Every failure path re-derives and broadcasts the truth (standalone via `clientMessageHandler`, VS Code via `reportHooksStatus`). The hook script is copied BEFORE the entries are written; a failed copy aborts the install (entries pointing at a missing script spawn a dead `node` per event). **Hooks-off is persisted only AFTER a successful uninstall** — flipping it first strands the user: the entries keep firing while the persisted preference makes the next start skip the gate entirely.
+- **Consent before any FIRST settings-file write**, per provider (`hooksConsent: {providerId: 'granted'|'declined'}`, absent = unanswered; the `hooksEnabled` preference beside it is per-provider and machine-global). **Exactly one population is asked: the one with nothing of ours installed** — hooks already on disk are granted silently at startup, since that install only ever removes events. The ask is one step of the Intro, the four-step first-run tour a greeter character speaks in-app on both surfaces (`IntroBubble.tsx`); the server sends `hooksConsentRequest` during the `webviewReady` handshake, one per provider, privileged connections only, carrying the provider's own `consentDisclosure()` so no client-side copy can drift. The ask-or-not predicate, the choice→action rule, and the execution live ONCE in `server/src/providers/hook/` (`consentGate.ts` decides, `consentExecutor.ts` performs); surfaces supply only their effects. **A choice is an absolute state command, not an event** — Back re-opens the ask, so a revision undoes whatever the earlier answer left: hooks on disk, a grant a failed install recorded, or a decline's own persisted hooks-off. That is why the consent record is a tri-state and each answer commits in ONE config write; the full rule and its rejected alternatives are `docs/adr/0001`. An abort (close x, Escape) sends nothing and the whole Intro returns on the next page load (in-session reconnects are deduped by the webview); the closing step reports the install OUTCOME, not the click. **An off-by-default provider's Settings toggle-on over an unanswered ask asks first** (`toggleNeedsConsent`, both dispatches; the hooks toggle still installs directly, its click being the grant): the preference is recorded on and the provider's `hooksConsentRequest` goes out instead of an install; Install then installs through the executor, and a Not Now takes back a preference the toggle raised above an off-by-default provider's default (`preferenceRaised` → `revertDecline`; a revert after a landed install clears it too). An answered ask, granted or declined, keeps the direct install. A provider can be off by default (`HookProvider.defaultEnabled: false`, the status line wrapper): the handshake never asks about it, only that toggle does. The App closes Settings when the ask it triggered arrives, since the Intro renders under the modal's backdrop.
+- **`hooksStatus` is install state, `hooksEnabled` is preference.** The Settings checkboxes (one per provider: hooks, status line) bind to `hooksInstalled[providerId]` and toggle the _displayed_ state with no optimistic local update, so it can't read "on" over an untouched settings.json and lands correct rather than flickering when an install fails. Every failure path re-derives and broadcasts the truth (standalone via `clientMessageHandler`, VS Code via `reportHooksStatus`). The bundled scripts are copied BEFORE any provider's install writes; a failed copy aborts it (entries pointing at a missing script spawn a dead `node` per event, and a wrapper pointing at one blanks the status line, which is why `installStatusline` also refuses when the wrapper is not on disk). **Hooks-off is persisted only AFTER a successful uninstall** — flipping it first strands the user: the entries keep firing while the persisted preference makes the next start skip the gate entirely.
 - **Never rewrite a shape we did not author.** The unparseable-file abort generalizes: a non-object `hooks`, a non-array `hooks.<Event>`, and junk entries inside an event array are all refused or passed through, never replaced. An array `hooks` was the sharp case — string keys assigned onto it vanish from `JSON.stringify`, so the write committed and reported `installed: true` over a file with no hooks in it. Emptied event keys are deleted only when _our_ removal emptied them. **Internal sentinels must not be values user JSON can hold**: `null` marked "this entry is now empty", so a user-authored `null` inside a hooks array was silently deleted (a file with no Pixel Agents command anywhere came back rewritten and logged as "Hooks removed") — it is a `Symbol` now.
 - **Hook identity is anchored at both ends, not a substring.** `includes('claude-hook.js') && includes('.pixel-agents')` claimed — and `uninstallHooks` then DELETED — a `.backup` copy of our script, a shell comment naming our path, a wrapper passing it as an argument, `/opt/evil.pixel-agents/hooks/claude-hook.js`, and `my-pixel-agents-hook.js`. Ours = the `/.pixel-agents/hooks/claude-hook.js` suffix, ending the command's FIRST token, matched **case-insensitively** (the token is normalized to lower case). Case-sensitive matching is what shipped, and on the case-insensitive volumes this runs on (macOS, Windows) a differently-cased path is the SAME INODE as our script and genuinely firing: reinstall appended a duplicate and uninstall left the cased entry as an orphan our own `areHooksInstalled` could no longer see — a live hook with no removal route. The folding is unconditional (no filesystem case-sensitivity probe), so the accepted trade is a Linux-only false positive that is **not** a mere dedup: on a case-sensitive volume `~/.Pixel-Agents/hooks/claude-hook.js` is a genuinely DIFFERENT file, we classify it as ours, and uninstall **deletes** it (`claudeHookInstaller.test.ts` pins that removal). Nothing creates that path, and the trade is deliberate — the alternative is a guaranteed unremovable live hook on the two platforms this actually ships to. A symlink alias to our script is deliberately _not_ recognized — the cost is one duplicate entry, versus deleting a stranger's hook if we resolved paths.
 - **E2E over webview unit tests** for OSS friction. Community PRs change webview internals constantly; unit tests would force contributors to update internals tests on top of feature work. E2E pins user-facing behavior, which is stable across internal refactors.

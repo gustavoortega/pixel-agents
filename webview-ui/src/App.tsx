@@ -15,6 +15,7 @@ import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
 import { UsagePanel } from './components/UsagePanel.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
+import { CLAUDE_HOOKS_PROVIDER_ID, CLAUDE_STATUSLINE_PROVIDER_ID } from './constants.js';
 import { isEditDirty, noteLayoutSent } from './hooks/layoutLoadedGate.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
@@ -121,6 +122,7 @@ function App() {
     showAreas,
     setShowAreas,
     tokenUsage,
+    usageLimits,
   } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout);
 
   // Show migration notice once layout reset is detected
@@ -184,9 +186,50 @@ function App() {
     onClose: handleIntroClose,
   } = useIntroTour({ consentRequest, hooksInstalled, hooksStatusSeq, dismissConsentRequest });
 
-  // The Settings surface renders one provider today; its checkbox binds to
-  // the Claude row of the per-provider install-state map.
-  const claudeHooksInstalled = hooksInstalled['claude'] === true;
+  // The hooks tooltip is about the Claude hooks row of the per-provider install-state map.
+  const claudeHooksInstalled = hooksInstalled[CLAUDE_HOOKS_PROVIDER_ID] === true;
+  // Official limits show only while the status line wrapper is installed.
+  const statuslineInstalled = hooksInstalled[CLAUDE_STATUSLINE_PROVIDER_ID] === true;
+
+  // A Settings toggle-on whose ask was never answered comes back as a consent ask, which the Intro renders under the
+  // Settings modal's backdrop: close Settings when the ask for the provider just toggled arrives, so the toggle
+  // visibly leads somewhere.
+  const askedFromSettingsRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (consentRequest && consentRequest.providerId === askedFromSettingsRef.current) {
+      askedFromSettingsRef.current = null;
+      setIsSettingsOpen(false);
+    }
+  }, [consentRequest]);
+  // A toggle the server answered with a status instead (the ask was already answered, so it installed directly) asked
+  // nothing: forget it, or a later unrelated ask for that provider would close Settings.
+  const statusSeqAtToggleRef = useRef(hooksStatusSeq);
+  useEffect(() => {
+    const providerId = askedFromSettingsRef.current;
+    if (
+      providerId !== null &&
+      hooksStatusSeq[providerId] !== statusSeqAtToggleRef.current[providerId]
+    ) {
+      askedFromSettingsRef.current = null;
+    }
+    statusSeqAtToggleRef.current = hooksStatusSeq;
+  }, [hooksStatusSeq]);
+
+  // Toggle the DISPLAYED state (actual install), not the preference: when the two disagree (preference on, nothing
+  // installed while consent is pending), toggling the preference would turn hooks OFF for a user asking for ON. No
+  // optimistic local update either; both backends answer with the truthful hooksStatus the checkbox renders (or with
+  // the consent ask first), so it lands correct instead of flickering when an install fails. The providerId is
+  // ECHOED from that provider's row (never originated here), so nothing sends until the row has arrived.
+  const handleToggleHooks = useCallback(
+    (providerId: string) => {
+      const row = Object.entries(hooksInstalled).find(([id]) => id === providerId);
+      if (row === undefined) return;
+      const [rowProviderId, installed] = row;
+      if (!installed) askedFromSettingsRef.current = rowProviderId;
+      transport.send({ type: 'setHooksEnabled', providerId: rowProviderId, enabled: !installed });
+    },
+    [hooksInstalled],
+  );
 
   // Mutate folder→Area mappings locally + send to server. Updates OfficeState in
   // the same tick so a follow-up agentCreated picks up the new mapping.
@@ -404,6 +447,7 @@ function App() {
             onZoomChange={handleManualZoom}
             fitActive={fitActive}
             onFit={handleFit}
+            limits={statuslineInstalled ? usageLimits : null}
           />
 
           {/* Vignette overlay */}
@@ -572,7 +616,14 @@ function App() {
         workspaceFolders={workspaceFolders}
       />
 
-      {isUsageOpen && <UsagePanel usage={tokenUsage} onClose={() => setIsUsageOpen(false)} />}
+      {isUsageOpen && (
+        <UsagePanel
+          usage={tokenUsage}
+          limits={usageLimits}
+          statuslineInstalled={statuslineInstalled}
+          onClose={() => setIsUsageOpen(false)}
+        />
+      )}
 
       <VersionIndicator
         currentVersion={extensionVersion}
@@ -607,23 +658,8 @@ function App() {
           setWatchAllSessions(newVal);
           transport.send({ type: 'setWatchAllSessions', enabled: newVal });
         }}
-        hooksInstalled={claudeHooksInstalled}
-        onToggleHooksEnabled={() => {
-          // Toggle the DISPLAYED state (actual install), not the preference: when the two disagree — preference on,
-          // nothing installed while consent is pending — toggling the preference would turn hooks OFF for a user
-          // asking for ON. No optimistic local update either; both backends answer with the truthful hooksStatus this
-          // checkbox renders, so it lands correct instead of flickering when an install fails. The providerId is
-          // ECHOED from that row (never originated here), so nothing sends until the row has arrived.
-          const [rowProviderId] =
-            Object.entries(hooksInstalled).find(([id]) => id === 'claude') ?? [];
-          if (rowProviderId !== undefined) {
-            transport.send({
-              type: 'setHooksEnabled',
-              providerId: rowProviderId,
-              enabled: !claudeHooksInstalled,
-            });
-          }
-        }}
+        hooksInstalled={hooksInstalled}
+        onToggleHooks={handleToggleHooks}
         showAreas={showAreas}
         onToggleShowAreas={onToggleShowAreas}
         showAreasAvailable={areasAvailable}

@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 
 import { ART_DENSITY } from '../../../core/src/assets/constants.js';
+import type { UsageLimits } from '../../../core/src/messages.js';
 import {
   HUD_ACTIVE_FONT_PX,
   HUD_ACTIVE_REFRESH_MS,
@@ -15,6 +16,7 @@ import { countActiveAgents } from '../office/activeAgents.js';
 import { stepZoom } from '../office/camera.js';
 import { clockLabel, isDaytime } from '../office/lighting.js';
 import type { Character } from '../office/types.js';
+import { hudLimits, LIMIT_TONE_CLASS } from './limitsPace.js';
 import { Button } from './ui/Button.js';
 
 /** Pixel glyphs on a 7x7 grid: a sun by day, a moon at night. */
@@ -50,10 +52,20 @@ interface HudCardProps {
   fitActive: boolean;
   /** Frame the working rooms again and keep following them. */
   onFit: () => void;
+  /** Official limits while the status line wrapper is installed; absent or null = no limits line. */
+  limits?: UsageLimits | null;
 }
 
-/** Top-left cream card. Line 1: sun/moon, time, active count. Line 2: zoom out, in, fit, level. */
-export function HudCard({ characters, zoom, onZoomChange, fitActive, onFit }: HudCardProps) {
+/** Top-left cream card. Line 1: sun/moon, time, active count. Line 2: zoom out, in, fit, level. Line 3, only with a
+ *  live official reading: '5h 37% · 7d 12%', each window in its pace color. */
+export function HudCard({
+  characters,
+  zoom,
+  onZoomChange,
+  fitActive,
+  onFit,
+  limits = null,
+}: HudCardProps) {
   const [now, setNow] = useState(() => new Date());
   const [active, setActive] = useState(() => countActiveAgents(characters.values()));
   useEffect(() => {
@@ -67,6 +79,7 @@ export function HudCard({ characters, zoom, onZoomChange, fitActive, onFit }: Hu
     return () => clearInterval(id);
   }, [characters]);
   const day = isDaytime(now.getHours(), now.getMinutes());
+  const officialLimits = hudLimits(limits, now.getTime());
   const btn = 'text-2xs leading-none min-w-28';
   return (
     <div
@@ -120,6 +133,16 @@ export function HudCard({ characters, zoom, onZoomChange, fitActive, onFit }: Hu
           {zoom / ART_DENSITY}x
         </span>
       </div>
+      {officialLimits.length > 0 && (
+        <div className="pointer-events-none" data-testid="hud-limits" title="Official usage limits">
+          {officialLimits.map((window, i) => (
+            <Fragment key={window.key}>
+              {i > 0 && ' · '}
+              <span className={LIMIT_TONE_CLASS[window.tone]}>{window.text}</span>
+            </Fragment>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

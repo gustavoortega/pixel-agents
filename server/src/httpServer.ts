@@ -16,11 +16,14 @@ import { handleClientMessage } from './clientMessageHandler.js';
 import {
   HOOK_API_PREFIX,
   MAX_HOOK_BODY_SIZE,
+  STATUSLINE_API_PREFIX,
   WS_CLOSE_FORBIDDEN_ORIGIN,
   WS_CLOSE_UNAUTHORIZED,
 } from './constants.js';
 import type { TokenLedger } from './tokenLedger.js';
 import type { AgentState } from './types.js';
+import { parseUsageLimitsBody } from './usage/usageLimitsBody.js';
+import type { UsageLimitsStore } from './usage/usageLimitsStore.js';
 
 /** Options for creating the HTTP + WebSocket server. */
 export interface HttpServerOptions {
@@ -48,6 +51,8 @@ export interface HttpServerOptions {
   onReloadAssets?: ReloadAssetsSideEffect;
   /** Token ledger whose snapshot is sent on connect and which budget changes refresh. Standalone only. */
   tokenLedger?: TokenLedger;
+  /** Receives the official limits the status line wrapper posts; its latest reading is sent on connect. */
+  usageLimits?: UsageLimitsStore;
 }
 
 /** Result of createHttpServer(). */
@@ -109,6 +114,7 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
 
   registerHealthRoute(app);
   registerHookRoute(app, options);
+  registerStatuslineRoute(app, options);
   registerWebSocketRoute(app, options);
 
   // ── Listen ──────────────────────────────────────────────────
@@ -158,6 +164,39 @@ function registerHookRoute(app: FastifyInstance, options: HttpServerOptions): vo
         options.onHookEvent?.(providerId, event);
       }
 
+      reply.send('ok');
+    },
+  );
+}
+
+// ── Official usage limits ─────────────────────────────────────
+
+/** Same provider-id shape the hook route's params schema enforces. */
+const PROVIDER_ID_PATTERN = /^[a-z0-9-]+$/;
+
+/**
+ * The status line wrapper's ingress. Same bearer token as the hooks and, like
+ * them, no registry lookup on the provider id. No Fastify `schema` on purpose:
+ * the default AJV strips unknown keys and coerces types, which would turn a
+ * wrapper that forwarded the whole status line input into a quiet 200
+ * (usageLimitsBody.ts explains). Validated by hand instead: 400 for anything
+ * but the two windows.
+ */
+function registerStatuslineRoute(app: FastifyInstance, options: HttpServerOptions): void {
+  app.post<{ Params: { providerId: string } }>(
+    `${STATUSLINE_API_PREFIX}/:providerId`,
+    { preHandler: bearerAuth(options.token) },
+    async (request, reply) => {
+      if (!PROVIDER_ID_PATTERN.test(request.params.providerId)) {
+        reply.code(400).send('invalid provider id');
+        return;
+      }
+      const body = parseUsageLimitsBody(request.body);
+      if (body === null) {
+        reply.code(400).send('invalid usage limits');
+        return;
+      }
+      options.usageLimits?.set(body, Date.now());
       reply.send('ok');
     },
   );
@@ -234,6 +273,7 @@ function registerWebSocketRoute(app: FastifyInstance, options: HttpServerOptions
           onSetHooksEnabled: options.onSetHooksEnabled,
           onReloadAssets: options.onReloadAssets,
           tokenLedger: options.tokenLedger,
+          usageLimits: options.usageLimits,
           // Every accepted socket proved the token above.
           privileged: true,
         });

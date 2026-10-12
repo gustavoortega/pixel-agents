@@ -5,8 +5,15 @@ import { isDeepStrictEqual } from 'util';
 
 import { HOOK_SCRIPTS_DIR } from '../../../constants.js';
 import {
+  makeTeeOnlyStatusLine,
+  parseStatuslineCommand,
+  splitScriptCommand,
+  statuslineTeePath,
+} from './commandIdentity.js';
+import {
   CLAUDE_HOOK_EVENTS,
   CLAUDE_HOOK_SCRIPT_NAME,
+  HOOK_SCRIPT_NAMES,
   LEGACY_HOOK_SCRIPT_NAME,
   SETTINGS_BACKUP_SUFFIX,
   SETTINGS_FRESH_FILE_MODE,
@@ -25,9 +32,11 @@ interface ClaudeHookEntry {
   }>;
 }
 
-/** Partial shape of ~/.claude/settings.json (only the hooks field is relevant). */
-interface ClaudeSettings {
+/** Partial shape of ~/.claude/settings.json (the hooks field, plus the
+ *  statusLine the wrapper installer edits through the same write path). */
+export interface ClaudeSettings {
   hooks?: Record<string, ClaudeHookEntry[]>;
+  statusLine?: unknown;
   [key: string]: unknown;
 }
 
@@ -100,7 +109,7 @@ function parseClaudeSettings(raw: string | null): ClaudeSettings {
 }
 
 /** Read and parse ~/.claude/settings.json (see parseClaudeSettings for the throw contract). */
-function readClaudeSettings(): ClaudeSettings {
+export function readClaudeSettings(): ClaudeSettings {
   return parseClaudeSettings(readRawClaudeSettings());
 }
 
@@ -125,7 +134,7 @@ function sleep(ms: number): Promise<void> {
  * first attempt: retrying a permission error just delays the same failure, and
  * the caller must hear about it rather than get a false "installed".
  */
-async function mutateClaudeSettings(
+export async function mutateClaudeSettings(
   mutate: (settings: ClaudeSettings) => boolean,
 ): Promise<boolean> {
   let lastError: Error | null = null;
@@ -175,9 +184,9 @@ async function mutateClaudeSettings(
  *  is not a regular file throws.
  *
  *  The caller skips this entirely when the content being replaced is our own
- *  install's output (settingsHoldOnlyOurHooks) — a backup of what we wrote
+ *  install's output (settingsHoldOnlyOurs) — a backup of what we wrote
  *  preserves nothing and masquerades as the user's original. */
-function backupClaudeSettingsOnce(settingsPath: string): void {
+export function backupClaudeSettingsOnce(settingsPath: string): void {
   if (!fs.existsSync(settingsPath)) return;
   const backupPath = settingsPath + SETTINGS_BACKUP_SUFFIX;
   try {
@@ -222,7 +231,7 @@ export function settingsUnusableBackupMessage(backupPath: string): string {
  * swallowed: a caller that hears no error installs an entry pointing at a file
  * that was never written.
  */
-function writeClaudeSettings(settings: ClaudeSettings, expectedRaw: string | null): void {
+export function writeClaudeSettings(settings: ClaudeSettings, expectedRaw: string | null): void {
   const settingsPath = getClaudeSettingsPath();
   const dir = path.dirname(settingsPath);
   const tmpPath = settingsPath + SETTINGS_TMP_SUFFIX;
@@ -247,7 +256,7 @@ function writeClaudeSettings(settings: ClaudeSettings, expectedRaw: string | nul
   // redundant: the object mutateClaudeSettings parsed from it has already
   // been mutated by the callback — it now holds what we are ABOUT to write,
   // and this decision must be about what we are REPLACING.
-  if (expectedRaw === null || !settingsHoldOnlyOurHooks(parseClaudeSettings(expectedRaw))) {
+  if (expectedRaw === null || !settingsHoldOnlyOurs(parseClaudeSettings(expectedRaw))) {
     backupClaudeSettingsOnce(settingsPath);
   }
 
@@ -296,12 +305,6 @@ const LEGACY_HOOK_PATH_SUFFIX = `/${LEGACY_HOOK_SCRIPT_NAME}`;
  *  separator is load-bearing — without it `/opt/evil.pixel-agents/hooks/...`
  *  and `my-pixel-agents-hook.js` match by substring. */
 const HOOK_PATH_SUFFIX = `/${HOOK_SCRIPTS_DIR}/${CLAUDE_HOOK_SCRIPT_NAME}`;
-
-/** Characters that end a path token in a shell command line. A path we own is
- *  either the whole token or ends at one of these; anything else after it
- *  (`.backup`, `.disabled`, more path segments) means the command names a
- *  DIFFERENT file that merely starts with our path. */
-const PATH_TERMINATORS = new Set([' ', '\t', '"', "'", ';', '&', '|', '>', '<', ')']);
 
 /**
  * Check if a single hook command is ours.
@@ -354,46 +357,14 @@ const PATH_TERMINATORS = new Set([' ', '\t', '"', "'", ';', '&', '|', '>', '<', 
  *   hook for everyone if we resolved paths from a config file.
  */
 function isOurHookCommand(command: string): boolean {
-  const token = firstCommandToken(command);
+  // The script token after `node`, read by the rule commandIdentity.ts shares
+  // with the status line wrapper (single-line here, as it always was).
+  const token = splitScriptCommand(command)?.script ?? null;
   if (token === null) return false;
   // Both suffix constants are lower-case, so folding the token is the whole
   // normalization.
   const normalized = token.toLowerCase();
   return normalized.endsWith(HOOK_PATH_SUFFIX) || normalized.endsWith(LEGACY_HOOK_PATH_SUFFIX);
-}
-
-/**
- * The ABSOLUTE path of the script a command runs, normalized to forward
- * slashes, or null when the command doesn't look like one of ours.
- *
- * `node "<path>"` and a bare `<path>` are the two shapes we write (and the two
- * a user plausibly hand-edits). A Windows drive prefix (`C:/…`) counts as
- * absolute; a relative path does not (see isOurHookCommand's contract).
- */
-function firstCommandToken(command: string): string | null {
-  const trimmed = command.trim();
-  // `node <script>` / `node "<script>"` — take the argument. The interpreter
-  // itself may be a path (quoted, and on Windows containing spaces).
-  const nodeInvocation = /^"?(?:[^"]*[/\\])?node(?:\.exe)?"?\s+(.+)$/.exec(trimmed);
-  const raw = nodeInvocation ? nodeInvocation[1] : trimmed;
-  const token = readToken(raw.trim());
-  if (token === null) return null;
-  const normalized = token.replace(/\\/g, '/');
-  const absolute = normalized.startsWith('/') || /^[a-zA-Z]:\//.test(normalized);
-  return absolute ? normalized : null;
-}
-
-/** Read one shell token: a quoted string, or characters up to the first
- *  terminator. Returns null when the token is empty or unterminated. */
-function readToken(raw: string): string | null {
-  const quote = raw[0];
-  if (quote === '"' || quote === "'") {
-    const end = raw.indexOf(quote, 1);
-    return end > 1 ? raw.slice(1, end) : null;
-  }
-  let end = 0;
-  while (end < raw.length && !PATH_TERMINATORS.has(raw[end])) end++;
-  return end > 0 ? raw.slice(0, end) : null;
 }
 
 /** Whether any command in the entry is ours (used by areHooksInstalled). */
@@ -418,8 +389,8 @@ function isOurHook(hook: ClaudeHookEntry['hooks'][number]): boolean {
 }
 
 /** Whether the parsed settings hold nothing a backup could preserve: every
- *  top-level key is `hooks`, and everything in it is exactly the shape our
- *  installer writes, running our script. This is what settings.json looks like
+ *  top-level key is `hooks` or `statusLine`, and everything in them is exactly
+ *  the shape our installers write, running our scripts. This is what settings.json looks like
  *  when OUR install created the file in a home that never had one — and a
  *  backup taken then would enshrine our own output as "the user's original"
  *  (observed: a fresh home's first uninstall backed up the install's 12
@@ -443,9 +414,16 @@ function isOurHook(hook: ClaudeHookEntry['hooks'][number]): boolean {
  *  because PAST installs legitimately differ in them: `command` (the script
  *  path moves between homes and versions — identity is isOurHook, the same
  *  suffix rule used everywhere else) and `timeout`. Deviation in anything
- *  else, present or added later, reads as the user's. */
-function settingsHoldOnlyOurHooks(settings: ClaudeSettings): boolean {
-  if (Object.keys(settings).some((key) => key !== 'hooks')) return false;
+ *  else, present or added later, reads as the user's.
+ *
+ *  `statusLine` counts as ours only in the one shape the wrapper installer
+ *  creates from nothing: makeTeeOnlyStatusLine(), our wrapper with no argument.
+ *  A wrapped user command, or any field beside `type` and `command`, is the
+ *  user's. That costs nothing: a status line the user had before our first
+ *  write already made that write take the one-time backup. */
+function settingsHoldOnlyOurs(settings: ClaudeSettings): boolean {
+  if (Object.keys(settings).some((key) => key !== 'hooks' && key !== 'statusLine')) return false;
+  if ('statusLine' in settings && !isTeeOnlyStatusLine(settings.statusLine)) return false;
   if (!('hooks' in settings)) return true;
   const hooks = settings.hooks;
   if (hooks === null || typeof hooks !== 'object' || Array.isArray(hooks)) {
@@ -484,6 +462,25 @@ function settingsHoldOnlyOurHooks(settings: ClaudeSettings): boolean {
     }
   }
   return true;
+}
+
+/** The statusLine the wrapper installer writes when there was none: the
+ *  writer's own fields, with `command` judged by identity (the path varies
+ *  across homes) and required to carry no argument. */
+function isTeeOnlyStatusLine(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const reference = new Map<string, unknown>(
+    Object.entries(makeTeeOnlyStatusLine(statuslineTeePath())),
+  );
+  const entries = Object.entries(value);
+  if (entries.length !== reference.size) return false;
+  return entries.every(([key, field]) => {
+    if (!reference.has(key)) return false;
+    if (key === 'command') {
+      return typeof field === 'string' && parseStatuslineCommand(field)?.original === null;
+    }
+    return isDeepStrictEqual(field, reference.get(key));
+  });
 }
 
 /** "This entry held only our hooks and is now empty — drop it."
@@ -721,29 +718,40 @@ export async function uninstallHooks(): Promise<void> {
   }
 }
 
-/** Copy the shipped hook script from the extension to ~/.pixel-agents/hooks/.
- *  Returns true if the script was copied, false if the source was missing or the
- *  copy failed, so callers can report the failure instead of logging a false
- *  success (issue #333: a path regression silently installed nothing). */
+/** Copy the shipped scripts (the hook script and the status line wrapper) from
+ *  the extension to ~/.pixel-agents/hooks/. They ship together, so every
+ *  install path refreshes both. Returns true only when every script was
+ *  copied, false if a source was missing or a copy failed, so callers can
+ *  report the failure instead of logging a false success (issue #333: a path
+ *  regression silently installed nothing). A missing source does not stop the
+ *  others from being refreshed. */
 export function copyHookScript(extensionPath: string): boolean {
-  const src = path.join(extensionPath, 'dist', 'hooks', CLAUDE_HOOK_SCRIPT_NAME);
-  const dst = getHookScriptPath();
-  const dstDir = path.dirname(dst);
-
+  const dstDir = path.join(os.homedir(), HOOK_SCRIPTS_DIR);
   try {
     if (!fs.existsSync(dstDir)) {
       fs.mkdirSync(dstDir, { recursive: true, mode: 0o700 });
     }
-    if (!fs.existsSync(src)) {
-      console.warn(`[Pixel Agents] Hook script not found at ${src}`);
-      return false;
-    }
-    fs.copyFileSync(src, dst);
-    fs.chmodSync(dst, 0o700);
-    console.log(`[Pixel Agents] Hook script installed at ${dst}`);
-    return true;
   } catch (e) {
     console.error(`[Pixel Agents] Failed to copy hook script: ${e}`);
     return false;
   }
+  let allCopied = true;
+  for (const name of HOOK_SCRIPT_NAMES) {
+    const src = path.join(extensionPath, 'dist', 'hooks', name);
+    const dst = path.join(dstDir, name);
+    try {
+      if (!fs.existsSync(src)) {
+        console.warn(`[Pixel Agents] Hook script not found at ${src}`);
+        allCopied = false;
+        continue;
+      }
+      fs.copyFileSync(src, dst);
+      fs.chmodSync(dst, 0o700);
+      console.log(`[Pixel Agents] Hook script installed at ${dst}`);
+    } catch (e) {
+      console.error(`[Pixel Agents] Failed to copy hook script: ${e}`);
+      allCopied = false;
+    }
+  }
+  return allCopied;
 }

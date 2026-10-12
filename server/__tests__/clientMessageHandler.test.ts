@@ -9,7 +9,12 @@ import {
   type ClientMessageContext,
   handleClientMessage,
 } from '../src/clientMessageHandler.js';
-import { getHooksEnabled, readConfig, setHooksEnabled } from '../src/configPersistence.js';
+import {
+  getHooksEnabled,
+  grantHooksConsent,
+  readConfig,
+  recordHooksDecline,
+} from '../src/configPersistence.js';
 import { FileStateAdapter } from '../src/fileStateAdapter.js';
 import { claudeProvider } from '../src/providers/hook/claude/claude.js';
 import { CLAUDE_HOOK_EVENTS } from '../src/providers/hook/claude/constants.js';
@@ -17,6 +22,7 @@ import { TokenLedger } from '../src/tokenLedger.js';
 import { DEFAULT_TRIPWIRE_RULES } from '../src/tripwireDefaults.js';
 import { applyTripwireHit } from '../src/tripwires.js';
 import type { AgentState } from '../src/types.js';
+import { UsageLimitsStore } from '../src/usage/usageLimitsStore.js';
 
 /** Let the setHooksEnabled dispatch's async chain (side effect →
  *  areHooksInstalled → persist → send) run to completion. */
@@ -163,6 +169,8 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
     });
 
     it('setHooksEnabled reports the actual outcome after the side effect settles', async () => {
+      // An answered ask: a toggle over an unanswered one asks first (consentFlow.test.ts).
+      grantHooksConsent('claude');
       let sideEffectRan = false;
       ctx.privileged = true;
       ctx.onSetHooksEnabled = async () => {
@@ -230,7 +238,8 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
 
     // The mirror case: an install that did not happen must not persist ON.
     it('does not persist hooks-on when the install failed', async () => {
-      setHooksEnabled('claude', false);
+      // A declined ask records hooks-off; toggling on over an answered ask installs directly.
+      recordHooksDecline('claude');
       ctx.privileged = true;
       ctx.onSetHooksEnabled = () => {
         /* the install failed: settings.json stays empty */
@@ -248,6 +257,7 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
 
     // The happy path still persists, or the toggle would do nothing at all.
     it('persists the preference when the outcome matches the request', async () => {
+      grantHooksConsent('claude');
       ctx.privileged = true;
       ctx.onSetHooksEnabled = () => seedInstalledHooks();
 
@@ -826,5 +836,35 @@ describe('clientMessageHandler: token ledger', () => {
     handleClientMessage({ type: 'setTokenBudgets', budget5h: 0 }, (m) => sent.push(m), ctx);
     expect(readConfig().standalone).not.toHaveProperty('tokenBudget5h');
     expect(refreshed.at(-1)).not.toHaveProperty('budget5h');
+  });
+
+  // A reload shows the official limits this process already holds, or that it receives them at all, without waiting
+  // for the next status line post.
+  it('sends the official limits on connect: an empty reading first, then what the store holds', () => {
+    const usageLimits = new UsageLimitsStore(store);
+    const connect = (): Array<Record<string, unknown>> => {
+      const out: Array<Record<string, unknown>> = [];
+      handleClientMessage({ type: 'webviewReady' }, (m) => out.push(m), { ...ctx, usageLimits });
+      return out.filter((m) => m.type === 'usageLimits');
+    };
+
+    expect(connect()).toEqual([
+      { type: 'usageLimits', receivedAt: 0, fiveHour: null, sevenDay: null },
+    ]);
+
+    const receivedAt = Date.parse('2026-10-12T12:00:00Z');
+    usageLimits.set(
+      { fiveHour: { usedPercentage: 37, resetsAt: receivedAt / 1000 + 3600 }, sevenDay: null },
+      receivedAt,
+    );
+
+    expect(connect()).toEqual([
+      {
+        type: 'usageLimits',
+        receivedAt,
+        fiveHour: { usedPercentage: 37, resetsAt: receivedAt + 3_600_000 },
+        sevenDay: null,
+      },
+    ]);
   });
 });

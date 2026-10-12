@@ -47,7 +47,10 @@ import {
 import { PathSet } from '../../server/src/pathKey.js';
 import type { ConsentEffects } from '../../server/src/providers/hook/consentExecutor.js';
 import { applyConsentChoice } from '../../server/src/providers/hook/consentExecutor.js';
-import { hooksConsentRequest } from '../../server/src/providers/hook/consentGate.js';
+import {
+  hooksConsentRequest,
+  toggleNeedsConsent,
+} from '../../server/src/providers/hook/consentGate.js';
 import {
   claudeProvider,
   copyHookScript,
@@ -60,6 +63,7 @@ import { PixelAgentsServer } from '../../server/src/server.js';
 import { TokenLedger } from '../../server/src/tokenLedger.js';
 import { loadTripwireRules } from '../../server/src/tripwireConfig.js';
 import { ackTripwire } from '../../server/src/tripwires.js';
+import { UsageLimitsStore } from '../../server/src/usage/usageLimitsStore.js';
 import {
   getProjectDirPath,
   launchNewTerminal,
@@ -107,6 +111,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   private runtime: AgentRuntime;
   private roster: RosterStore;
   private tokenLedger: TokenLedger | undefined;
+  // Official limits the status line wrapper posts. Only fed while this window
+  // owns the HTTP server; a window reusing another's never receives any.
+  private usageLimits: UsageLimitsStore;
 
   // Global session scanning dismissal tracking
   private globalDismissedFiles = new Set<string>();
@@ -231,6 +238,16 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       );
     }
 
+    // A new reset time anchors the ledger's block/week, so its captions read the
+    // quota while the wrapper posts.
+    this.usageLimits = new UsageLimitsStore(this.store, (window, resetsAt, now) => {
+      this.tokenLedger?.anchorQuota({
+        window: window === 'fiveHour' ? 'block' : 'week',
+        ts: now,
+        resetsAt,
+      });
+    });
+
     this.initServer();
   }
 
@@ -268,8 +285,13 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     });
 
     this.pixelAgentsServer
-      .start({ store: this.store, embedded: true })
+      .start({ store: this.store, embedded: true, usageLimits: this.usageLimits })
       .then((config) => {
+        // The owner receives the official limits: say so to a webview that is
+        // already up (a handshake that ran before this resolved could not).
+        if (this.pixelAgentsServer?.ownsHttpServer()) {
+          this.sendOrBuffer({ ...this.usageLimits.latest() });
+        }
         // Server always starts regardless of hooks-enabled state.
         // It's the foundation for WebSocket transport and health monitoring.
         // Only hook installation/script-copy is gated by the toggle. The
@@ -300,9 +322,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     port: number | undefined,
     token: string | undefined,
   ): Promise<void> {
-    // The bundled claude-hook.js script belongs to the Claude provider alone;
-    // another provider's install must neither copy it nor be blocked by it.
-    if (provider.id === claudeProvider.id && !copyHookScript(this.context.extensionPath)) {
+    // Every registered provider runs one of the bundled scripts (the hook
+    // script, the status line wrapper), so they are copied before any install.
+    if (!copyHookScript(this.context.extensionPath)) {
       vscode.window.showErrorMessage(
         'Pixel Agents: could not install the hook script — hooks not installed.',
       );
@@ -338,8 +360,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
    */
   private async setHooksEnabled(provider: HookProvider, enabled: boolean): Promise<void> {
     if (enabled) {
-      // An explicit Settings toggle IS the consent to modify the provider's
-      // settings file.
+      // Reached by a toggle whose ask was already answered, or by an Install
+      // answer (onHooksToggle asks first when it was not): either way the user
+      // has approved modifying the provider's settings file.
       grantHooksConsent(provider.id);
       const serverConfig = this.pixelAgentsServer?.getConfig();
       await this.installHooksAndScript(provider, serverConfig?.port, serverConfig?.token);
@@ -372,6 +395,31 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     // Report the truth either way: on failure the entries are still on disk and
     // still firing, and a checkbox stuck "off" over live hooks offers no retry.
     this.sendOrBuffer({ type: 'hooksStatus', providerId: provider.id, installed });
+  }
+
+  /** The Settings toggle. An off-by-default provider's toggle-on whose ask was never answered records the preference
+   *  and asks first (the same consent request the handshake sends); the answer then installs through the consent
+   *  executor. Everything else, the hooks included, takes the direct path. Same rule as the standalone handler
+   *  (consentGate.toggleNeedsConsent). */
+  private async onHooksToggle(provider: HookProvider, enabled: boolean): Promise<void> {
+    if (!toggleNeedsConsent(enabled, getHooksConsent(provider.id), provider.defaultEnabled)) {
+      await this.setHooksEnabled(provider, enabled);
+      return;
+    }
+    persistHooksEnabled(provider.id, true);
+    const installed = await provider.areHooksInstalled().catch(() => false);
+    const request = hooksConsentRequest(
+      {
+        installed,
+        hooksEnabled: getHooksEnabled(provider.id),
+        consentAnswered: getHooksConsent(provider.id) !== 'unanswered',
+        privileged: true,
+      },
+      provider,
+    );
+    // Nothing to approve (our install is already on disk): install as before.
+    if (request) this.sendOrBuffer({ ...request });
+    else await this.setHooksEnabled(provider, true);
   }
 
   /** Broadcast the ACTUAL install state, re-derived from the provider's settings file. Every failure path calls it so
@@ -549,7 +597,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         // unknown id names nothing to install into, so it is dropped like a
         // junk consent choice.
         const provider = hookProviderById(message.providerId);
-        if (provider) void this.setHooksEnabled(provider, message.enabled as boolean);
+        if (provider) void this.onHooksToggle(provider, message.enabled as boolean);
       } else if (message.type === 'hooksConsentResponse') {
         const provider = hookProviderById(message.providerId);
         if (provider) {
@@ -722,6 +770,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         if (this.tokenLedger) {
           this.webview?.postMessage({ ...this.tokenLedger.snapshot() });
           this.tokenLedger.start();
+        }
+        // Official limits, on every handshake: only the window that owns the
+        // HTTP server receives them, so only it says it is listening.
+        if (this.pixelAgentsServer?.ownsHttpServer()) {
+          this.webview?.postMessage({ ...this.usageLimits.latest() });
         }
 
         restoreAgents(

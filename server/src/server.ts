@@ -23,6 +23,7 @@ import type { ServerConfig } from './serverConfig.js';
 import { isServerConfig, isServerTarget } from './serverConfig.js';
 import { loadOrCreateToken } from './serverToken.js';
 import type { TokenLedger } from './tokenLedger.js';
+import type { UsageLimitsStore } from './usage/usageLimitsStore.js';
 
 export type { ServerConfig } from './serverConfig.js';
 
@@ -35,6 +36,7 @@ type HookEventCallback = (providerId: string, event: Record<string, unknown>) =>
  *
  * Routes (via Fastify in httpServer.ts):
  * - `POST /api/hooks/:providerId` -- hook event (auth required, 64KB body limit)
+ * - `POST /api/statusline/:providerId` -- official usage limits from the status line wrapper (auth required)
  * - `GET /api/health` -- health check (no auth)
  * - `GET /ws` -- WebSocket for real-time agent state (auth required)
  *
@@ -75,6 +77,7 @@ export class PixelAgentsServer {
     tokenLedger?: TokenLedger;
     /** The CLI's `--token`: used as given, and the token file is neither read nor written. */
     token?: string;
+    usageLimits?: UsageLimitsStore;
   }): Promise<ServerConfig> {
     const embedded = options?.embedded ?? true;
     const wantsSpa = !embedded;
@@ -120,6 +123,7 @@ export class PixelAgentsServer {
       onSetHooksEnabled: options?.onSetHooksEnabled,
       onReloadAssets: options?.onReloadAssets,
       tokenLedger: options?.tokenLedger,
+      usageLimits: options?.usageLimits,
     });
 
     this.app = app;
@@ -163,6 +167,12 @@ export class PixelAgentsServer {
   /** Returns the current server config, or null if not started. */
   getConfig(): ServerConfig | null {
     return this.config;
+  }
+
+  /** Whether this process runs the HTTP server, rather than reusing another
+   *  window's. Only the owner receives what the scripts post. */
+  ownsHttpServer(): boolean {
+    return this.ownsServer;
   }
 
   /** Returns the absolute path to ~/.pixel-agents/server.json. */

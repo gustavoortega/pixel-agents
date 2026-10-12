@@ -19,7 +19,7 @@ vi.mock('os', async () => {
 
 const { PixelAgentsServer } = await import('../src/server.js');
 const { AgentStateStore } = await import('../src/agentStateStore.js');
-const { grantHooksConsent } = await import('../src/configPersistence.js');
+const { grantHooksConsent, recordHooksDecline } = await import('../src/configPersistence.js');
 
 /** How long to wait, after the handshake, for a server-side rejection close.
  *  The gate runs synchronously in the route handler, so a rejection lands
@@ -382,6 +382,8 @@ describe('/ws privileged-message gate', () => {
   // (webview-ui/src/transport/index.ts). The toggle installs, exactly as
   // documented ("enable hooks in the UI settings").
   it('allows setHooksEnabled from the local SPA', async () => {
+    // An answered ask, so the toggle installs instead of asking first (consentFlow.test.ts).
+    recordHooksDecline('claude');
     const { port, token } = await startStandalone();
 
     const result = await connectTo(
@@ -397,6 +399,7 @@ describe('/ws privileged-message gate', () => {
 
   // ...and over `localhost`, which resolves to ::1 as often as 127.0.0.1.
   it('allows setHooksEnabled over a localhost URL', async () => {
+    recordHooksDecline('claude');
     const { port, token } = await startStandalone();
 
     const result = await connectTo(

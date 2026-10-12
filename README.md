@@ -22,6 +22,8 @@ This is a fork of [pixel-agents](https://github.com/pixel-agents-hq/pixel-agents
 
 **Token usage.** The Usage panel ranks rooms and sessions by tokens in the current 5-hour block and the week, weighted by cost. Budgets are optional.
 
+**Official limits.** Turn on "Claude status line (official limits)" in Settings to see Claude Code's own 5-hour and weekly usage in the Usage panel and the HUD, with the pace you are on. It wraps your status line command, which keeps running unchanged, and sends only those two numbers to the local server. macOS and Linux for now.
+
 **Tripwires.** 14 rules flag risky tool calls with an alarm on the agent: credential and key reads, `curl | sh`, force pushes, `rm -rf ~`, cloud and cluster writes, tampering with the hooks. Matched text never leaves the local server. See [docs/tripwires.md](docs/tripwires.md).
 
 **Day and night.** Light follows your clock: window light in the morning, a darker room at night lit by the lamp, the active monitors and the fairy lights.

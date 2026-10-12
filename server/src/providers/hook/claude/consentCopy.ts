@@ -61,3 +61,34 @@ export const CONSENT_DISCLOSURE = [
   CONSENT_FACT_DATA,
   CONSENT_FACT_REVERSIBLE,
 ].join('\n\n');
+
+// ── The status line wrapper (provider 'claude-statusline') ──
+// Static text on purpose, no interpolation: these facts describe what the
+// wrapper does, and none of them varies with configuration.
+
+/** Title of the consent step for the official usage limits. */
+export const STATUSLINE_CONSENT_HEADLINE = "Read Claude Code's official usage limits?";
+
+/** WHAT changes, and what stays the user's. */
+const STATUSLINE_CONSENT_FACT_WHAT =
+  'Pixel Agents wraps statusLine.command in ~/.claude/settings.json with ' +
+  '~/.pixel-agents/hooks/statusline-tee.js. Your command, its output and its exit code are untouched. ' +
+  'Like the hooks, it needs `node` on your PATH, and it takes effect in your next Claude Code session.';
+
+/** WHAT is sent, and what never is. */
+const STATUSLINE_CONSENT_FACT_DATA =
+  'On each status line refresh, only rate_limits.five_hour and rate_limits.seven_day (used percentage and ' +
+  'reset time) go to the Pixel Agents server on 127.0.0.1. Nothing else from the status line input is sent: ' +
+  'no working directory, model, session, cost or transcript path.';
+
+/** HOW to undo it, including when the app is gone first. */
+const STATUSLINE_CONSENT_FACT_REVERSIBLE =
+  'Turning it off in Settings restores your original command exactly. If you remove Pixel Agents first, ' +
+  'the wrapper keeps running your command unchanged, and the original stays readable inside the command.';
+
+/** The status line ask's body: three paragraphs, split on the blank lines like the hooks disclosure. */
+export const STATUSLINE_CONSENT_DISCLOSURE = [
+  STATUSLINE_CONSENT_FACT_WHAT,
+  STATUSLINE_CONSENT_FACT_DATA,
+  STATUSLINE_CONSENT_FACT_REVERSIBLE,
+].join('\n\n');

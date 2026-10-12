@@ -210,6 +210,23 @@ describe('TokenLedger', () => {
       });
     });
 
+    // The status line's official limits anchor the windows the same way a transcript quota record does, so the
+    // captions read the quota while the wrapper posts.
+    it('anchors the block to a reset reported from outside the transcripts, and emits the change', async () => {
+      write('-Users-x-repo/s1.jsonl', [usageLine({ id: 'm', sid: 's1', ts: NOW - 6 * H })]);
+      const l = ledger();
+      await scan(l);
+      const resetsAt = NOW + 2 * H;
+
+      l.anchorQuota({ window: 'block', ts: NOW, resetsAt });
+
+      expect(emitted.at(-1)?.block).toMatchObject({
+        source: 'quota',
+        start: resetsAt - 5 * H,
+        end: resetsAt,
+      });
+    });
+
     it('has no block when now is outside every block, and a block when inside one', async () => {
       write('-Users-x-repo/s1.jsonl', [usageLine({ id: 'm', sid: 's1', ts: NOW - 6 * H })]);
       expect((await scan(ledger())).block).toBeUndefined();
@@ -376,6 +393,30 @@ describe('TokenLedger', () => {
       expect(after.week).toEqual(before.week);
       expect(after.week?.source).toBe('quota');
       expect(after.week?.bySession[0].title).toBe('kept');
+    });
+
+    // The status line can anchor before the first pass: VS Code starts the ledger on the first webviewReady, the CLI
+    // after the hook install. The store reports a reset time only once, so a cache loaded over that anchor would
+    // leave the captions estimated for the rest of the window.
+    it('keeps an anchor that arrived before the first pass over an older cached one', async () => {
+      write('-Users-x-repo/s1.jsonl', [
+        usageLine({ id: 'm1', sid: 's1', ts: NOW - H }),
+        quotaLine(NOW - 3 * H, 'five_hour', (NOW - H) / 1000),
+      ]);
+      const first = ledger();
+      await scan(first);
+      first.dispose();
+      const resetsAt = NOW + 2 * H;
+
+      const second = ledger();
+      second.anchorQuota({ window: 'block', ts: NOW, resetsAt });
+      const after = await scan(second);
+
+      expect(after.block).toMatchObject({
+        source: 'quota',
+        start: resetsAt - 5 * H,
+        end: resetsAt,
+      });
     });
 
     it('treats a corrupt cache as absent and scans cold', async () => {

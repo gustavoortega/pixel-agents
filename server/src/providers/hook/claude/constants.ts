@@ -10,6 +10,17 @@ import type { ModelTier } from '../../../../../core/src/provider.js';
 
 /** Output filename after esbuild compiles claude-hook.ts to CJS (source is .ts, output is .js) */
 export const CLAUDE_HOOK_SCRIPT_NAME = 'claude-hook.js';
+/** Output filename of statusline-tee.ts, the wrapper chained in front of the user's statusLine command. */
+export const STATUSLINE_TEE_SCRIPT_NAME = 'statusline-tee.js';
+/** Every bundled script copied to ~/.pixel-agents/hooks/. They ship together, so one copy step refreshes both. */
+export const HOOK_SCRIPT_NAMES = [CLAUDE_HOOK_SCRIPT_NAME, STATUSLINE_TEE_SCRIPT_NAME] as const;
+
+/** The tee reads at most this much of its stdin before giving up on the JSON. The status line input is a few KB;
+ *  past the cap the bytes still reach the user's command, they are just not parsed. */
+export const STATUSLINE_STDIN_CAP_BYTES = 256 * 1024;
+/** Each POST from the tee is destroyed this long after it was created, so a dead or slow server can never hold
+ *  the status line back by more than this. */
+export const STATUSLINE_POST_BUDGET_MS = 150;
 
 /** The script name we shipped before the rename to claude-hook.js. Still
  *  recognized as ours so a very old install can be migrated or removed. */

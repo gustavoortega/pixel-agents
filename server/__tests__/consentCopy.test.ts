@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CONSENT_DISCLOSURE,
   CONSENT_INSTALL_HEADLINE,
+  STATUSLINE_CONSENT_DISCLOSURE,
 } from '../src/providers/hook/claude/consentCopy.js';
 import {
   CLAUDE_HOOK_EVENTS,
@@ -64,5 +65,23 @@ describe('consent copy', () => {
   // would be a silent legibility regression.
   it('is a paragraph-separated block', () => {
     expect(CONSENT_DISCLOSURE.split('\n\n')).toHaveLength(3);
+  });
+
+  // The status line wrapper's ask: what changes, the privacy promise the two-window body keeps, and an undo that
+  // puts the original back. settings.json gets one backup ever, shared with the hooks, so promising one here would
+  // be false.
+  it('says what the status line wrapper changes, sends and undoes, and promises no backup', () => {
+    expect(STATUSLINE_CONSENT_DISCLOSURE).toContain('statusLine.command');
+    expect(STATUSLINE_CONSENT_DISCLOSURE).toContain('~/.claude/settings.json');
+    expect(STATUSLINE_CONSENT_DISCLOSURE).toContain('statusline-tee.js');
+    expect(STATUSLINE_CONSENT_DISCLOSURE).toContain('rate_limits.five_hour');
+    expect(STATUSLINE_CONSENT_DISCLOSURE).toContain('rate_limits.seven_day');
+    expect(STATUSLINE_CONSENT_DISCLOSURE).toContain('127.0.0.1');
+    expect(STATUSLINE_CONSENT_DISCLOSURE).toContain(
+      'Nothing else from the status line input is sent',
+    );
+    expect(STATUSLINE_CONSENT_DISCLOSURE).toContain('restores your original command exactly');
+    expect(STATUSLINE_CONSENT_DISCLOSURE.toLowerCase()).not.toContain('backup');
+    expect(STATUSLINE_CONSENT_DISCLOSURE.split('\n\n')).toHaveLength(3);
   });
 });

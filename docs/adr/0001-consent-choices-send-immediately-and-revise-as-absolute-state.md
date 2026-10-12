@@ -33,12 +33,18 @@ a TRI-STATE (`'granted' | 'declined'`, absent = unanswered) rather than a boolea
 
 `consentActionFor(choice, { installed, consent })`, in `server/src/providers/hook/`:
 
-| choice | nothing left | grant (installed or not) | decline |
-| --- | --- | --- | --- |
-| `install` | `install` | `install` | `install` |
-| `never` | `persistOff` | `disable` if installed, else `persistOff` | `persistOff` |
-| `notNow` | `none` | `revert` | `revertDecline` |
-| anything else | `none` | `none` | `none` |
+| choice        | nothing left | grant (installed or not)                  | decline         | a toggle's raised preference |
+| ------------- | ------------ | ----------------------------------------- | --------------- | ---------------------------- |
+| `install`     | `install`    | `install`                                 | `install`       | `install`                    |
+| `never`       | `persistOff` | `disable` if installed, else `persistOff` | `persistOff`    | `persistOff`                 |
+| `notNow`      | `none`       | `revert`                                  | `revertDecline` | `revertDecline`              |
+| anything else | `none`       | `none`                                    | `none`          | `none`                       |
+
+The last column (added with docs/adr/0002) is an ask a Settings toggle-on raised: the toggle recorded the
+preference ON above the provider's off-by-default default and asked instead of installing. Nothing was answered, so
+that preference is all the ask left, and a "Not Now" takes it back like a decline's own hooks-off; a `revert` over
+an install that ask led to clears it as well. For a default-on provider a recorded `true` is the default, so the
+column never applies.
 
 - `install` grants and installs through the same path as the Settings toggle. A grant
   REPLACING a decline also deletes that decline's hooks-off remnant in the same write:

@@ -13,7 +13,6 @@
   "ignoreBinaries": ["mkfifo"],
   "ignore": [
     "core/src/index.ts",
-    "server/src/providers/hook/claude/hooks/claude-hook.ts",
     "webview-ui/src/office/components/index.ts",
     "webview-ui/src/office/editor/index.ts",
     "webview-ui/src/office/engine/index.ts",
@@ -38,6 +37,8 @@
         "src/server.ts",
         "src/cli.ts",
         "src/memory/mcpMain.ts",
+        "src/providers/hook/claude/hooks/claude-hook.ts",
+        "src/providers/hook/claude/hooks/statusline-tee.ts",
         "__tests__/**/*.ts"
       ],
       "project": [

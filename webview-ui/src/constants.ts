@@ -667,6 +667,13 @@ export const HUD_ACTIVE_FONT_PX = 16;
 export const HUD_GLYPH_PX = 20;
 export const HUD_CARD_MIN_HEIGHT_PX = 52;
 
+// ── Official usage limits (status line wrapper) ─────────────────
+/** Hook provider ids the Settings checkboxes toggle (HookProvider.id on the server). */
+export const CLAUDE_HOOKS_PROVIDER_ID = 'claude';
+export const CLAUDE_STATUSLINE_PROVIDER_ID = 'claude-statusline';
+/** Refresh of the "resets in" countdowns and the staleness label, ms. */
+export const USAGE_LIMITS_TICK_MS = 30_000;
+
 // ── Cozy look: camera fit ───────────────────────────────────────
 /** Canvas left free around the framed rooms (or the whole map), in CSS px: a fixed length, not a tile count. */
 export const FIT_PADDING_CSS_PX = 8;

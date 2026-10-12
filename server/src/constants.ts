@@ -97,6 +97,7 @@ export {
   SERVER_JSON_DIR,
   SERVER_JSON_NAME,
   SESSION_TITLE_MAX_LENGTH,
+  STATUSLINE_API_PREFIX,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
 } from '../../core/src/constants.js';
 
@@ -184,3 +185,12 @@ export const TOKEN_LEDGER_CACHE_FILE = 'ledger-cache.json';
 /** Paid signal keys remembered per agent. A key only has to outlive re-reads of its own
  *  record, so the oldest are dropped past this. */
 export const SIGNAL_KEYS_MAX = 500;
+
+// ── Official usage limits (POST /api/statusline/:providerId) ──
+/** Highest used percentage accepted. Claude Code reports more than 100 once a
+ *  window is overdrawn; the wrapper script it was modelled on caps at 1000. */
+export const USAGE_LIMIT_MAX_PCT = 1000;
+/** resetsAt arrives in epoch SECONDS: anything outside [1e9, 1e11) is a unit
+ *  mix-up (milliseconds) or junk, never a reset time. */
+export const USAGE_LIMIT_RESETS_AT_MIN_S = 1e9;
+export const USAGE_LIMIT_RESETS_AT_MAX_S = 1e11;
