@@ -29,6 +29,12 @@ export interface PersistedAgent {
    *  transcripts are re-adopted after a reload; the spawned children
    *  themselves are derived state and never persisted. */
   backgroundAgentToolIds?: string[];
+  /** Workflow tool_use id -> runId on a lead, so a run's completion
+   *  notification still ends its helpers after a restart. */
+  workflowRuns?: Record<string, string>;
+  /** Workflow runs a lead knows finished, so a restart does not revive their
+   *  unfinished agents. Pruned with the run dirs. */
+  completedWorkflowRunIds?: string[];
   /** Preferred character palette (0-5). Persisted so colors stay stable
    *  across server restarts; assignPaletteIfNeeded is a no-op on restore. */
   palette?: number;

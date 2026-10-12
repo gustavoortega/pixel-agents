@@ -362,7 +362,11 @@ components:
           type: integer
 
     SubagentToolStart:
-      description: Sub-agent (e.g. Task) started a tool.
+      description: >-
+        Sub-agent (e.g. Task) started a tool. A workflow agent's parentToolId is
+        synthetic (`wf:<runId>:<agentId>`, no parent tool on the lead) and every
+        one of its starts carries `label` and `group`, so a client that missed
+        the first one can still name the helper it creates.
       type: object
       additionalProperties: false
       required: [type, id, parentToolId, toolId, status]
@@ -377,6 +381,14 @@ components:
           type: string
         status:
           type: string
+        label:
+          description: Workflow agent label from the run journal, single-spaced, without control or format characters. Absent for other sub-agents.
+          type: string
+          maxLength: 60
+        group:
+          description: Workflow phase of the agent, single-spaced, without control or format characters. Absent when the journal has none.
+          type: string
+          maxLength: 40
 
     SubagentToolDone:
       description: Sub-agent finished a tool.

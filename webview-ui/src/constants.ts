@@ -78,6 +78,10 @@ export const HOVERED_OUTLINE_ALPHA = 0.5;
 export const HEADLESS_CHARACTER_ALPHA = 0.5;
 /** Helper look: an Adjust-mode shift applied to every non-skin pixel of the parent's sheet. */
 export const HELPER_LOOK = { h: 0, s: -70, b: 10, c: 0 } as const;
+/** Workflow crew helpers drawn per lead; the rest wait undrawn and count in "+N helpers". */
+export const WORKFLOW_MAX_VISIBLE_HELPERS = 12;
+/** A crew helper's plate shows this many code points of its label before an ellipsis. */
+export const HELPER_PLATE_LABEL_MAX_CODE_POINTS = 24;
 export const GHOST_PREVIEW_SPRITE_ALPHA = 0.5;
 export const GHOST_PREVIEW_TINT_ALPHA = 0.25;
 export const SELECTION_DASH_PATTERN: [number, number] = [4, 3];

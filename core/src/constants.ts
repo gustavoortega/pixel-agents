@@ -20,6 +20,16 @@ export const TASK_DESCRIPTION_DISPLAY_MAX_LENGTH = 40;
  *  prompts, so the cap bounds both the message and the label. */
 export const SESSION_TITLE_MAX_LENGTH = 200;
 
+// ── Workflow crews ───────────────────────────────────────────
+
+/** A workflow agent has no parent tool on its lead: its helper is keyed by a
+ *  synthetic parentToolId with this prefix (`wf:<runId>:<agentId>`). The webview
+ *  reads the prefix to tell a crew helper from a Task/Agent one. */
+export const WORKFLOW_PARENT_TOOL_ID_PREFIX = 'wf:';
+/** Code-point caps for SubagentToolStart.label / .group (asyncapi maxLength). */
+export const WORKFLOW_LABEL_MAX_LENGTH = 60;
+export const WORKFLOW_GROUP_MAX_LENGTH = 40;
+
 // ── Transport ────────────────────────────────────────────────
 // Connection-state names for the MessageTransport state machine.
 

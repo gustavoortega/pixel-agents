@@ -15,6 +15,9 @@
  * and re-emits them on the MAIN store as the existing subagent* messages,
  * keyed to (lead id, spawn tool_use id) — the same key the webview already
  * uses for the Subtask sub-character. No protocol change.
+ *
+ * Workflow agents (workflowRuns.ts) ride the same store with a synthetic spawn
+ * id per agent, `wf:<runId>:<agentId>`, plus a label and group for the plate.
  */
 
 import type * as fs from 'fs';
@@ -32,10 +35,25 @@ import type { AgentState } from './types.js';
  *  no-op instead of touching an unrelated real agent. */
 const SHADOW_ID_BASE = 1_000_000;
 
-/** A sub-agent transcript adoption request (sidecar-backed, unnamed). */
+/** A sub-agent transcript adoption request: an unnamed sidecar-backed spawn,
+ *  or a workflow agent keyed by its synthetic `wf:<runId>:<agentId>` id. */
 export interface SubagentWatchEntry {
   jsonlPath: string;
   toolUseId: string;
+  /** Workflow agents: sent on every subagentToolStart, so a webview that
+   *  recreates the helper after a reconnect can still name it. */
+  label?: string;
+  group?: string;
+  /** Where reading starts (default 0, a full replay). A long transcript is
+   *  tailed instead: its helper appears on the agent's next tool. */
+  startOffset?: number;
+}
+
+interface SubKey {
+  leadId: number;
+  spawnToolUseId: string;
+  label?: string;
+  group?: string;
 }
 
 export class SubagentWatch {
@@ -48,7 +66,7 @@ export class SubagentWatch {
   /** Shadow id → the (lead, spawn tool) the webview keys the sub-character on.
    *  Kept here (not read off AgentState) so transcript-parser mutations of the
    *  shadow agent's team fields can never break the translation. */
-  private readonly subKeys = new Map<number, { leadId: number; spawnToolUseId: string }>();
+  private readonly subKeys = new Map<number, SubKey>();
   /** Shadow id → tool ids started but not yet done (for toolsClear synthesis). */
   private readonly liveToolIds = new Map<number, Set<string>>();
 
@@ -65,8 +83,14 @@ export class SubagentWatch {
     return false;
   }
 
-  /** Start watching an unnamed background spawn's transcript for the given lead. */
-  watch(lead: AgentState, leadId: number, entry: SubagentWatchEntry): void {
+  /** Start watching a sub-agent's transcript for the given lead. Idempotent per
+   *  (lead, spawn id): a second call returns the existing shadow, so two scans
+   *  deciding on the same spawn never start a second watcher or a second
+   *  subagentToolStart stream. Returns the shadow id. */
+  watch(lead: AgentState, leadId: number, entry: SubagentWatchEntry): number {
+    for (const [shadowId, key] of this.subKeys) {
+      if (key.leadId === leadId && key.spawnToolUseId === entry.toolUseId) return shadowId;
+    }
     const id = this.store.nextAgentId.current++;
     const agent: AgentState = {
       id,
@@ -77,7 +101,7 @@ export class SubagentWatch {
       isExternal: true,
       projectDir: lead.projectDir,
       jsonlFile: entry.jsonlPath,
-      fileOffset: 0,
+      fileOffset: entry.startOffset ?? 0,
       lineBuffer: '',
       activeToolIds: new Set(),
       activeToolStatuses: new Map(),
@@ -98,7 +122,12 @@ export class SubagentWatch {
       spawnToolUseId: entry.toolUseId,
     };
 
-    this.subKeys.set(id, { leadId, spawnToolUseId: entry.toolUseId });
+    this.subKeys.set(id, {
+      leadId,
+      spawnToolUseId: entry.toolUseId,
+      label: entry.label,
+      group: entry.group,
+    });
     this.store.set(id, agent);
 
     console.log(
@@ -115,14 +144,15 @@ export class SubagentWatch {
       this.permissionTimers,
     );
     readNewLines(id, this.store, this.waitingTimers, this.permissionTimers);
+    return id;
   }
 
-  /** Stop the watch matching a completed spawn (queue-operation on the lead). */
+  /** Stop every watch matching a completed spawn (queue-operation on the lead,
+   *  or a workflow agent's teardown). */
   removeBySpawn(leadId: number, toolUseId: string): void {
-    for (const [id, key] of this.subKeys) {
+    for (const [id, key] of [...this.subKeys]) {
       if (key.leadId === leadId && key.spawnToolUseId === toolUseId) {
         this.remove(id);
-        return;
       }
     }
   }
@@ -142,6 +172,9 @@ export class SubagentWatch {
     }
   }
 
+  /** Timers go before the key: once the key is gone, anything the shadow still
+   *  broadcasts (a text-idle "waiting" that would flush a done batch) finds no
+   *  key in translate() and is dropped. */
   private remove(id: number): void {
     this.fileWatchers.get(id)?.close();
     this.fileWatchers.delete(id);
@@ -171,7 +204,7 @@ export class SubagentWatch {
     const shadowId = message.id as number;
     const key = this.subKeys.get(shadowId);
     if (!key) return;
-    const { leadId, spawnToolUseId } = key;
+    const { leadId, spawnToolUseId, label, group } = key;
 
     switch (message.type) {
       case 'agentToolStart': {
@@ -188,6 +221,8 @@ export class SubagentWatch {
           parentToolId: spawnToolUseId,
           toolId,
           status: message.status,
+          ...(label !== undefined ? { label } : {}),
+          ...(group !== undefined ? { group } : {}),
         });
         break;
       }

@@ -148,13 +148,38 @@ function getAllSessionRoots(): string[] {
 // currentHookToolId state. Synthetic hook-* ids are returned for PreToolUse because
 // the real tool id arrives later via JSONL polling.
 
+/** Session lifecycle events. Fired inside a sub-agent (agent_id set) they say
+ *  nothing about the session itself, and Stop would normalize to the same
+ *  turnEnd as Notification(idle_prompt), which must keep its path, so the
+ *  handler could no longer tell them apart. Dropped here instead. */
+const SESSION_ONLY_EVENTS: ReadonlySet<string> = new Set([
+  'Stop',
+  'SessionStart',
+  'SessionEnd',
+  'UserPromptSubmit',
+  'PreCompact',
+]);
+
 function normalizeHookEvent(
   raw: Record<string, unknown>,
-): { sessionId: string; event: AgentEvent } | null {
+): { sessionId: string; event: AgentEvent; agentId?: string } | null {
   const eventName = raw.hook_event_name;
   const sessionId = raw.session_id;
   if (typeof eventName !== 'string' || typeof sessionId !== 'string') return null;
+  // Claude stamps agent_id on every hook that fires inside a sub-agent.
+  const agentId =
+    typeof raw.agent_id === 'string' && raw.agent_id.length > 0 ? raw.agent_id : undefined;
+  if (agentId !== undefined && SESSION_ONLY_EVENTS.has(eventName)) return null;
+  const normalized = normalizeSessionEvent(eventName, sessionId, raw);
+  if (!normalized || agentId === undefined) return normalized;
+  return { ...normalized, agentId };
+}
 
+function normalizeSessionEvent(
+  eventName: string,
+  sessionId: string,
+  raw: Record<string, unknown>,
+): { sessionId: string; event: AgentEvent } | null {
   switch (eventName) {
     case 'PreToolUse': {
       const toolName = typeof raw.tool_name === 'string' ? raw.tool_name : '';
@@ -214,7 +239,14 @@ function normalizeHookEvent(
     case 'SubagentStop':
       return {
         sessionId,
-        event: { kind: 'subagentEnd', parentToolId: 'current', toolId: 'current' },
+        event: {
+          kind: 'subagentEnd',
+          parentToolId: 'current',
+          toolId: 'current',
+          ...(typeof raw.agent_transcript_path === 'string'
+            ? { transcriptPath: raw.agent_transcript_path }
+            : {}),
+        },
       };
 
     case 'PermissionRequest':

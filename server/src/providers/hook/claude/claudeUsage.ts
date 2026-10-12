@@ -15,6 +15,8 @@ import type {
  */
 
 const SUBAGENTS_DIR = 'subagents';
+const WORKFLOWS_DIR = 'workflows';
+const WORKFLOW_RUN_DIR_PREFIX = 'wf_';
 
 /** Lines worth a JSON parse: usage-bearing assistant records and the two title record kinds. Quota announcements
  *  ride on usage-bearing (synthetic error) records. */
@@ -56,6 +58,35 @@ async function statIfFresh(
   }
 }
 
+/** Workflow agents' transcripts: `workflows/wf_<runId>/agent-<id>.jsonl`, one
+ *  level deep only. Their records carry the lead's sessionId, so they count to
+ *  the lead's session through the same per-path read as every other file. */
+async function listWorkflowTranscripts(
+  workflowsDir: string,
+  projectDirName: string,
+  leadSessionId: string,
+  minMtimeMs: number,
+): Promise<UsageTranscript[]> {
+  const out: UsageTranscript[] = [];
+  for (const run of await readDirSafe(workflowsDir)) {
+    if (!run.isDirectory() || !run.name.startsWith(WORKFLOW_RUN_DIR_PREFIX)) continue;
+    const runDir = path.join(workflowsDir, run.name);
+    for (const file of await readDirSafe(runDir)) {
+      if (!file.isFile() || !file.name.startsWith('agent-') || !file.name.endsWith('.jsonl')) {
+        continue;
+      }
+      const t = await statIfFresh(
+        path.join(runDir, file.name),
+        projectDirName,
+        leadSessionId,
+        minMtimeMs,
+      );
+      if (t) out.push(t);
+    }
+  }
+  return out;
+}
+
 export function createClaudeTranscriptUsage(
   extractTitle: (record: unknown) => { customTitle?: string; aiTitle?: string } | null,
 ): TranscriptUsageSource {
@@ -64,7 +95,8 @@ export function createClaudeTranscriptUsage(
 
     usageRoot: () => path.join(os.homedir(), '.claude', 'projects'),
 
-    /** `<root>/<project>/<session>.jsonl` and `<root>/<project>/<session>/subagents/*.jsonl`. */
+    /** `<root>/<project>/<session>.jsonl`, `<root>/<project>/<session>/subagents/*.jsonl` and
+     *  `<root>/<project>/<session>/subagents/workflows/wf_<runId>/agent-<id>.jsonl`. */
     async listTranscripts(root, minMtimeMs): Promise<UsageTranscript[]> {
       const out: UsageTranscript[] = [];
       for (const project of await readDirSafe(root)) {
@@ -82,6 +114,17 @@ export function createClaudeTranscriptUsage(
           } else if (entry.isDirectory()) {
             const subDir = path.join(projectPath, entry.name, SUBAGENTS_DIR);
             for (const sub of await readDirSafe(subDir)) {
+              if (sub.isDirectory() && sub.name === WORKFLOWS_DIR) {
+                out.push(
+                  ...(await listWorkflowTranscripts(
+                    path.join(subDir, sub.name),
+                    project.name,
+                    entry.name,
+                    minMtimeMs,
+                  )),
+                );
+                continue;
+              }
               if (!sub.isFile() || !sub.name.endsWith('.jsonl')) continue;
               const t = await statIfFresh(
                 path.join(subDir, sub.name),

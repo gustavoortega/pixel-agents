@@ -41,6 +41,29 @@ export const CONTEXT_WINDOW_TIERS = [200_000, 1_000_000] as const;
  *  adoption or restore. Comfortably more than one turn's worth of records. */
 export const CONTEXT_SEED_TAIL_BYTES = 256 * 1024;
 
+// ── Workflow crews (workflowRuns.ts) ────────────────────────
+/** An untracked run is adopted only if its journal or one of its agent
+ *  transcripts moved within this window; a tracked run with nobody live is
+ *  dropped only once that same test would turn it away. */
+export const WORKFLOW_RUN_MAX_AGE_MS = 7_200_000;
+/** A started agent whose transcript has been quiet this long is torn down (it
+ *  stays a candidate and comes back if the transcript moves again). */
+export const WORKFLOW_AGENT_STALE_MS = 900_000;
+/** On attach, a transcript up to this size is replayed from the start; a larger
+ *  one is tailed (the helper appears on its next tool). */
+export const WORKFLOW_ATTACH_TAIL_BYTES = 1_048_576;
+/** Re-stat cadence for stale candidates, rejected-as-old run dirs, and a
+ *  missing `subagents/workflows` dir (a Workflow launch resets the last one). */
+export const WORKFLOW_STALE_RECHECK_MS = 10_000;
+export const WORKFLOW_IGNORED_RECHECK_MS = 60_000;
+export const WORKFLOW_DIR_MISSING_RECHECK_MS = 5_000;
+/** Journals are read in chunks of this size, so memory stays bounded however
+ *  much is unread: result lines carry an agent's whole output. */
+export const WORKFLOW_JOURNAL_CHUNK_BYTES = 1_048_576;
+/** A journal line longer than this is consumed without being parsed. Only a
+ *  result gets near it, and its agent then ends with staleness or its run. */
+export const WORKFLOW_JOURNAL_MAX_LINE_BYTES = 4 * 1_048_576;
+
 // ── Derived turn state (turnState.ts) ──────────────────────
 /** An agent whose last record says "working" but whose files have been quiet
  *  this long is shown idle: the process is gone or the turn was abandoned. */

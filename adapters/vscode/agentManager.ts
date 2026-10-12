@@ -25,6 +25,7 @@ import {
   seedTurnState,
 } from '../../server/src/turnStateSeed.js';
 import type { AgentState, PersistedAgent } from '../../server/src/types.js';
+import { restoreWorkflowState, workflowPersistFields } from '../../server/src/workflowRuns.js';
 
 export function getProjectDirPath(cwd?: string): string {
   // Fall back to home directory when no workspace folder is open (common on Linux/macOS
@@ -301,6 +302,7 @@ export function persistAgents(agents: AgentStateStore, adapter: StateAdapter): v
       teamUsesTmux: agent.teamUsesTmux,
       backgroundAgentToolIds:
         agent.backgroundAgentToolIds.size > 0 ? [...agent.backgroundAgentToolIds] : undefined,
+      ...workflowPersistFields(agent),
       rosterId: agent.rosterId,
     });
   }
@@ -382,6 +384,8 @@ export function restoreAgents(
       // Live spawn ids survive the reload so the 1s scan can re-adopt the
       // spawns' transcripts and the completion queue-op still matches.
       backgroundAgentToolIds: new Set(p.backgroundAgentToolIds ?? []),
+      // Same for Workflow tool -> run mappings: the run's completion still ends its helpers.
+      workflow: restoreWorkflowState(p),
       isWaiting: false,
       permissionSent: false,
       hadToolsInTurn: false,

@@ -45,6 +45,9 @@ function createMockWebview() {
   };
 }
 
+/** The agent_id Claude stamps on hooks fired inside a sub-agent. */
+const SUB_AGENT_ID = 'a0b1c2d3e4f5a6b7c';
+
 describe('HookEventHandler', () => {
   let agents: AgentStateStore;
   let waitingTimers: Map<number, ReturnType<typeof setTimeout>>;
@@ -857,6 +860,196 @@ describe('HookEventHandler', () => {
       }
     });
   });
+
+  // ── Hooks fired inside a sub-agent (agent_id) ───────────────────────
+  // A workflow agent or a Task/Agent sub-agent fires hooks on the lead's
+  // session with its own agent_id. They are the sub-agent's events: the lead's
+  // tools, status and adoption must not move.
+
+  describe.each([
+    { label: "the lead's own call", extra: {}, leadTool: true },
+    { label: "a sub-agent's call", extra: { agent_id: SUB_AGENT_ID }, leadTool: false },
+  ])('C7 PreToolUse, $label', ({ extra, leadTool }) => {
+    it(`starts a lead tool: ${leadTool}`, () => {
+      agents.set(1, createTestAgent({ id: 1 }));
+      handler.registerAgent('sess-1', 1);
+
+      handler.handleEvent('claude', {
+        hook_event_name: 'PreToolUse',
+        session_id: 'sess-1',
+        tool_name: 'Bash',
+        tool_input: { command: 'ls' },
+        ...extra,
+      });
+
+      expect(mockWebview.messages.some((m) => m.type === 'agentToolStart')).toBe(leadTool);
+      expect(mockWebview.messages.some((m) => m.type === 'agentStatus')).toBe(leadTool);
+    });
+  });
+
+  it("C7 a sub-agent's PostToolUse never ends the lead's open hook tool", () => {
+    const agent = createTestAgent({ id: 1 });
+    agents.set(1, agent);
+    handler.registerAgent('sess-1', 1);
+    handler.handleEvent('claude', {
+      hook_event_name: 'PreToolUse',
+      session_id: 'sess-1',
+      tool_name: 'Bash',
+      tool_input: { command: 'sleep 60' },
+    });
+    const leadToolId = agent.currentHookToolId;
+    expect(leadToolId).toBeDefined();
+
+    for (const name of ['PostToolUse', 'PostToolUseFailure']) {
+      handler.handleEvent('claude', {
+        hook_event_name: name,
+        session_id: 'sess-1',
+        agent_id: SUB_AGENT_ID,
+      });
+    }
+
+    expect(agent.currentHookToolId).toBe(leadToolId);
+    expect(mockWebview.messages.some((m) => m.type === 'agentToolDone')).toBe(false);
+  });
+
+  describe.each(['PostToolUse', 'PreToolUse'])(
+    "C38 a sub-agent's %s after its permission prompt",
+    (event) => {
+      it("clears the lead's bubble and starts no lead tool", () => {
+        agents.set(1, createTestAgent({ id: 1 }));
+        handler.registerAgent('sess-1', 1);
+        // Claude builds PermissionRequest from the tool call: a sub-agent's carries its agent_id.
+        handler.handleEvent('claude', {
+          hook_event_name: 'PermissionRequest',
+          session_id: 'sess-1',
+          agent_id: SUB_AGENT_ID,
+        });
+        expect(mockWebview.messages.some((m) => m.type === 'agentToolPermission')).toBe(true);
+        mockWebview.messages.length = 0;
+
+        handler.handleEvent('claude', {
+          hook_event_name: event,
+          session_id: 'sess-1',
+          agent_id: SUB_AGENT_ID,
+          tool_name: 'Read',
+          tool_input: { file_path: '/x.ts' },
+        });
+
+        expect(mockWebview.messages).toEqual([{ type: 'agentToolPermissionClear', id: 1 }]);
+      });
+    },
+  );
+
+  it('C17 a sub-agent hook for a pending session neither confirms nor adopts it', () => {
+    const onExternalSessionDetected = vi.fn();
+    handler.setLifecycleCallbacks({ onExternalSessionDetected });
+    handler.handleEvent('claude', {
+      hook_event_name: 'SessionStart',
+      session_id: 'unknown-sess',
+      source: 'startup',
+      transcript_path: '/projects/test/unknown-sess.jsonl',
+      cwd: '/projects/test',
+    });
+
+    handler.handleEvent('claude', {
+      hook_event_name: 'PreToolUse',
+      session_id: 'unknown-sess',
+      agent_id: SUB_AGENT_ID,
+      tool_name: 'Read',
+      tool_input: { file_path: '/x.ts' },
+    });
+
+    expect(onExternalSessionDetected).not.toHaveBeenCalled();
+    expect(agents.size).toBe(0);
+    expect(mockWebview.messages.some((m) => m.type === 'agentToolStart')).toBe(false);
+  });
+
+  describe.each([
+    { event: 'Stop', extra: {} },
+    { event: 'SessionEnd', extra: { reason: 'prompt_input_exit' } },
+  ])('C26 a $event carrying agent_id', ({ event, extra }) => {
+    it("leaves the lead's open tool, its status and its session alone", () => {
+      const onSessionEnd = vi.fn();
+      handler.setLifecycleCallbacks({ onSessionEnd });
+      const agent = createTestAgent({ id: 1, hookDelivered: true });
+      agent.activeToolIds.add('toolu_open');
+      agent.activeToolNames.set('toolu_open', 'Bash');
+      agent.activeToolStatuses.set('toolu_open', 'Running: sleep');
+      agents.set(1, agent);
+      handler.registerAgent('sess-1', 1);
+
+      handler.handleEvent('claude', {
+        hook_event_name: event,
+        session_id: 'sess-1',
+        agent_id: SUB_AGENT_ID,
+        ...extra,
+      });
+
+      expect(agent.activeToolIds.has('toolu_open')).toBe(true);
+      expect(agent.isWaiting).toBe(false);
+      expect(onSessionEnd).not.toHaveBeenCalled();
+      expect(mockWebview.messages).toEqual([]);
+    });
+  });
+
+  it('C26 a SessionStart carrying agent_id leaves no pending session for a later event to adopt', () => {
+    const onExternalSessionDetected = vi.fn();
+    handler.setLifecycleCallbacks({ onExternalSessionDetected });
+    handler.handleEvent('claude', {
+      hook_event_name: 'SessionStart',
+      session_id: 'unknown-sess',
+      agent_id: SUB_AGENT_ID,
+      source: 'startup',
+      transcript_path: `/projects/test/unknown-sess/subagents/agent-${SUB_AGENT_ID}.jsonl`,
+      cwd: '/projects/test',
+    });
+
+    // The session's own event confirms a pending session: there must be none to confirm.
+    handler.handleEvent('claude', {
+      hook_event_name: 'PermissionRequest',
+      session_id: 'unknown-sess',
+    });
+
+    expect(onExternalSessionDetected).not.toHaveBeenCalled();
+  });
+
+  it("C36 a sub-agent's SubagentStop ends only the row it drew; the last one ends the Task's helper", () => {
+    vi.useFakeTimers();
+    try {
+      const agent = createTestAgent({ id: 1 });
+      agent.activeToolIds.add('toolu_task');
+      agent.activeToolNames.set('toolu_task', 'Task');
+      agents.set(1, agent);
+      handler.registerAgent('sess-1', 1);
+      const subagent = (hookEvent: string, agentId: string) =>
+        handler.handleEvent('claude', {
+          hook_event_name: hookEvent,
+          session_id: 'sess-1',
+          agent_id: agentId,
+          agent_type: 'general-purpose',
+        });
+      const taskClears = () =>
+        mockWebview.messages.filter(
+          (m) => m.type === 'subagentClear' && m.parentToolId === 'toolu_task',
+        );
+
+      subagent('SubagentStart', 'y1');
+      vi.advanceTimersByTime(1); // row ids carry Date.now(): two Starts in one ms share a row id
+      subagent('SubagentStart', 'y2');
+
+      const sent = mockWebview.messages.length;
+      subagent('SubagentStop', 'z9'); // a sub-agent that drew no row
+      expect(mockWebview.messages).toHaveLength(sent);
+
+      subagent('SubagentStop', 'y1');
+      expect(taskClears()).toHaveLength(0);
+
+      subagent('SubagentStop', 'y2');
+      expect(taskClears()).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('HookEventHandler: tripwires', () => {
@@ -870,12 +1063,17 @@ describe('HookEventHandler: tripwires', () => {
   const tripwires = (): Array<Record<string, unknown>> =>
     broadcasts.filter((m) => m.type === 'agentTripwire');
 
-  function preToolUse(toolName: string, toolInput: Record<string, unknown>): void {
+  function preToolUse(
+    toolName: string,
+    toolInput: Record<string, unknown>,
+    extra: Record<string, unknown> = {},
+  ): void {
     handler.handleEvent('claude', {
       hook_event_name: 'PreToolUse',
       session_id: 'sess-1',
       tool_name: toolName,
       tool_input: toolInput,
+      ...extra,
     });
   }
 
@@ -940,6 +1138,12 @@ describe('HookEventHandler: tripwires', () => {
 
   it('checks a Task call even though the office draws nothing for it', () => {
     preToolUse('Task', { subagent_type: 'general', command: HIGH_CMD });
+    expect(tripwires()).toHaveLength(1);
+    expect(broadcasts.some((m) => m.type === 'agentToolStart')).toBe(false);
+  });
+
+  it("C39 checks a sub-agent's call (agent_id), which starts no lead tool", () => {
+    preToolUse('Bash', { command: HIGH_CMD }, { agent_id: SUB_AGENT_ID });
     expect(tripwires()).toHaveLength(1);
     expect(broadcasts.some((m) => m.type === 'agentToolStart')).toBe(false);
   });

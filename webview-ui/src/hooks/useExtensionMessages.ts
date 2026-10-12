@@ -34,6 +34,7 @@ import type { OfficeLayout, ToolActivity } from '../office/types.js';
 import { setWallSprites } from '../office/wallTiles.js';
 import { isBrowserRuntime, isE2E } from '../runtime.js';
 import { transport } from '../transport/index.js';
+import { applySubagentMessage, type SubagentCharacter } from './subagentMessages.js';
 
 /**
  * A Headless agent is one the office adopted from outside (`claude -p`, a session
@@ -45,13 +46,6 @@ import { transport } from '../transport/index.js';
  */
 const isHeadlessAgent = (isExternal: boolean | undefined): boolean =>
   isExternal === true && !isBrowserRuntime;
-
-export interface SubagentCharacter {
-  id: number;
-  parentAgentId: number;
-  parentToolId: string;
-  label: string;
-}
 
 interface FurnitureAsset {
   id: string;
@@ -546,14 +540,21 @@ export function useExtensionMessages(
         });
         os.showPermissionBubble(id);
         playPermissionSound();
-      } else if (msg.type === 'subagentToolPermission') {
-        const id = msg.id as number;
-        const parentToolId = msg.parentToolId as string;
-        // Show permission bubble on the sub-agent character
-        const subId = os.getSubagentId(id, parentToolId);
-        if (subId !== null) {
-          os.showPermissionBubble(subId);
-        }
+      } else if (
+        msg.type === 'subagentToolStart' ||
+        msg.type === 'subagentToolDone' ||
+        msg.type === 'subagentClear' ||
+        msg.type === 'subagentToolPermission'
+      ) {
+        applySubagentMessage(
+          {
+            os,
+            background: backgroundParentToolIdsRef.current,
+            updateTools: setSubagentTools,
+            updateCharacters: setSubagentCharacters,
+          },
+          msg,
+        );
       } else if (msg.type === 'agentToolPermissionClear') {
         const id = msg.id as number;
         setAgentTools((prev) => {
@@ -573,79 +574,6 @@ export function useExtensionMessages(
             os.clearPermissionBubble(subId);
           }
         }
-      } else if (msg.type === 'subagentToolStart') {
-        const id = msg.id as number;
-        const parentToolId = msg.parentToolId as string;
-        const toolId = msg.toolId as string;
-        const status = msg.status as string;
-        setSubagentTools((prev) => {
-          const agentSubs = prev[id] || {};
-          const list = agentSubs[parentToolId] || [];
-          if (list.some((t) => t.toolId === toolId)) return prev;
-          return {
-            ...prev,
-            [id]: { ...agentSubs, [parentToolId]: [...list, { toolId, status, done: false }] },
-          };
-        });
-        // Update sub-agent character's tool and active state. The sub-agent is
-        // usually created by an earlier agentToolStart from JSONL using the same
-        // (real) parentToolId. When it's missing — a teamed lead's background
-        // spawn (the creation gate above suppressed the Subtask) or a reloaded
-        // panel that lost it — create it lazily; addSubagent is idempotent.
-        let subId = os.getSubagentId(id, parentToolId);
-        if (subId === null) {
-          subId = os.addSubagent(id, parentToolId);
-          const newSubId = subId;
-          setSubagentCharacters((prev) => {
-            if (prev.some((s) => s.id === newSubId)) return prev;
-            return [...prev, { id: newSubId, parentAgentId: id, parentToolId, label: '' }];
-          });
-          // Only watched background spawns are created lazily -- mark the
-          // parent tool as background so agentToolsClear preserves the sub.
-          const set = (backgroundParentToolIdsRef.current[id] ??= new Set());
-          set.add(parentToolId);
-        }
-        const subToolName = extractToolName(status);
-        os.setAgentTool(subId, subToolName);
-        os.setAgentActive(subId, true);
-      } else if (msg.type === 'subagentToolDone') {
-        const id = msg.id as number;
-        const parentToolId = msg.parentToolId as string;
-        const toolId = msg.toolId as string;
-        setSubagentTools((prev) => {
-          const agentSubs = prev[id];
-          if (!agentSubs) return prev;
-          const list = agentSubs[parentToolId];
-          if (!list) return prev;
-          return {
-            ...prev,
-            [id]: {
-              ...agentSubs,
-              [parentToolId]: list.map((t) => (t.toolId === toolId ? { ...t, done: true } : t)),
-            },
-          };
-        });
-      } else if (msg.type === 'subagentClear') {
-        const id = msg.id as number;
-        const parentToolId = msg.parentToolId as string;
-        backgroundParentToolIdsRef.current[id]?.delete(parentToolId);
-        setSubagentTools((prev) => {
-          const agentSubs = prev[id];
-          if (!agentSubs || !(parentToolId in agentSubs)) return prev;
-          const next = { ...agentSubs };
-          delete next[parentToolId];
-          if (Object.keys(next).length === 0) {
-            const outer = { ...prev };
-            delete outer[id];
-            return outer;
-          }
-          return { ...prev, [id]: next };
-        });
-        // Remove sub-agent character
-        os.removeSubagent(id, parentToolId);
-        setSubagentCharacters((prev) =>
-          prev.filter((s) => !(s.parentAgentId === id && s.parentToolId === parentToolId)),
-        );
       } else if (msg.type === 'characterSpritesLoaded') {
         const characters = msg.characters as Array<{
           down: string[][][];

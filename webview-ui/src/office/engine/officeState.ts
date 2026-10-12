@@ -1,4 +1,5 @@
 import { spriteWorldHeight } from '../../../../core/src/assets/artDensity.js';
+import { WORKFLOW_PARENT_TOOL_ID_PREFIX } from '../../../../core/src/constants.js';
 import { pickDiversePalette } from '../../../../core/src/paletteUtils.js';
 import type { ModelTier } from '../../../../core/src/provider.js';
 import {
@@ -20,6 +21,7 @@ import {
   PET_HIT_HEIGHT,
   SOFA_MAX_OCCUPANTS,
   WAITING_BUBBLE_DURATION_SEC,
+  WORKFLOW_MAX_VISIBLE_HELPERS,
 } from '../../constants.js';
 import { type FitAgent, LOBBY_ROOM } from '../camera.js';
 import { officeNow } from '../clock.js';
@@ -79,6 +81,11 @@ function seatFacingOffset(direction: Direction): { dCol: number; dRow: number } 
   if (direction === Direction.LEFT) return { dCol: -1, dRow: 0 };
   if (direction === Direction.DOWN) return { dCol: 0, dRow: 1 };
   return { dCol: 0, dRow: -1 };
+}
+
+/** A workflow crew helper's parent tool id is synthetic (`wf:<runId>:<agentId>`). */
+export function isCrewParentToolId(parentToolId: string): boolean {
+  return parentToolId.startsWith(WORKFLOW_PARENT_TOOL_ID_PREFIX);
 }
 
 export class OfficeState {
@@ -146,6 +153,11 @@ export class OfficeState {
   /** Reverse lookup: sub-agent character ID → parent info */
   subagentMeta: Map<number, { parentAgentId: number; parentToolId: string }> = new Map();
   private nextSubagentId = -1;
+  /** Crew helpers past a lead's visible cap, oldest first: they have ids and
+   *  meta (so they count as helpers) but no character until one is drawn. */
+  private undrawnHelpers: number[] = [];
+  /** Last tool and active flag sent to an undrawn helper, applied once it is drawn. */
+  private undrawnState = new Map<number, { tool: string | null; active: boolean }>();
 
   /**
    * folderName → list of Area labels that workspace folder belongs to.
@@ -469,17 +481,27 @@ export class OfficeState {
     // helper is only asked to yield when that is what the better seat costs.
     const faceOn = pool.filter((uid) => this.seats.get(uid)!.facingDir === Direction.DOWN);
     const byFace = faceOn.length > 0 ? faceOn : pool;
-    const helperHeld = this.helperHeldSeats();
+    const helperHeld = this.yieldingHelperSeats();
     const unheld = byFace.filter((uid) => !helperHeld.has(uid));
     const pick = unheld.length > 0 ? unheld : byFace;
     return pick[Math.floor(Math.random() * pick.length)];
   }
 
-  /** Seats currently held by a helper (sub-agent): a top-level agent may take them over. */
-  private helperHeldSeats(): Set<string> {
+  /** A workflow crew helper (synthetic `wf:` parent tool id). A crew can fill a room, so a
+   *  top-level agent never moves one off its seat, and only a lead's first few are drawn. */
+  private isCrewHelper(ch: Character): boolean {
+    const meta = ch.isSubagent ? this.subagentMeta.get(ch.id) : undefined;
+    return meta !== undefined && isCrewParentToolId(meta.parentToolId);
+  }
+
+  /** Seats held by a helper that yields them: a top-level agent may take them over. Crew helpers
+   *  never yield, so their seats count as taken. */
+  private yieldingHelperSeats(): Set<string> {
     const held = new Set<string>();
     for (const ch of this.characters.values()) {
-      if (ch.isSubagent && ch.seatId && ch.matrixEffect !== 'despawn') held.add(ch.seatId);
+      if (ch.isSubagent && ch.seatId && ch.matrixEffect !== 'despawn' && !this.isCrewHelper(ch)) {
+        held.add(ch.seatId);
+      }
     }
     return held;
   }
@@ -492,6 +514,12 @@ export class OfficeState {
       if (!found || ch.id < found.id) found = ch;
     }
     return found;
+  }
+
+  /** The helper at a seat that would yield it to a top-level agent, or undefined. */
+  private yieldingHelperAt(seatId: string): Character | undefined {
+    const helper = this.helperAt(seatId);
+    return helper && !this.isCrewHelper(helper) ? helper : undefined;
   }
 
   /**
@@ -537,7 +565,7 @@ export class OfficeState {
   private findFreeSeat(folderName?: string): string | null {
     const freeSeats: string[] = [];
     const freeCouchSeats: string[] = [];
-    const helperHeld = this.helperHeldSeats();
+    const helperHeld = this.yieldingHelperSeats();
     for (const [uid, seat] of this.seats) {
       if (seat.assigned && !helperHeld.has(uid)) continue;
       (seat.couch ? freeCouchSeats : freeSeats).push(uid);
@@ -644,8 +672,9 @@ export class OfficeState {
       const zone = this.seatZone(preferredSeatId);
       const inMappedArea =
         !wanted || wanted.length === 0 || (zone !== null && wanted.includes(zone));
-      // A helper holding it does not count: the agent's own seat outranks a helper's.
-      if ((!seat.assigned || this.helperAt(preferredSeatId)) && inMappedArea) {
+      // A helper holding it does not count: the agent's own seat outranks a helper's (a crew
+      // helper's excepted: it keeps its seat).
+      if ((!seat.assigned || this.yieldingHelperAt(preferredSeatId)) && inMappedArea) {
         seatId = preferredSeatId;
       }
     }
@@ -657,7 +686,7 @@ export class OfficeState {
     }
 
     // Whoever sits there is a helper (every other holder was ruled out above): it yields.
-    const yielding = seatId ? this.helperAt(seatId) : undefined;
+    const yielding = seatId ? this.yieldingHelperAt(seatId) : undefined;
     if (yielding) yielding.seatId = null;
 
     let ch: Character;
@@ -897,9 +926,10 @@ export class OfficeState {
 
   /**
    * Where a helper goes: the nearest free desk seat in its parent's room (helpers type at a desk),
-   * else a floor tile at least two tiles from the parent and outside the parent's column, so it
-   * never reads as a clone standing in front of or behind its parent. Null seat and tile only
-   * when the map has no walkable tile at all.
+   * else the nearest free desk seat in the lobby (the tiles outside every Area), else a floor tile
+   * at least two tiles from the parent and outside the parent's column, so it never reads as a
+   * clone standing in front of or behind its parent. Never a couch. Null seat and tile only when
+   * the map has no walkable tile at all.
    */
   private helperPlacement(parentCh: Character | undefined): {
     seatId: string | null;
@@ -914,19 +944,26 @@ export class OfficeState {
       : this.roomOfTile(pc, pr);
     const dist = (col: number, row: number): number => Math.abs(col - pc) + Math.abs(row - pr);
 
-    let bestSeat: string | null = null;
-    let bestD = Infinity;
+    /** Nearest free desk seat of `room` by distance from the parent; ties keep seat order. */
+    const nearestSeatIn = (room: string): string | null => {
+      let best: string | null = null;
+      let bestD = Infinity;
+      for (const [uid, seat] of this.seats) {
+        if (seat.assigned || seat.couch) continue;
+        if (this.roomOfTile(seat.seatCol, seat.seatRow) !== room) continue;
+        const d = dist(seat.seatCol, seat.seatRow);
+        if (d < bestD) {
+          bestD = d;
+          best = uid;
+        }
+      }
+      return best;
+    };
     // Without its parent (a reload where the parent is still buffered) a helper has no room to
     // sit in, and a seat taken now could be the one the parent restores to.
-    for (const [uid, seat] of parentCh ? this.seats : []) {
-      if (seat.assigned || seat.couch) continue;
-      if (this.roomOfTile(seat.seatCol, seat.seatRow) !== homeRoom) continue;
-      const d = dist(seat.seatCol, seat.seatRow);
-      if (d < bestD) {
-        bestD = d;
-        bestSeat = uid;
-      }
-    }
+    const bestSeat = parentCh
+      ? (nearestSeatIn(homeRoom) ?? (homeRoom !== LOBBY_ROOM ? nearestSeatIn(LOBBY_ROOM) : null))
+      : null;
     if (bestSeat) {
       const seat = this.seats.get(bestSeat)!;
       return { seatId: bestSeat, tile: { col: seat.seatCol, row: seat.seatRow } };
@@ -959,6 +996,61 @@ export class OfficeState {
     if (this.subagentIdMap.has(key)) return this.subagentIdMap.get(key)!;
 
     const id = this.nextSubagentId--;
+    this.subagentIdMap.set(key, id);
+    this.subagentMeta.set(id, { parentAgentId, parentToolId });
+    // A crew can be dozens of agents. Past the cap a crew helper exists (it counts in its lead's
+    // "+N helpers") without a character, until a drawn crew helper of the same lead leaves.
+    if (
+      isCrewParentToolId(parentToolId) &&
+      this.drawnCrewHelpers(parentAgentId) >= WORKFLOW_MAX_VISIBLE_HELPERS
+    ) {
+      this.undrawnHelpers.push(id);
+      return id;
+    }
+    this.spawnHelper(id, parentAgentId);
+    return id;
+  }
+
+  /** Crew helpers of a lead that have a character (a leaving one has lost its meta already). */
+  private drawnCrewHelpers(parentAgentId: number): number {
+    let n = 0;
+    for (const [id, meta] of this.subagentMeta) {
+      if (
+        meta.parentAgentId === parentAgentId &&
+        isCrewParentToolId(meta.parentToolId) &&
+        this.characters.has(id)
+      ) {
+        n++;
+      }
+    }
+    return n;
+  }
+
+  /** Draw the oldest undrawn crew helper of a lead, with the last state it was sent. */
+  private drawNextCrewHelper(parentAgentId: number): void {
+    const index = this.undrawnHelpers.findIndex(
+      (id) => this.subagentMeta.get(id)?.parentAgentId === parentAgentId,
+    );
+    if (index < 0) return;
+    const [id] = this.undrawnHelpers.splice(index, 1);
+    const state = this.undrawnState.get(id);
+    this.undrawnState.delete(id);
+    this.spawnHelper(id, parentAgentId);
+    if (state) {
+      this.setAgentTool(id, state.tool);
+      this.setAgentActive(id, state.active);
+    }
+  }
+
+  /** Record what an undrawn helper was told; false when `id` is not one. */
+  private noteUndrawn(id: number, patch: { tool?: string | null; active?: boolean }): boolean {
+    if (!this.undrawnHelpers.includes(id)) return false;
+    const state = this.undrawnState.get(id) ?? { tool: null, active: false };
+    this.undrawnState.set(id, { ...state, ...patch });
+    return true;
+  }
+
+  private spawnHelper(id: number, parentAgentId: number): void {
     const parentCh = this.characters.get(parentAgentId);
     const palette = parentCh ? parentCh.palette : 0;
     const hueShift = parentCh ? parentCh.hueShift : 0;
@@ -978,10 +1070,6 @@ export class OfficeState {
     ch.parentAgentId = parentAgentId;
     startMatrixEffect(ch, 'spawn');
     this.characters.set(id, ch);
-
-    this.subagentIdMap.set(key, id);
-    this.subagentMeta.set(id, { parentAgentId, parentToolId });
-    return id;
   }
 
   /** Remove a specific sub-agent character and free its seat */
@@ -989,6 +1077,14 @@ export class OfficeState {
     const key = `${parentAgentId}:${parentToolId}`;
     const id = this.subagentIdMap.get(key);
     if (id === undefined) return;
+    const undrawn = this.undrawnHelpers.indexOf(id);
+    if (undrawn >= 0) {
+      this.undrawnHelpers.splice(undrawn, 1);
+      this.undrawnState.delete(id);
+      this.subagentIdMap.delete(key);
+      this.subagentMeta.delete(id);
+      return;
+    }
 
     const ch = this.characters.get(id);
     if (ch) {
@@ -1011,6 +1107,8 @@ export class OfficeState {
     this.subagentMeta.delete(id);
     if (this.selectedAgentId === id) this.selectedAgentId = null;
     if (this.cameraFollowId === id) this.cameraFollowId = null;
+    // Its seat is free again: the oldest crew helper still waiting takes the stage.
+    if (isCrewParentToolId(parentToolId)) this.drawNextCrewHelper(parentAgentId);
   }
 
   /** Remove all sub-agents belonging to a parent agent */
@@ -1044,6 +1142,10 @@ export class OfficeState {
     for (const key of toRemove) {
       this.subagentIdMap.delete(key);
     }
+    this.undrawnHelpers = this.undrawnHelpers.filter((id) => this.subagentMeta.has(id));
+    for (const id of [...this.undrawnState.keys()]) {
+      if (!this.subagentMeta.has(id)) this.undrawnState.delete(id);
+    }
   }
 
   /** Look up the sub-agent character ID for a given parent+toolId, or null */
@@ -1052,6 +1154,7 @@ export class OfficeState {
   }
 
   setAgentActive(id: number, active: boolean): void {
+    if (this.noteUndrawn(id, { active })) return;
     const ch = this.characters.get(id);
     if (ch) {
       ch.isActive = active;
@@ -1150,6 +1253,7 @@ export class OfficeState {
   }
 
   setAgentTool(id: number, tool: string | null): void {
+    if (this.noteUndrawn(id, { tool })) return;
     const ch = this.characters.get(id);
     if (ch) {
       ch.currentTool = tool;

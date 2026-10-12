@@ -238,6 +238,22 @@ describe('TokenLedger', () => {
       ]);
     });
 
+    it('C8 counts a workflow agent transcript once, to its lead session', async () => {
+      write('-Users-x-repoa/lead-1.jsonl', [
+        usageLine({ id: 'lead1', sid: 'lead-1', ts: NOW - H, usage: [10, 0, 0, 0] }),
+      ]);
+      // Workflow agents write sidechain records stamped with the lead's sessionId.
+      write('-Users-x-repoa/lead-1/subagents/workflows/wf_run-1/agent-a1.jsonl', [
+        usageLine({ id: 'wf1', sid: 'lead-1', ts: NOW - H, usage: [0, 0, 0, 300] }),
+        // A streaming repeat of the same message: counted once.
+        usageLine({ id: 'wf1', sid: 'lead-1', ts: NOW - H, usage: [0, 0, 0, 300] }),
+      ]);
+      const snap = await scan(ledger());
+      expect(snap.week!.bySession.map((s) => [s.sessionId, s.total])).toEqual([
+        ['lead-1', 10 + 5 * 300],
+      ]);
+    });
+
     it('titles a session from custom-title, else ai-title', async () => {
       write('-Users-x-repo/s1.jsonl', [
         usageLine({ id: 'm', sid: 's1', ts: NOW - H }),

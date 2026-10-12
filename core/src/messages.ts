@@ -161,6 +161,8 @@ export interface SubagentToolStart {
   parentToolId: string;
   toolId: string;
   status: string;
+  label?: string;
+  group?: string;
 }
 
 export interface SubagentToolDone {

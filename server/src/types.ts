@@ -1,6 +1,8 @@
 import type * as vscode from 'vscode';
 
 import type { ModelTier } from '../../core/src/provider.js';
+import type { HookSubRow } from './hookSubRows.js';
+import type { LeadWorkflowState } from './workflowRuns.js';
 
 export interface AgentState {
   id: number;
@@ -106,6 +108,18 @@ export interface AgentState {
    *  the webview never creates a Subtask ghost for them. Transient, lazily
    *  created, never persisted. */
   teammateSpawnToolIds?: Set<string>;
+  /** Rows SubagentStart drew under an open Task/Agent tool, by the hook's
+   *  agent_id (hookSubRows.ts). Transient, never persisted. */
+  hookSubRows?: Map<string, HookSubRow>;
+
+  // -- Workflow crews (server/src/workflowRuns.ts) --
+  /** A lead's workflow runs, watched helpers and Workflow tool mappings. Only
+   *  the mappings are persisted; the rest is re-read from the run journals. */
+  workflow?: LeadWorkflowState;
+  /** The session whose end disposed `workflow`, with the runs it knew. Not
+   *  scanned while the lead is still on it; a Workflow launch there (a resume
+   *  under the same id) scans again, those runs taken as completed. Transient. */
+  workflowEnded?: { sessionId: string; runIds: Set<string> };
 
   // -- Tripwires (server/src/tripwires.ts) --
   /** Alarm raised by a detection rule over this agent's tool calls. `count` is every
@@ -158,6 +172,12 @@ export interface PersistedAgent {
    *  transcripts are re-adopted after a reload; the spawned children
    *  themselves are derived state and never persisted. */
   backgroundAgentToolIds?: string[];
+  /** Workflow tool_use id -> runId on a lead, so a run's completion
+   *  notification still ends its helpers after a restart. */
+  workflowRuns?: Record<string, string>;
+  /** Workflow runs a lead knows finished, so a restart does not revive their
+   *  unfinished agents. Pruned with the run dirs. */
+  completedWorkflowRunIds?: string[];
   /** Preferred character palette (0-11). Persisted so colors stay stable
    *  across server restarts; assignPaletteIfNeeded is a no-op on restore. */
   palette?: number;
