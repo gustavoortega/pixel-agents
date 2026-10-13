@@ -335,7 +335,8 @@ export function updateCharacter(
         ch.x = toCenter.x;
         ch.y = toCenter.y;
         ch.path.shift();
-        ch.moveProgress = 0;
+        // The overshoot carries into the next step, so a tile takes the same wall time at any frame rate.
+        ch.moveProgress = ch.path.length > 0 ? ch.moveProgress - 1 : 0;
       }
 
       // If became active while wandering, repath to seat

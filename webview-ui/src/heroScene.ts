@@ -10,6 +10,7 @@ import type { ServerMessage } from '../../core/src/messages.js';
 import { FX_POP_MS, NAP_AFTER_IDLE_SEC } from './constants.js';
 import { fitView } from './office/camera.js';
 import { overrideOfficeClock } from './office/clock.js';
+import { requestRedraw } from './office/engine/gameLoop.js';
 import type { ActiveFx } from './office/fx/fxEngine.js';
 import { forceFullPlates } from './office/nameplate.js';
 import { IdlePose } from './office/types.js';
@@ -246,6 +247,7 @@ export function startHeroStage(
       signal: HERO_XP_SIGNAL,
       level: 0,
     });
+    requestRedraw();
   };
   const hold = (): void => {
     os.selectedAgentId = null;
@@ -255,6 +257,7 @@ export function startHeroStage(
       napper.pose = IdlePose.NAPPING;
       if (napper.idleSec < NAP_AFTER_IDLE_SEC) napper.idleSec = NAP_AFTER_IDLE_SEC;
     }
+    requestRedraw();
   };
   // The storm cloud lasts FX_STORM_MS from the moment a mood begins; flipping the mood restarts it.
   const restormAgent = HERO_AGENTS.find((a) => a.mood === 'frustrated');

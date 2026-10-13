@@ -18,6 +18,7 @@ import {
   setSoundEnabled,
 } from '../notificationSound.js';
 import type { PendingAgent } from '../office/engine/existingAgents.js';
+import { requestRedraw } from '../office/engine/gameLoop.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import {
   setCozyLighting as setRendererCozyLighting,
@@ -55,6 +56,17 @@ import {
   type SubagentCharacter,
   type SubagentSink,
 } from './subagentMessages.js';
+
+/**
+ * Every host message wakes the render loop: it may change what the office shows. A type listed
+ * here does not, for a periodic message that would otherwise keep a quiet office drawing at full
+ * rate; what it changes shows on the next idle redraw.
+ * - tokenUsage: the ledger re-sends it every 30 s even when nothing is used, since its windows
+ *   move with the clock. The Usage panel is DOM, and the room-sign bars can wait a second.
+ * - usageLimits: every open Claude Code session re-posts its status line, idle ones included, and
+ *   each accepted post is broadcast. Only the DOM reads it (the Usage panel, the HUD card).
+ */
+const NO_WAKE_MESSAGE_TYPES: ReadonlySet<string> = new Set<string>(['tokenUsage', 'usageLimits']);
 
 interface FurnitureAsset {
   id: string;
@@ -182,24 +194,27 @@ export function useExtensionMessages(
   const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
   const [usageLimits, setUsageLimits] = useState<UsageLimits | null>(null);
 
-  // The renderer keeps its own module-level copy (read every rAF frame), so both
+  // The renderer keeps its own module-level copy (read on every drawn frame), so both
   // sources of truth move together — the persisted value on settingsLoaded and
-  // the user's click in Settings.
+  // the user's click in Settings. A quiet office draws rarely, so each setter wakes it.
   const applyGhostHeadlessAgents = useCallback((enabled: boolean) => {
     setGhostHeadlessAgentsState(enabled);
     setRendererGhostHeadlessAgents(enabled);
+    requestRedraw();
   }, []);
 
   // Same pairing as the ghost setting: the renderer reads its own copy every frame.
   const applyShowModelFlair = useCallback((enabled: boolean) => {
     setShowModelFlairState(enabled);
     setRendererShowModelFlair(enabled);
+    requestRedraw();
   }, []);
 
   // Same pairing: the tint is React (DOM div), the glows read the renderer's copy each frame.
   const applyCozyLighting = useCallback((enabled: boolean) => {
     setCozyLightingState(enabled);
     setRendererCozyLighting(enabled);
+    requestRedraw();
   }, []);
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
@@ -256,6 +271,7 @@ export function useExtensionMessages(
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handler = (msg: any) => {
+      if (!NO_WAKE_MESSAGE_TYPES.has(msg.type)) requestRedraw();
       const os = getOfficeState();
       // CI / e2e diagnostic: record every received transport message on the
       // window-side log. The fixture reads window.__pixelAgentsTestHooks.
@@ -700,6 +716,7 @@ export function useExtensionMessages(
       if (rows && rows.length > 0 && rows.every((t) => t.done)) {
         os.setAgentTool(sub.id, null);
         os.setAgentActive(sub.id, false);
+        requestRedraw();
       }
     }
   }, [subagentTools, subagentCharacters, getOfficeState]);

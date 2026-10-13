@@ -1,0 +1,197 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import type { Page } from '@playwright/test';
+
+import { expect, test } from '../../fixtures/standalone';
+import { sendHookEvent, sessionStartStartup, stop } from '../../helpers/hooks';
+import { buildSeedLayout } from '../../helpers/layout-seed';
+import { expectOverlayCount } from '../../helpers/office';
+import { launchStandalone } from '../../helpers/standalone';
+import { setSettings } from '../../helpers/webview';
+
+/**
+ * The render loop of the built app, read off its own counters
+ * (window.__pixelAgentsTestHooks.frames: animation-frame requests, update and
+ * render calls, and the mode the loop last scheduled in) and off every
+ * animation-frame request on the page (window.__pixelAgentsRafCalls, counted by
+ * the standalone launch). Counters are read as deltas: one missing fails the
+ * test rather than reading as 0.
+ */
+
+type LoopMode = 'active' | 'ambient' | 'idle' | 'stopped';
+
+type RenderLoopWindow = Window & {
+  __pixelAgentsTestHooks?: { frames?: { raf: number; render: number; mode: LoopMode } };
+  __pixelAgentsRafCalls?: number;
+  __pixelAgentsDeliver?: (msg: unknown) => void;
+};
+
+interface QuietWindow {
+  /** The loop's own animation-frame requests. */
+  raf: number;
+  /** Every animation-frame request on the page: a component with a frame loop of its own too. */
+  pageRaf: number;
+  render: number;
+  mode: LoopMode;
+  /** Windows opened, the clean one included. */
+  windows: number;
+}
+
+/**
+ * Wait for the office to settle (the loop off animation frames for 3 s at
+ * every 50 ms poll), then count what the loop does over 2 s. A window that
+ * sees the loop go active (a pet setting off, a late greeter) is discarded and
+ * another opened: at most 3, within 45 s.
+ */
+async function quietWindow(page: Page): Promise<QuietWindow> {
+  return page.evaluate(async () => {
+    const POLL_MS = 50;
+    const FIRST_SETTLE_MS = 15_000;
+    const QUIET_MS = 3000;
+    const WINDOW_MS = 2000;
+    const MAX_WINDOWS = 3;
+    const TOTAL_MS = 45_000;
+    const w = window as RenderLoopWindow;
+    const frames = w.__pixelAgentsTestHooks?.frames;
+    if (
+      typeof frames?.raf !== 'number' ||
+      typeof frames.render !== 'number' ||
+      typeof w.__pixelAgentsRafCalls !== 'number'
+    ) {
+      throw new Error('render loop counters missing');
+    }
+    const pageRafs = () => w.__pixelAgentsRafCalls ?? NaN;
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const quiet = () => frames.mode === 'ambient' || frames.mode === 'idle';
+    const start = performance.now();
+    while (!quiet()) {
+      if (performance.now() - start > FIRST_SETTLE_MS) {
+        throw new Error(`the loop never left animation frames (mode ${frames.mode})`);
+      }
+      await sleep(POLL_MS);
+    }
+    for (let windows = 1; windows <= MAX_WINDOWS; windows++) {
+      let quietSince = performance.now();
+      while (performance.now() - quietSince < QUIET_MS) {
+        if (performance.now() - start > TOTAL_MS) throw new Error('no quiet window in 45 s');
+        await sleep(POLL_MS);
+        if (!quiet()) quietSince = performance.now();
+      }
+      const raf = frames.raf;
+      const pageRaf = pageRafs();
+      const render = frames.render;
+      const opened = performance.now();
+      let clean = true;
+      for (let left = WINDOW_MS; left > 0; left = WINDOW_MS - (performance.now() - opened)) {
+        await sleep(Math.min(POLL_MS, left));
+        if (!quiet()) {
+          clean = false;
+          break;
+        }
+      }
+      if (clean) {
+        return {
+          raf: frames.raf - raf,
+          pageRaf: pageRafs() - pageRaf,
+          render: frames.render - render,
+          mode: frames.mode,
+          windows,
+        };
+      }
+    }
+    throw new Error(`every window saw the loop go active (${MAX_WINDOWS} tried)`);
+  });
+}
+
+test.describe('Render loop', () => {
+  test('a settled office requests no animation frame and redraws at most ten times a second @area:render', async ({
+    page,
+    standalone: _standalone,
+  }) => {
+    const counted = await quietWindow(page);
+    test.info().annotations.push({ type: 'quiet window', description: JSON.stringify(counted) });
+    expect(counted.raf).toBe(0);
+    expect(counted.pageRaf).toBe(0);
+    // 2 s at the 10 Hz ambient redraw, plus one for a tick on each edge.
+    expect(counted.render).toBeLessThanOrEqual(21);
+  });
+
+  test('an office where nothing moves redraws once a second @area:render', async ({ page }) => {
+    // No agents, no pets, no furniture: nothing in it animates, by day or by night.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-render-e2e-home-'));
+    fs.mkdirSync(path.join(home, '.pixel-agents'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.pixel-agents', 'layout.json'),
+      JSON.stringify(buildSeedLayout()),
+    );
+    const session = await launchStandalone(page, { homeDir: home });
+    try {
+      const counted = await quietWindow(page);
+      test.info().annotations.push({ type: 'quiet window', description: JSON.stringify(counted) });
+      expect(counted.mode).toBe('idle');
+      expect(counted.raf).toBe(0);
+      expect(counted.pageRaf).toBe(0);
+      // 2 s at the 1 s idle redraw: at least one, plus one for a redraw on each edge.
+      expect(counted.render).toBeGreaterThanOrEqual(1);
+      expect(counted.render).toBeLessThanOrEqual(3);
+    } finally {
+      await session.cleanup();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('a message that starts an idle agent working is back on animation frames at once @area:render', async ({
+    page,
+    standalone,
+  }) => {
+    await setSettings(page, { hooksEnabled: true, watchAllSessions: true, debugView: false });
+    const sessionId = 'render-loop-wake-session';
+    await sendHookEvent(
+      standalone.hookServerConfig,
+      sessionStartStartup(sessionId, standalone.workspaceDir),
+    );
+    await sendHookEvent(standalone.hookServerConfig, {
+      session_id: sessionId,
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Read',
+      tool_input: { file_path: path.join(standalone.workspaceDir, 'wake.ts') },
+    });
+    await expectOverlayCount(page, 1);
+    await sendHookEvent(standalone.hookServerConfig, {
+      session_id: sessionId,
+      hook_event_name: 'PostToolUse',
+    });
+    await sendHookEvent(standalone.hookServerConfig, stop(sessionId));
+    const created = (await standalone.drainMessages()).find((m) => m.type === 'agentCreated');
+    expect(typeof created?.id).toBe('number');
+
+    // Seated and done, the agent leaves the loop on its timer.
+    await page.waitForFunction(
+      () => {
+        const mode = (window as RenderLoopWindow).__pixelAgentsTestHooks?.frames?.mode;
+        return mode === 'ambient' || mode === 'idle';
+      },
+      undefined,
+      { polling: 50, timeout: 15_000 },
+    );
+
+    // Read in the same task as the delivery: the socket event, the message handler and its wake
+    // all run before it returns, so the loop's own 100 ms tick cannot be what switched it.
+    const wake = await page.evaluate((id) => {
+      const frames = (window as RenderLoopWindow).__pixelAgentsTestHooks?.frames;
+      const deliver = (window as RenderLoopWindow).__pixelAgentsDeliver;
+      if (typeof frames?.raf !== 'number' || typeof frames.render !== 'number' || !deliver) {
+        throw new Error('render loop counters or message delivery missing');
+      }
+      const before = frames.mode;
+      const raf = frames.raf;
+      deliver({ type: 'agentStatus', id, status: 'active' });
+      return { before, mode: frames.mode, raf: frames.raf - raf };
+    }, created?.id);
+    expect(wake.before).not.toBe('active');
+    expect(wake.mode).toBe('active');
+    expect(wake.raf).toBeGreaterThan(0);
+  });
+});

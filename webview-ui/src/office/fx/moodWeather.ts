@@ -72,6 +72,11 @@ export class MoodWeather {
     return left >= FX_STORM_FADE_MS ? 1 : left / FX_STORM_FADE_MS;
   }
 
+  /** A storm cloud or a heart is up: the rain falls and the heart rises every frame. */
+  moving(now: number): boolean {
+    return this.hearts.length > 0 || this.activeStorms(now) > 0;
+  }
+
   /** Milliseconds since the storm started, for the rain loop. */
   stormAge(agentId: number, now: number): number {
     return now - (this.states.get(agentId)?.since ?? now);

@@ -1,4 +1,5 @@
 import type { ColorValue } from './components/ui/types.js';
+import { type FrameCounters, requestRedraw } from './office/engine/gameLoop.js';
 import { OfficeState } from './office/engine/officeState.js';
 import { isGhostHeadlessAgentsEnabled } from './office/engine/renderer.js';
 import { carpetJunctionCase } from './office/sprites/carpetTiles.js';
@@ -87,6 +88,8 @@ declare global {
         parentToolId?: string;
       }>;
       selectAgent?: (id: number | null) => void;
+      /** Render loop counters (gameLoop.ts installs them when it loads): read deltas, never absolutes. */
+      frames?: FrameCounters;
     };
   }
 }
@@ -107,8 +110,9 @@ declare global {
  * - selectAgent(id): sets officeState.selectedAgentId directly, the same state
  *   a canvas click produces. Lets e2e reveal an agent's "Close agent" (×)
  *   button deterministically instead of pixel-hunting the sprite on the canvas
- *   (see closeAgentFromOverlay in e2e/helpers/office.ts). ToolOverlay reads
- *   selectedAgentId every rAF, so the × button surfaces on the next frame.
+ *   (see closeAgentFromOverlay in e2e/helpers/office.ts). It wakes the render
+ *   loop, and ToolOverlay re-renders on the frame drawn next, so the × button
+ *   surfaces then.
  */
 export function installTestHooks(officeStateRef: { current: OfficeState | null }): void {
   if (typeof window === 'undefined') return;
@@ -132,13 +136,14 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
     }));
   };
 
-  // The ghost setting lives in the renderer module (read every rAF frame), not
+  // The ghost setting lives in the renderer module (read on every drawn frame), not
   // in OfficeState, so e2e reads it from there to assert what is actually drawn.
   hooks.getGhostHeadlessAgents = () => isGhostHeadlessAgentsEnabled();
 
   hooks.selectAgent = (id) => {
     const os = officeStateRef.current;
     if (os) os.selectedAgentId = id;
+    requestRedraw();
   };
 
   // Point-in-time snapshot of every live pet. Pets render only on the canvas
@@ -172,6 +177,7 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
     } else {
       os.showPetBubble(petId);
     }
+    requestRedraw();
   };
 
   // ── Carpet + Areas read hooks (canvas-only state, read like getPets) ──

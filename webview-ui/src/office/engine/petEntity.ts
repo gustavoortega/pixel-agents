@@ -46,6 +46,10 @@ function directionBetween(
   return Direction.UP;
 }
 
+function sameTile(a: { col: number; row: number }, b: { col: number; row: number }): boolean {
+  return a.col === b.col && a.row === b.row;
+}
+
 /** Manhattan distance between two tile coords */
 function manhattanDistance(c1: number, r1: number, c2: number, r2: number): number {
   return Math.abs(c1 - c2) + Math.abs(r1 - r2);
@@ -138,7 +142,8 @@ function movePetAlongPath(pet: Pet, dt: number): void {
     pet.x = toCenter.x;
     pet.y = toCenter.y;
     pet.path.shift();
-    pet.moveProgress = 0;
+    // The overshoot carries into the next step, so a tile takes the same wall time at any frame rate.
+    pet.moveProgress = pet.path.length > 0 ? pet.moveProgress - 1 : 0;
   }
 }
 
@@ -176,6 +181,11 @@ function stepToBed(
   blockedTiles: Set<string>,
 ): void {
   if (pet.moveProgress > 0) {
+    // A wander path from before bedtime keeps only the step under way, so finishing it ends the
+    // walk. The walk to the bed keeps its path, so each tile's overshoot carries into the next.
+    const last = pet.path[pet.path.length - 1];
+    const toBed = !!bed && !!last && (sameTile(last, bed.approach) || sameTile(last, bed.cushion));
+    if (!toBed) pet.path.length = Math.min(pet.path.length, 1);
     updateWalkAnimation(pet, dt);
     movePetAlongPath(pet, dt);
     return;

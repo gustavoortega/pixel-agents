@@ -1,16 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 
-import {
-  CAMERA_FOLLOW_LERP,
-  CAMERA_FOLLOW_SNAP_THRESHOLD,
-  ZOOM_SCROLL_THRESHOLD,
-} from '../../constants.js';
+import { ZOOM_SCROLL_THRESHOLD } from '../../constants.js';
 import { unlockAudio } from '../../notificationSound.js';
 import { transport } from '../../transport/index.js';
 import {
   AutoFit,
   clampPan as clampPanToView,
   fitTarget,
+  followPan,
   panAfterZoom,
   roomsOf,
   stepZoom,
@@ -19,7 +16,7 @@ import { officeNow } from '../clock.js';
 import { getColorizedSprite } from '../colorize.js';
 import { canPlaceFurniture, getWallPlacementRow } from '../editor/editorActions.js';
 import type { EditorState } from '../editor/editorState.js';
-import { startGameLoop } from '../engine/gameLoop.js';
+import { type ActivityLevel, busiest, requestRedraw, startGameLoop } from '../engine/gameLoop.js';
 import type { OfficeState } from '../engine/officeState.js';
 import type {
   DeleteButtonBounds,
@@ -100,6 +97,9 @@ export function OfficeCanvas({
   // Zoom the canvas last drew at, and where a wheel zoom was aimed (device px; null = viewport centre).
   const prevZoomRef = useRef(zoom);
   const zoomAnchorRef = useRef<{ x: number; y: number } | null>(null);
+  // What the canvas itself still moves (the editor, a fit easing, a follow not yet landed), read
+  // off every drawn frame. The loop runs at the busier of this and the office's own level.
+  const canvasActivityRef = useRef<ActivityLevel>('idle');
 
   // Legal pan for the current zoom: a small map stays centred, a big one never shows void.
   const clampPan = useCallback(
@@ -151,6 +151,8 @@ export function OfficeCanvas({
     canvas.style.width = `${rect.width}px`;
     canvas.style.height = `${rect.height}px`;
     // No ctx.scale(dpr) — we render directly in device pixels
+    // Setting the size clears the canvas: draw it again now, not at the next idle redraw.
+    requestRedraw();
   }, []);
 
   useEffect(() => {
@@ -164,14 +166,16 @@ export function OfficeCanvas({
       observer.observe(containerRef.current);
     }
 
-    const stop = startGameLoop(canvas, {
-      update: (dt) => {
-        officeState.update(dt);
-      },
-      render: (ctx) => {
+    const ctx = canvas.getContext('2d')!;
+    const loop = startGameLoop(
+      (dt) => officeState.update(dt),
+      ({ dt, now: frameNowMs }) => {
+        ctx.imageSmoothingEnabled = false;
         // Canvas dimensions are in device pixels
         const w = canvas.width;
         const h = canvas.height;
+        // The editor draws ghosts and handles under the cursor: it keeps the loop on every frame.
+        let canvasActivity: ActivityLevel = isEditMode ? 'active' : 'idle';
 
         // Build editor render state
         let editorRender: EditorRenderState | undefined;
@@ -285,10 +289,11 @@ export function OfficeCanvas({
             dpr: dprFit,
             zoom,
             pan: panRef.current,
-            nowMs: performance.now(),
+            nowMs: frameNowMs,
             editing: isEditMode,
             followed: officeState.cameraFollowId !== null || !!officeState.greeterCameraTarget,
           });
+          if (cmd.easing) canvasActivity = 'active';
           if (cmd.zoom !== undefined && cmd.zoom !== zoom) onAutoZoom(cmd.zoom);
           if (cmd.pan && cmd.panZoom !== undefined) {
             if (cmd.panZoom === zoom) panRef.current = cmd.pan;
@@ -309,29 +314,24 @@ export function OfficeCanvas({
           const layout = officeState.getLayout();
           const mapW = layout.cols * TILE_SIZE * zoom;
           const mapH = layout.rows * TILE_SIZE * zoom;
-          const targetX = mapW / 2 - cameraFocus.x * zoom;
-          const targetY = mapH / 2 - cameraFocus.y * zoom;
-          const dx = targetX - panRef.current.x;
-          const dy = targetY - panRef.current.y;
-          const legal = (x: number, y: number) =>
-            clampPanToView(
-              { x, y },
-              { width: w, height: h },
-              { cols: layout.cols, rows: layout.rows },
-              zoom,
-            );
-          if (
-            Math.abs(dx) < CAMERA_FOLLOW_SNAP_THRESHOLD &&
-            Math.abs(dy) < CAMERA_FOLLOW_SNAP_THRESHOLD
-          ) {
-            panRef.current = legal(targetX, targetY);
-          } else {
-            panRef.current = legal(
-              panRef.current.x + dx * CAMERA_FOLLOW_LERP,
-              panRef.current.y + dy * CAMERA_FOLLOW_LERP,
-            );
-          }
+          const follow = followPan(
+            panRef.current,
+            { x: mapW / 2 - cameraFocus.x * zoom, y: mapH / 2 - cameraFocus.y * zoom },
+            dt,
+            (p) =>
+              clampPanToView(
+                p,
+                { width: w, height: h },
+                { cols: layout.cols, rows: layout.rows },
+                zoom,
+              ),
+          );
+          panRef.current = follow.pan;
+          if (!follow.settled) canvasActivity = 'active';
         }
+        // The Intro bubble re-aims the greeter camera after every frame.
+        if (officeState.greeterCameraTarget) canvasActivity = 'active';
+        canvasActivityRef.current = canvasActivity;
 
         // Build selection render state
         const selectionRender: SelectionRenderState = {
@@ -373,7 +373,7 @@ export function OfficeCanvas({
           {
             models: officeState.models,
             companions: officeState.companions.values(),
-            nowMs: performance.now(),
+            nowMs: frameNowMs,
           },
           isEditingAreas,
           {
@@ -401,11 +401,36 @@ export function OfficeCanvas({
         deleteButtonBoundsRef.current = editorRender?.deleteButtonBounds ?? null;
         rotateButtonBoundsRef.current = editorRender?.rotateButtonBounds ?? null;
       },
-    });
+      { activity: () => busiest(officeState.activityLevel(), canvasActivityRef.current) },
+    );
+
+    // Off screen nothing ticks. A VS Code panel kept alive but not shown stops animation frames
+    // while its timers run on, and only the canvas leaving the viewport tells.
+    let pageVisible = document.visibilityState === 'visible';
+    let onScreen = true;
+    const applyVisibility = (): void => loop.setVisible(pageVisible && onScreen);
+    const onVisibilityChange = (): void => {
+      pageVisible = document.visibilityState === 'visible';
+      applyVisibility();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    const intersection =
+      typeof IntersectionObserver === 'undefined'
+        ? null
+        : new IntersectionObserver((entries) => {
+            const last = entries[entries.length - 1];
+            if (!last) return;
+            onScreen = last.isIntersecting;
+            applyVisibility();
+          });
+    intersection?.observe(canvas);
+    if (!pageVisible) applyVisibility();
 
     return () => {
-      stop();
+      loop.stop();
       observer.disconnect();
+      intersection?.disconnect();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [
     officeState,
@@ -486,6 +511,7 @@ export function OfficeCanvas({
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
+      requestRedraw();
       // Handle middle-mouse panning
       if (isPanningRef.current) {
         const dpr = window.devicePixelRatio || 1;
@@ -640,6 +666,7 @@ export function OfficeCanvas({
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      requestRedraw();
       unlockAudio();
       // Middle mouse button (button 1) starts panning
       if (e.button === 1) {
@@ -759,6 +786,7 @@ export function OfficeCanvas({
 
   const handleMouseUp = useCallback(
     (e: React.MouseEvent) => {
+      requestRedraw();
       if (e.button === 1) {
         isPanningRef.current = false;
         const canvas = canvasRef.current;
@@ -824,6 +852,7 @@ export function OfficeCanvas({
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
+      requestRedraw();
       if (isEditMode) return; // handled by mouseDown/mouseUp
       const pos = screenToWorld(e.clientX, e.clientY);
       if (!pos) return;
@@ -897,6 +926,7 @@ export function OfficeCanvas({
   );
 
   const handleMouseLeave = useCallback(() => {
+    requestRedraw();
     isPanningRef.current = false;
     isEraseDraggingRef.current = false;
     editorState.isDragging = false;
@@ -921,6 +951,7 @@ export function OfficeCanvas({
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
+      requestRedraw();
       e.preventDefault();
       if (isEditMode) return;
       // Right-click to walk selected agent to tile
@@ -937,6 +968,7 @@ export function OfficeCanvas({
   // Wheel: Ctrl+wheel to zoom, plain wheel/trackpad to pan
   const handleWheel = useCallback(
     (e: WheelEvent) => {
+      requestRedraw();
       e.preventDefault();
       if (e.ctrlKey || e.metaKey) {
         // Accumulate scroll delta, step zoom when threshold crossed
@@ -981,6 +1013,7 @@ export function OfficeCanvas({
 
   // Prevent default middle-click browser behavior (auto-scroll)
   const handleAuxClick = useCallback((e: React.MouseEvent) => {
+    requestRedraw();
     if (e.button === 1) e.preventDefault();
   }, []);
 
