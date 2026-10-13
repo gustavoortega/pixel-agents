@@ -43,6 +43,7 @@ import {
   GLOBAL_SCAN_ACTIVE_MIN_SIZE,
   PROJECT_SCAN_INTERVAL_MS,
   TRANSCRIPT_FRESHNESS_WINDOW_MS,
+  TRANSCRIPT_READ_CHUNK_BYTES,
 } from './constants.js';
 import { seedContextUsage } from './contextUsage.js';
 import type { DismissalTracker } from './dismissalTracker.js';
@@ -58,6 +59,7 @@ import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from '.
 import { getHookProvider, processTranscriptLine } from './transcriptParser.js';
 import { applyTurnDerivation, deriveAgentTurnState, seedTurnState } from './turnStateSeed.js';
 import type { AgentState } from './types.js';
+import { completeUtf8Length } from './utf8Boundary.js';
 import { scanWorkflowRuns } from './workflowRuns.js';
 
 /** Dismissal tracker instance. Set once at startup via setDismissalTracker().
@@ -239,17 +241,32 @@ export function readNewLines(
     // A read from the start replays work that was done before this agent was watched.
     if (agent.fileOffset === 0) agent.historyBefore = Date.now() - TRANSCRIPT_FRESHNESS_WINDOW_MS;
 
-    // Cap single read at 64KB to prevent blocking on massive JSONL dumps.
-    // Remaining data will be picked up on the next poll cycle.
-    const MAX_READ_BYTES = 65536;
-    const bytesToRead = Math.min(stat.size - agent.fileOffset, MAX_READ_BYTES);
+    const bytesToRead = Math.min(stat.size - agent.fileOffset, TRANSCRIPT_READ_CHUNK_BYTES);
     const buf = Buffer.alloc(bytesToRead);
     const fd = fs.openSync(agent.jsonlFile, 'r');
-    fs.readSync(fd, buf, 0, buf.length, agent.fileOffset);
-    fs.closeSync(fd);
-    agent.fileOffset += bytesToRead;
+    let bytesRead: number;
+    try {
+      bytesRead = fs.readSync(fd, buf, 0, buf.length, agent.fileOffset);
+    } finally {
+      fs.closeSync(fd);
+    }
+    // The chunk cap or a paused writer can end the read inside a multibyte
+    // character: decode only whole ones and read the rest again next time,
+    // rather than turn both halves into U+FFFD. A file that ends mid-character
+    // keeps up to 3 bytes unread, so never loop on fileOffset < size.
+    const complete = completeUtf8Length(buf.subarray(0, bytesRead));
+    // A history catch-up waits for the file's size, except when this read reached
+    // the end with an unfinished character held back: a crash can leave one that
+    // never finishes, and the catch-up must still end.
+    const readableSize =
+      agent.fileOffset + bytesRead >= stat.size ? agent.fileOffset + complete : stat.size;
+    if (complete === 0) {
+      endHealthCatchUp(agent, agents, traits, readableSize);
+      return;
+    }
+    agent.fileOffset += complete;
 
-    const text = agent.lineBuffer + buf.toString('utf-8');
+    const text = agent.lineBuffer + buf.toString('utf-8', 0, complete);
     const lines = text.split('\n');
     agent.lineBuffer = lines.pop() || '';
 
@@ -271,7 +288,7 @@ export function readNewLines(
       if (!line.trim()) continue;
       processTranscriptLine(agentId, line, agents, waitingTimers, permissionTimers);
     }
-    endHealthCatchUp(agent, agents, traits, stat.size);
+    endHealthCatchUp(agent, agents, traits, readableSize);
   } catch (e) {
     // ENOENT is expected for hook-detected agents where the JSONL file hasn't been created yet
     if (e instanceof Error && 'code' in e && (e as NodeJS.ErrnoException).code === 'ENOENT') return;

@@ -2,6 +2,9 @@
 export const JSONL_POLL_INTERVAL_MS = 1000;
 export const FILE_WATCHER_POLL_INTERVAL_MS = 500;
 export const PROJECT_SCAN_INTERVAL_MS = 1000;
+/** Cap on one transcript read, so a huge JSONL dump never blocks the event
+ *  loop; the rest is read on the next poll. */
+export const TRANSCRIPT_READ_CHUNK_BYTES = 65_536;
 
 // ── Heuristic Agent Status Detection ────────────────────────
 // These timers are the fallback when CLI hooks are not active
@@ -160,7 +163,9 @@ export const HOOK_EVENT_BUFFER_MS = 5_000;
  *  safety net: if SessionStart never arrives (e.g. the CLI crashes mid-transition),
  *  the agent is cleaned up instead of staying as a zombie with pendingClear forever. */
 export const SESSION_END_GRACE_MS = 2000;
-export const MAX_HOOK_BODY_SIZE = 65_536; // 64KB
+/** Hook bodies carry whole Write and Edit payloads: at 64 KB a big write got a
+ *  413 and its tool start was lost. 1 MiB is also Fastify's own default. */
+export const MAX_HOOK_BODY_SIZE = 1_048_576; // 1 MiB
 
 // ── Layout/Config Persistence ──────────────────────────────
 export const LAYOUT_FILE_DIR = '.pixel-agents';
@@ -176,6 +181,11 @@ export const TRIPWIRES_FILE_NAME = 'tripwires.json';
 export const SERVER_TOKEN_FILE_NAME = 'server-token';
 /** What `--token` and the token file must hold: URL-safe, never shorter than 16. */
 export const SERVER_TOKEN_PATTERN = /^[A-Za-z0-9._-]{16,128}$/;
+/** Under LAYOUT_FILE_DIR: the port the standalone server last picked for itself,
+ *  tried first on the next start so the printed URL keeps its port too. */
+export const SERVER_PORT_FILE_NAME = 'server-port';
+/** Lowest saved port tried: below it a bind can need privileges. */
+export const SAVED_PORT_MIN = 1024;
 
 // ── Roster ─────────────────────────────────────────────────
 export const ROSTER_FILE_NAME = 'roster.json';

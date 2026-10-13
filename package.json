@@ -170,9 +170,9 @@
     "webview-ui/**/*.{ts,tsx,js,css,json}": "prettier --write"
   },
   "dependencies": {
-    "@fastify/static": "^10.1.2",
-    "@fastify/websocket": "^11.2.0",
-    "fastify": "^5.8.5"
+    "@fastify/static": "^10.1.5",
+    "@fastify/websocket": "^11.3.1",
+    "fastify": "^5.12.5"
   },
   "overrides": {
     "jsonpath-plus": "^10.4.0",

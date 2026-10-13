@@ -69,17 +69,18 @@ server/                              Lifecycle runtime + Fastify HTTP/WS server
     hookSubRows.ts                   SubagentStart rows bound to the hook's agent_id (only that sub-agent's Stop ends one)
     subagentWatch.ts                 Shadow store watching sub-agent transcripts (background spawns, workflow agents)
     workflowRuns.ts                  Workflow crews: run journals -> one watched helper per live workflow agent
-    httpServer.ts                    Fastify: POST /api/hooks/:providerId, POST /api/statusline/:providerId, GET /api/health, GET /ws, SPA (standalone)
+    httpServer.ts                    Fastify: POST /api/hooks/:providerId, POST /api/statusline/:providerId, GET /api/health, GET /ws, SPA (standalone); SECURITY_HEADERS, token-redacted request log
     usage/usageLimitsBody.ts         Hand-checked body of POST /api/statusline (no Fastify schema: AJV would strip extra keys and coerce types)
     usage/usageLimitsStore.ts        Official 5 h / weekly limits in memory: one sample per window, replaced only by one not older; broadcasts usageLimits
     clientMessageHandler.ts          Single dispatch point for ClientMessage from webview
     server.ts                        Top-level composition
-    serverToken.ts                   Standalone token: ~/.pixel-agents/server-token (0600), reused across restarts
+    serverToken.ts                   Standalone token and port across restarts: ~/.pixel-agents/server-token (0600, --new-token replaces it) and server-port
     cli.ts                           npx pixel-agents entry (npm bin)
     fileStateAdapter.ts              Namespaced ~/.pixel-agents/ persistence
     configPersistence.ts             { vscode, standalone, externalAssetDirectories, hooksConsent: {providerId: granted|declined}, hooksEnabled: {providerId: boolean} } (absent preference = HookProvider.defaultEnabled, true unless off by default)
     layoutPersistence.ts             ~/.pixel-agents/layout.json with atomic tmp+rename
     fileWatcher.ts                   Hybrid fs.watch + 500ms polling, JSONL line buffering, /clear detection
+    utf8Boundary.ts                  completeUtf8Length: a read never decodes half a character
     transcriptParser.ts              JSONL parsing for heuristic / file-fallback mode
     timerManager.ts                  Waiting / permission timers
     assetLoader.ts                   PNG → SpriteData via pngjs
@@ -215,7 +216,7 @@ webview-ui/                          npm workspace
 Two artifacts from one source tree:
 
 - **VS Code extension** (`.vsix`) — `pablodelucca.pixel-agents` on VS Code Marketplace and Open VSX. Bundles VS Code adapter + webview SPA + assets + hook scripts.
-- **npm package** (`pixel-agents`) — `npx pixel-agents [--port 3100]` runs the Fastify server and serves the SPA on the same port. Bundles CLI + webview SPA + assets + hook scripts + `core/asyncapi.yaml` (so third-party clients can regenerate from it).
+- **npm package** (`pixel-agents`) — `npx pixel-agents [--port 3100] [--token <token> | --new-token]` runs the Fastify server and serves the SPA on the same port. Bundles CLI + webview SPA + assets + hook scripts + `core/asyncapi.yaml` (so third-party clients can regenerate from it).
 
 `package.json:files` allowlist controls what ships in the npm tarball and the `.vsix`: `CHANGELOG.md`, `LICENSE`, `dist/cli.js`, `dist/extension.js`, `dist/uninstall.js`, both bundled scripts (`dist/hooks/claude-hook.js`, `dist/hooks/statusline-tee.js`), `dist/assets/`, `dist/webview/`, `icon.png`. `scripts/npm-package-contract.mjs` and `scripts/verify-vsix-package.mjs` fail a package missing either script.
 
@@ -287,7 +288,7 @@ A reopen (any open after the page's first) flushes the send queue, then fires `o
 - **Sound and effects**: inside the window helpers appear with no spawn effect, and neither the `agentStatus` chime nor the tripwire alarm plays.
 - **Consent**: the webview admits one `hooksConsentRequest` per provider per page load, so a reconnect never replays the Intro.
 
-The standalone server keeps its token in `~/.pixel-agents/server-token` (0600, minted on first start, deleted to rotate it; `--token <token>` overrides it for one run without reading or writing the file), so the URL the CLI printed survives a restart and an open tab reconnects instead of being refused. The embedded server still mints one per start.
+The standalone server keeps its token in `~/.pixel-agents/server-token` (0600, minted on first start, replaced by `--new-token` or by deleting the file; `--token <token>` overrides it for one run without reading or writing the file) and first tries the port it last picked for itself (`server-port`), so the URL the CLI printed survives a restart and an open tab reconnects instead of being refused. The embedded server still mints one per start.
 
 ## Provider Abstraction
 
@@ -378,22 +379,26 @@ Two extracted classes that replaced ad-hoc module state. `SessionRouter` owns `s
 
 Fastify v5 with `@fastify/websocket`, and (in standalone) `@fastify/static`:
 
-| Method | Path                          | Purpose                                                                                                       |
-| ------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| POST   | `/api/hooks/:providerId`      | Bearer-authenticated hook event ingress                                                                       |
-| POST   | `/api/statusline/:providerId` | Bearer-authenticated official usage limits from the status line wrapper; 400 for anything but the two windows |
-| GET    | `/api/health`                 | Liveness: `{ ok, version, port, pid }`                                                                        |
-| GET    | `/ws`                         | Bidirectional protocol channel                                                                                |
-| GET    | `/*` (standalone only)        | Webview SPA via `@fastify/static`                                                                             |
+| Method | Path                          | Purpose                                                                                                                                               |
+| ------ | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/api/hooks/:providerId`      | Bearer-authenticated hook event ingress (1 MiB body, token checked before the body is read)                                                           |
+| POST   | `/api/statusline/:providerId` | Bearer-authenticated official usage limits from the status line wrapper (token checked before the body is read); 400 for anything but the two windows |
+| GET    | `/api/health`                 | Liveness: `{ status: 'ok', uptime, pid }`                                                                                                             |
+| GET    | `/ws`                         | Bidirectional protocol channel                                                                                                                        |
+| GET    | `/*` (standalone only)        | Webview SPA via `@fastify/static`                                                                                                                     |
+
+Every reply carries `SECURITY_HEADERS` (`httpServer.ts`): a `Content-Security-Policy` that admits only the SPA's own bundle, styles, fonts, images and same-host socket (`connect-src 'self'`, which CSP3 matches against `ws:` on the page's host and port), `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. One root `onSend` hook sets them on any bind and in both modes (`httpServerHeaders.test.ts`). no-referrer keeps the page's `?token=` out of every Referer. The standalone e2e fixture runs the real SPA under them: teardown fails on any policy refusal, requires frames on the `ws://127.0.0.1` `/ws?token=` socket, and ends with an inline-script probe that must be refused. Fastify answers a url it cannot decode with its own 400 before any hook runs, so that JSON reply carries none of them.
 
 `/ws` is gated in **two tiers**, because `setHooksEnabled(true)` over this socket is a durable, machine-wide consent grant plus a hook install.
 
 1. **Connection**: embedded requires the Bearer token; standalone requires a same-origin handshake (`isAllowedWebSocketOrigin`) AND the `?token=` (`standaloneTokenValid`), because the broadcast stream itself carries tool activity. On a loopback bind an `onRequest` hook also refuses any `Host` that is not a loopback name, so a DNS-rebound page (`Origin` and `Host` both `evil.com`) gets 403 on every route (`httpServerWs.test.ts` pins both).
-2. **Privileged messages** (`standaloneTokenValid`, `ClientMessageContext.privileged`): proved by an out-of-band secret — embedded via its Bearer token, standalone via the server token in the `/ws` `?token=` query, which the CLI prints in the local URL and the SPA forwards (`webview-ui/src/transport/index.ts`). **Never a network position**: peer address, `Host` and `Origin` all ride the channel a proxy speaks, so a LAN-bound forwarder piping bytes to 127.0.0.1 satisfies all three. The token is a replayable bearer capability, not evidence of locality — it also reaches browser history and Fastify's request log, so the printed URL is documented to the user as a secret. It outlives restarts (`~/.pixel-agents/server-token`, see Reconnect resync), so rotating it means deleting that file. Since every accepted standalone socket carries it, `privileged` is always true there.
+2. **Privileged messages** (`standaloneTokenValid`, `ClientMessageContext.privileged`): proved by an out-of-band secret — embedded via its Bearer token, standalone via the server token in the `/ws` `?token=` query, which the CLI prints in the local URL and the SPA forwards (`webview-ui/src/transport/index.ts`). **Never a network position**: peer address, `Host` and `Origin` all ride the channel a proxy speaks, so a LAN-bound forwarder piping bytes to 127.0.0.1 satisfies all three. The token is a replayable bearer capability, not evidence of locality — it also reaches browser history, so the printed URL is documented to the user as a secret. It outlives restarts (`~/.pixel-agents/server-token`, see Reconnect resync), so rotating it means `--new-token` (or deleting that file). Since every accepted standalone socket carries it, `privileged` is always true there. The request log shows `token=[redacted]` in every url, including the `path` @fastify/websocket logs when it closes an upgrade on a route with no ws handler, and never logs `Authorization` (`redactedRequestSerializer`, `redactTokenParam`, pino `redact`); our own not-found handler replaces Fastify's default one, which logged the raw url.
 
 The **hooks preference is persisted only after the install/uninstall settled and the on-disk result agrees** — writing it first strands the user when an uninstall fails: entries still firing, but a persisted hooks-off makes the next startup skip the consent/install path entirely.
 
-Server discovery written to `~/.pixel-agents/server.json` with `{ port, pid, authToken }`. Multi-window safe: a second server detects an existing `server.json` and reuses or replaces it based on PID liveness.
+Server discovery written to `~/.pixel-agents/server.json` with `{ port, pid, token, startedAt, servesSpa, protocol }`. Multi-window safe: a second server detects an existing `server.json` and reuses or replaces it based on PID liveness.
+
+**Standalone token and port** (`serverToken.ts`): the token in `~/.pixel-agents/server-token` (see Reconnect resync) and the port in `server-port`, a plain integer from 1024 to 65535 (anything else is ignored). Both are written 0600 by one tmp+rename writer and never deleted by `stop()`. Embedded never reads or writes either: its token must not become, or replace, the long-lived one. A live standalone found in the registry is reused as before and both files are left alone. `--new-token` mints a token and saves it over the old one only once the server listens, so a failed start revokes nothing; next to `--token` it is refused, and against a live standalone it is ignored with one stderr line. Without `--port` the saved port is tried first; if it is taken (`EADDRINUSE`, or `EACCES` from a Windows excluded port range) the server retries once on an OS-assigned port and keeps the saved one for the next start. Only a port the server picked itself is saved: an explicit `--port` serves that run only, so test and e2e runs, which always pass one, never move a user's port (every harness that starts the CLI's server also gives it a temp `HOME` and `USERPROFILE`). The CLI shuts down on `SIGHUP` like on `SIGINT`/`SIGTERM`, so a closed terminal still removes `server.json`.
 
 ### ClientMessageHandler
 
@@ -412,8 +417,9 @@ Per-agent runtime data: provider reference, session key, transcript-fallback fie
   standalone-state.json    { agents, seats }
   layout.json              OfficeLayout (shared across surfaces)
   roster.json              { version, members (xp, streak, consecutiveFailures, lastFolder), holds } shared by both surfaces
-  server.json              { port, pid, authToken }
-  server-token             Standalone server token (0600), reused across restarts; not read or written with --token
+  server.json              { port, pid, token, startedAt, servesSpa, protocol }
+  server-token             Standalone server token (0600), reused across restarts; not read or written with --token, replaced by --new-token
+  server-port              Port the standalone server last picked for itself, tried first on the next start; not read or written with --port
   hooks/claude-hook.js     Bundled hook script (CJS, shebang)
   hooks/statusline-tee.js  Bundled status line wrapper; kept on uninstall, so a wrapper still in statusLine keeps running the user's command
 ```
@@ -430,7 +436,7 @@ JSONL transcripts at `~/.claude/projects/<project-hash>/<session-id>.jsonl`. Pro
 
 **JSONL record types**: `assistant` (tool_use or thinking), `user` (tool_result or text prompt), `system` with `subtype: "turn_duration"` (reliable turn-end signal), `progress` with `data.type`: `agent_progress` (sub-agent tool_use/tool_result, non-exempt tools trigger permission timers), `bash_progress` (Bash output: restarts permission timer), `mcp_progress` (MCP tool: same timer restart), `queue-operation` with `operation: enqueue` (task notifications: end background agents, workflow runs and background shells), `attachment` with `attachment.type: queued_command` (a prompt queued while the agent was busy; a task notification there, or as a `user` text prompt, also ends a background shell), `permission-mode` (the permission mode, also stamped on every `user` record). Also observed but not tracked: `file-history-snapshot`, `mode` (the CLI's input mode, `normal`), other `queue-operation`s and `attachment`s.
 
-**File watching**: 500 ms polling with partial-line buffering for mid-write reads. Tool-done messages delayed 300 ms to prevent React batching from hiding brief active states.
+**File watching**: 500 ms polling with partial-line buffering for mid-write reads. A read that ends inside a multibyte UTF-8 character (the 64 KiB chunk cap, or a writer paused mid-character) decodes only whole characters and leaves the rest behind `fileOffset` (`completeUtf8Length`, `utf8Boundary.ts`); `readNewLines` does it for every watched agent, sub-agent shadows included, and the turn-state seed for the tail it reads. No loop or wait may run on `fileOffset < size`: a file that ends mid-character keeps up to 3 bytes unread, so a replayed history's health catch-up ends at a read that reached the end. Tool-done messages delayed 300 ms to prevent React batching from hiding brief active states.
 
 ### Dual-mode detection
 
@@ -494,7 +500,8 @@ Detection rules over each agent's tool calls, evaluated in `HookEventHandler.han
 - **Privacy**: matched text and tool input never leave the server. The wire carries rule id, validated rule name, severity and count; the log line is `Tripwire <ruleId> agent <id>` only.
 - **State** is `AgentState.tripwire` (not persisted): `count` is every hit since the last ack, the shown rule is the highest severity seen since then. `ackTripwire` clears only when the client's count covers the current one, otherwise it re-sends the state. VS Code and standalone both call the shared `ackTripwire` and broadcast the reply.
 - `resendAgentActivity` sends `agentTripwire` or `agentTripwireClear` for every agent on reconnect.
-- **Regex idioms are load-bearing** (see `tripwireDefaults.ts`): atomic first-occurrence prefix for "keyword, then X on the same line", bounded `{0,6}` option skipping. The backtracking budget test guards them.
+- **Regex idioms are load-bearing** (see `tripwireDefaults.ts`): atomic first-occurrence prefix for "keyword, then X on the same line", bounded `{0,6}` option skipping. The backtracking budget tests guard them, on ~60 KB inputs and on 1 MiB string leaves (the hook body limit).
+- **User patterns in `tripwires.json` are neither capped nor verified**: they must be linear, since a string leaf can be up to 1 MiB and the server runs on one event loop.
 
 ### Agent health (server/src/health.ts)
 
@@ -758,7 +765,7 @@ Use `console.log`/`error`/`warn` with prefixed context:
 ## Condensed Lessons
 
 - `fs.watch` unreliable on Windows — always pair with polling backup.
-- Partial line buffering essential for append-only file reads (carry unterminated lines).
+- Partial line buffering essential for append-only file reads (carry unterminated lines). Leave an incomplete UTF-8 tail unread, behind the offset: decoding each chunk alone turns a split character into U+FFFD.
 - Delay `agentToolDone` 300 ms to prevent React batching from hiding brief active states.
 - **Idle detection** has two signals: (1) `system` + `subtype: "turn_duration"` — reliable for tool-using turns (~98%), emitted once per completed turn. (2) Text-idle timer (`TEXT_IDLE_DELAY_MS = 5 s`) — for text-only turns. Only starts when `hadToolsInTurn` is false; suppressed once `hadToolsInTurn` becomes true. Reset on new user prompt or `turn_duration`. Cancelled by ANY new JSONL data.
 - User prompt `content` can be string (text) or array (tool_results) — handle both.

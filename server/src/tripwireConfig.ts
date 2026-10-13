@@ -64,6 +64,7 @@ function parseRule(raw: unknown): TripwireRule | string {
  * defaults by id; `enabled: false` turns every rule off. A missing or
  * malformed file means the defaults. Read once at startup: a user regex with
  * catastrophic backtracking stalls the whole server, which shares one event loop.
+ * Rules run synchronously on inputs up to 1 MiB.
  */
 export function loadTripwireRules(filePath: string = tripwiresFilePath()): readonly TripwireRule[] {
   let text: string;

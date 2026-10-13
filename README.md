@@ -46,7 +46,7 @@ node dist/cli.js --host 127.0.0.1
 
 Open the URL it prints. It carries a `?token=` that gives full control of the office, including installing the Claude Code hooks, so treat it as a password. The first run asks before it touches `~/.claude/settings.json`.
 
-The token is saved in `~/.pixel-agents/server-token`, so the URL keeps working after a restart and an open tab reconnects on its own. Delete that file to get a new token, or pass `--token <token>` for a single run.
+The token is saved in `~/.pixel-agents/server-token` and the port the server picked in `~/.pixel-agents/server-port`, so the URL keeps working after a restart and an open tab reconnects on its own. If that port is taken, the server uses another one for that run and tries the saved one again next time. The saved token is a long-lived password: `node dist/cli.js --new-token` replaces it and every URL with the old one stops working; under `--host 0.0.0.0`, rotate once you have shared the URL. `--token <token>` uses a token for a single run and leaves the saved one alone.
 
 Keep the default bind. `--host 0.0.0.0` puts the office and its token-gated socket on your network.
 

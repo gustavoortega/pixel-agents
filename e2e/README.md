@@ -30,6 +30,8 @@ Every spawn permutation (internal vs external origin × basic vs inline-teammate
 
 The `npx pixel-agents` CLI path: hook-driven lifecycle propagates from the local server into the browser SPA via the single `/ws` WebSocket endpoint.
 
+Every test on the standalone fixture also runs the SPA under the server's Content-Security-Policy: teardown fails on any CSP console message, `securitypolicyviolation` event or uncaught page error, requires a frame on the tokened `/ws` socket, and ends with an inline-script probe that must be refused. Never set `bypassCSP`; fix the page or the policy instead.
+
 ### Pet system (`@area:pets`)
 
 The animated pets feature, which has no hook dependency. Pet sprites load and the `petSpritesLoaded` broadcast arrives with manifest display names; placing a pet from the Pets-tab carousel toggles it on/off and persists across a panel reload via `~/.pixel-agents/layout.json`; clicking a pet shows a heart bubble that auto-dismisses and dismisses again on re-click. Pets render only on the canvas, so live state is read through the `getPets` / `petClick` e2e test hooks. FSM internals, pathfinding, FOLLOW, z-sort, and legacy-layout migration are covered by webview unit tests, not e2e.

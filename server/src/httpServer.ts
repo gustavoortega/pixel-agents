@@ -53,6 +53,8 @@ export interface HttpServerOptions {
   tokenLedger?: TokenLedger;
   /** Receives the official limits the status line wrapper posts; its latest reading is sent on connect. */
   usageLimits?: UsageLimitsStore;
+  /** Destination of the standalone request log, stdout when unset. Ignored when embedded, which logs nothing. */
+  logStream?: NodeJS.WritableStream;
 }
 
 /** Result of createHttpServer(). */
@@ -64,6 +66,32 @@ export interface HttpServerHandle {
 const startTime = Date.now();
 
 /**
+ * Sent on every reply. The SPA loads only its own bundle, stylesheet, fonts and
+ * images, and dials its socket back to the host that served it (CSP3 'self'
+ * matches ws: and wss: on that host and port), so injected markup can neither
+ * run nor reach anywhere else, and nothing may frame the office, post a form
+ * out of it or rebase its urls. no-referrer keeps the `?token=` in the page url
+ * out of every Referer; nosniff stops the index.html fallback, served at any
+ * unknown script url, from running as a script.
+ */
+export const SECURITY_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'none'",
+  ].join('; '),
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+});
+
+/**
  * Create a Fastify server with hook endpoint, health check, and WebSocket support.
  *
  * All Fastify-specific code lives in this file. The rest of the server layer is
@@ -71,8 +99,29 @@ const startTime = Date.now();
  */
 export async function createHttpServer(options: HttpServerOptions): Promise<HttpServerHandle> {
   const app = Fastify({
-    logger: !options.embedded,
+    logger: options.embedded
+      ? false
+      : {
+          serializers: {
+            req: redactedRequestSerializer,
+            // @fastify/websocket logs the raw url under `path` when it closes an
+            // upgrade on a route with no ws handler (`/`, `/ws/`, `/api/health`).
+            path: (value: unknown) => (typeof value === 'string' ? redactTokenParam(value) : value),
+          },
+          redact: {
+            paths: ['req.headers.authorization', 'headers.authorization'],
+            censor: '[redacted]',
+          },
+          ...(options.logStream ? { stream: options.logStream } : {}),
+        },
     bodyLimit: MAX_HOOK_BODY_SIZE,
+  });
+
+  // Root level and unconditional: a LAN bind serves the same SPA, embedded
+  // answers on the same machine, and the rebinding 403 and the index.html
+  // fallback are pages too.
+  app.addHook('onSend', async (_request, reply) => {
+    reply.headers(SECURITY_HEADERS);
   });
 
   const host = options.host ?? '127.0.0.1';
@@ -99,16 +148,23 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
   await app.register(fastifyWebsocket);
 
   // Static SPA serving (standalone mode only)
-  if (!options.embedded && options.staticDir) {
+  const staticDir = options.embedded ? undefined : options.staticDir;
+  if (staticDir) {
     await app.register(fastifyStatic, {
-      root: options.staticDir,
+      root: staticDir,
       prefix: '/',
     });
-    // HTML5 history fallback: serve index.html for unmatched routes
-    app.setNotFoundHandler((_req, reply) => {
-      reply.sendFile('index.html');
-    });
   }
+  // Always our own handler: Fastify's default one logs `Route GET:<url> not
+  // found` at info level, `?token=` included, past the req serializer. The SPA
+  // gets the HTML5 history fallback.
+  app.setNotFoundHandler((_req, reply) => {
+    if (staticDir) {
+      reply.sendFile('index.html');
+    } else {
+      reply.code(404).send({ statusCode: 404, error: 'Not Found', message: 'Not Found' });
+    }
+  });
 
   // ── Routes ──────────────────────────────────────────────────
 
@@ -119,7 +175,14 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
 
   // ── Listen ──────────────────────────────────────────────────
 
-  await app.listen({ host, port: options.port ?? 0 });
+  try {
+    await app.listen({ host, port: options.port ?? 0 });
+  } catch (err) {
+    // The caller never receives this instance, so only we can release it before
+    // the caller decides whether to retry on another port.
+    await app.close();
+    throw err;
+  }
   const address = app.server.address();
   const port = typeof address === 'object' ? (address?.port ?? 0) : 0;
 
@@ -145,7 +208,9 @@ function registerHookRoute(app: FastifyInstance, options: HttpServerOptions): vo
   }>(
     `${HOOK_API_PREFIX}/:providerId`,
     {
-      preHandler: bearerAuth(options.token),
+      // onRequest runs before Fastify reads the body: under --host 0.0.0.0 a
+      // client without the token must not get a 1 MiB body buffered and parsed.
+      onRequest: bearerAuth(options.token),
       schema: {
         params: {
           type: 'object',
@@ -185,7 +250,8 @@ const PROVIDER_ID_PATTERN = /^[a-z0-9-]+$/;
 function registerStatuslineRoute(app: FastifyInstance, options: HttpServerOptions): void {
   app.post<{ Params: { providerId: string } }>(
     `${STATUSLINE_API_PREFIX}/:providerId`,
-    { preHandler: bearerAuth(options.token) },
+    // Before the body is read, as on the hook route: the body limit is 1 MiB here too.
+    { onRequest: bearerAuth(options.token) },
     async (request, reply) => {
       if (!PROVIDER_ID_PATTERN.test(request.params.providerId)) {
         reply.code(400).send('invalid provider id');
@@ -395,6 +461,32 @@ function bearerAuth(expectedToken: string) {
 }
 
 // ── Utilities ──────────────────────────────────────────────────
+
+/**
+ * A url with its `token` query value replaced. The standalone token rides the
+ * printed SPA url and the `/ws` handshake, and it is a replayable bearer
+ * capability: a pasted log or a shared scrollback must not carry it.
+ */
+export function redactTokenParam(url: string): string {
+  return url.replace(/([?&]token=)[^&#]*/gi, '$1[redacted]');
+}
+
+/** The request fields Fastify logs by default, with the url's token redacted. */
+export function redactedRequestSerializer(request: FastifyRequest): {
+  method: string;
+  url: string;
+  host: string;
+  remoteAddress: string;
+  remotePort: number | undefined;
+} {
+  return {
+    method: request.method,
+    url: redactTokenParam(request.url),
+    host: request.host,
+    remoteAddress: request.ip,
+    remotePort: request.socket?.remotePort,
+  };
+}
 
 function safeSend(
   socket: { send: (data: string) => void; readyState: number },

@@ -100,9 +100,9 @@ async function waitForHttpOk(url: string): Promise<void> {
  * Spawn our standalone CLI (dist/cli.js). The CLI serves both the SPA and the
  * /ws WebSocket on the same port; tests connect Playwright's chromium to that
  * single origin. Workspace dir is communicated via process.cwd() since our CLI
- * doesn't take a --workspace-dir flag. Every host gets an explicit --token, so no
- * host reads or writes the saved server-token file, and hosts sharing a HOME
- * (multi-server) never race on it.
+ * doesn't take a --workspace-dir flag. Every host gets an explicit --port and
+ * --token, so no host reads or writes the saved server-port or server-token file,
+ * and hosts sharing a HOME (multi-server) never race on them.
  */
 function spawnStandaloneHost(args: {
   homeDir: string;

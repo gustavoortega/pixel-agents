@@ -18,10 +18,10 @@ import {
   SERVER_REGISTRY_PROTOCOL_VERSION,
   SERVERS_DIR,
 } from './constants.js';
-import { createHttpServer } from './httpServer.js';
+import { createHttpServer, type HttpServerHandle } from './httpServer.js';
 import type { ServerConfig } from './serverConfig.js';
 import { isServerConfig, isServerTarget } from './serverConfig.js';
-import { loadOrCreateToken } from './serverToken.js';
+import { loadOrCreateToken, loadSavedPort, savePort, saveToken } from './serverToken.js';
 import type { TokenLedger } from './tokenLedger.js';
 import type { UsageLimitsStore } from './usage/usageLimitsStore.js';
 
@@ -35,7 +35,7 @@ type HookEventCallback = (providerId: string, event: Record<string, unknown>) =>
  * and optionally serves the SPA in standalone mode.
  *
  * Routes (via Fastify in httpServer.ts):
- * - `POST /api/hooks/:providerId` -- hook event (auth required, 64KB body limit)
+ * - `POST /api/hooks/:providerId` -- hook event (auth required, 1 MiB body limit)
  * - `POST /api/statusline/:providerId` -- official usage limits from the status line wrapper (auth required)
  * - `GET /api/health` -- health check (no auth)
  * - `GET /ws` -- WebSocket for real-time agent state (auth required)
@@ -77,6 +77,8 @@ export class PixelAgentsServer {
     tokenLedger?: TokenLedger;
     /** The CLI's `--token`: used as given, and the token file is neither read nor written. */
     token?: string;
+    /** The CLI's `--new-token` (standalone, no `token`): a fresh token replaces the saved one. */
+    newToken?: boolean;
     usageLimits?: UsageLimitsStore;
   }): Promise<ServerConfig> {
     const embedded = options?.embedded ?? true;
@@ -103,28 +105,54 @@ export class PixelAgentsServer {
     // printed URL carries it to open tabs. Embedded mints one per start: no URL
     // carries it, and sharing the standalone's file would make one secret, which
     // also reaches browser history, open both servers.
+    const settingsDir = path.join(os.homedir(), LAYOUT_FILE_DIR);
+    // --new-token's token is saved over the old one only once this server listens:
+    // a start that fails must not revoke the URL that still works.
+    const rotateToken = !embedded && options?.token === undefined && options?.newToken === true;
     const token =
       options?.token ??
-      (embedded
-        ? crypto.randomUUID()
-        : loadOrCreateToken(path.join(os.homedir(), LAYOUT_FILE_DIR)));
+      (embedded || rotateToken ? crypto.randomUUID() : loadOrCreateToken(settingsDir));
+    // Standalone without --port tries the port it last picked for itself first, so
+    // the printed URL keeps its port too. Embedded and an explicit --port neither
+    // read nor write that file: test and e2e runs, which always pass one, never move
+    // a user's port.
+    const remembersPort = !embedded && options?.port === undefined;
+    const savedPort = remembersPort ? loadSavedPort(settingsDir) : undefined;
     const store = options?.store;
+    const listenOn = (port: number): Promise<HttpServerHandle> =>
+      createHttpServer({
+        embedded,
+        host: options?.host,
+        port,
+        token,
+        store: store!,
+        runtime: options?.runtime,
+        staticDir: options?.staticDir,
+        assetCache: options?.assetCache,
+        onHookEvent: (providerId, event) => this.callback?.(providerId, event),
+        onSetHooksEnabled: options?.onSetHooksEnabled,
+        onReloadAssets: options?.onReloadAssets,
+        tokenLedger: options?.tokenLedger,
+        usageLimits: options?.usageLimits,
+      });
 
-    const { app, port } = await createHttpServer({
-      embedded,
-      host: options?.host,
-      port: options?.port,
-      token,
-      store: store!,
-      runtime: options?.runtime,
-      staticDir: options?.staticDir,
-      assetCache: options?.assetCache,
-      onHookEvent: (providerId, event) => this.callback?.(providerId, event),
-      onSetHooksEnabled: options?.onSetHooksEnabled,
-      onReloadAssets: options?.onReloadAssets,
-      tokenLedger: options?.tokenLedger,
-      usageLimits: options?.usageLimits,
-    });
+    let fellBack = false;
+    let handle: HttpServerHandle;
+    try {
+      handle = await listenOn(options?.port ?? savedPort ?? 0);
+    } catch (err) {
+      // Only the saved port may move. A busy explicit --port stays an error, so
+      // nothing serves on a port its caller did not ask for.
+      if (savedPort === undefined || !isSavedPortUnavailable(err)) throw err;
+      fellBack = true;
+      handle = await listenOn(0);
+      console.log(`[Pixel Agents] Port ${savedPort} is unavailable, using ${handle.port}`);
+    }
+    const { app, port } = handle;
+
+    if (rotateToken) saveToken(settingsDir, token);
+    // A fallback port serves this run only: the next start tries the saved one again.
+    if (remembersPort && !fellBack && port !== savedPort) savePort(settingsDir, port);
 
     this.app = app;
     this.config = {
@@ -182,15 +210,8 @@ export class PixelAgentsServer {
 
   /** Write server.json atomically (tmp + rename) with mode 0o600. */
   private writeServerJson(config: ServerConfig): void {
-    const filePath = this.getServerJsonPath();
-    const dir = path.dirname(filePath);
     try {
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      }
-      const tmpPath = filePath + '.tmp';
-      fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-      fs.renameSync(tmpPath, filePath);
+      writePrivateJson(this.getServerJsonPath(), config);
     } catch (e) {
       console.error(`[Pixel Agents] Failed to write server.json: ${e}`);
     }
@@ -277,15 +298,8 @@ export class PixelAgentsServer {
 
   /** Write this server's registry entry atomically (tmp + rename) with mode 0o600. */
   private writeRegistryEntry(config: ServerConfig): void {
-    const dir = this.getRegistryDir();
     try {
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      }
-      const filePath = this.getRegistryFilePath(config);
-      const tmpPath = `${filePath}.tmp`;
-      fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-      fs.renameSync(tmpPath, filePath);
+      writePrivateJson(this.getRegistryFilePath(config), config);
     } catch (e) {
       console.error(`[Pixel Agents] Failed to write registry entry: ${e}`);
     }
@@ -301,6 +315,27 @@ export class PixelAgentsServer {
       // File may already be gone
     }
   }
+}
+
+/** Atomic (tmp + rename) owner-only JSON write, for every file here that holds a
+ *  bearer token: server.json and the registry entries. */
+function writePrivateJson(filePath: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  const tmpPath = `${filePath}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(value, null, 2), { mode: 0o600 });
+  fs.renameSync(tmpPath, filePath);
+}
+
+/**
+ * A saved port that cannot be bound now. EACCES as well as EADDRINUSE:
+ * Windows refuses a port inside the excluded ranges that Hyper-V, WSL2 and
+ * Docker reserve at boot out of the same dynamic range the saved port came
+ * from, and without the fallback every start would fail until the user found
+ * and deleted server-port.
+ */
+function isSavedPortUnavailable(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'EADDRINUSE' || code === 'EACCES';
 }
 
 /** Check if a process is alive by sending signal 0 (no-op, just checks existence). */
