@@ -49,7 +49,7 @@ Two regex idioms keep patterns fast:
 1. "Keyword, then later on the same line X": use the atomic first-occurrence prefix with flag `m`: `^(?=(?<k>[^\n]*?\bKEYWORD\b))\k<k>[^\n;&|]*X`. The plain `\bKEYWORD\b[^\n]*X` form is quadratic when the keyword repeats. `[^\n;&|]` stops at the next chained command.
 2. Skipping options: bound the repeat (`(-\S+\s+){0,6}`), never `*`.
 
-Warning: a user regex with catastrophic backtracking stalls the whole server, which runs on one event loop. Test patterns against long repeated input before adding them.
+Warning: a user regex with catastrophic backtracking stalls the whole server, which runs on one event loop. A string value can be up to 1 MiB (the hook body limit), so test patterns against long repeated input before adding them.
 
 ## Default pack
 

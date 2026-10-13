@@ -35,7 +35,7 @@ export const PATH_IGNORE_KEYS: string[] = [
   'todos',
 ];
 
-/** Deepest nesting scanned. The 64 KB hook body limit bounds the leaf count and size. */
+/** Deepest nesting scanned. The 1 MiB hook body limit bounds the leaf count and size. */
 const MAX_LEAF_DEPTH = 6;
 
 const SEVERITY_RANK: Record<TripwireSeverity, number> = { low: 1, medium: 2, high: 3 };

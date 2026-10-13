@@ -411,10 +411,12 @@ describe('health across a new session or a replayed history', () => {
     expect(health).toEqual([looping(4), CLEAR]);
   });
 
-  /** Adopt a transcript that was just created: it replays from its first line. */
-  function adoptFresh(records: Rec[]): Rec[] {
+  /** Adopt a transcript that was just created: it replays from its first line. `tail` is
+   *  raw bytes after the last line, such as a line a crash cut off. */
+  function adoptFresh(records: Rec[], tail = Buffer.alloc(0)): Rec[] {
     const file = path.join(tmp, 'fresh.jsonl');
     writeJsonl(file, records);
+    fs.appendFileSync(file, tail);
     const store = new AgentStateStore();
     const health: Rec[] = [];
     store.on('broadcast', (msg) => {
@@ -440,5 +442,13 @@ describe('health across a new session or a replayed history', () => {
     const loop = [0, 1, 2, 3].map(() => repeat('Read', { file_path: 'a.ts' }));
     expect(adoptFresh([prompt(), ...loop.flat(), ...read('b.ts')])).toEqual([]);
     expect(adoptFresh([prompt(), ...loop.flat()])).toEqual([looping(4)]);
+  });
+
+  // A crash mid-write can end the transcript inside a character: the read leaves its
+  // bytes behind fileOffset for the rest of it, which then never arrives.
+  it('a replayed history cut off inside a character still sends its compare', () => {
+    const loop = [0, 1, 2, 3].map(() => repeat('Read', { file_path: 'a.ts' }));
+    const cut = Buffer.from('{"type":"user","message":{"content":"ñ').subarray(0, -1);
+    expect(adoptFresh([prompt(), ...loop.flat()], cut)).toEqual([looping(4)]);
   });
 });

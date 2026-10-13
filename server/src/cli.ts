@@ -39,21 +39,25 @@ import { UsageLimitsStore } from './usage/usageLimitsStore.js';
 // ── Argument parsing ──────────────────────────────────────────
 
 export interface CliArgs {
-  /** Unset -> ephemeral (OS-assigned) port, so multiple standalone instances
-   *  can run at once without a collision. --port picks a fixed one. */
+  /** Unset -> the port the last run picked for itself (~/.pixel-agents/server-port),
+   *  else an OS-assigned one; a saved port that is taken falls back to an
+   *  OS-assigned one. --port picks a fixed one for this run only (busy is an
+   *  error) and is never saved. */
   port?: number;
   host: string;
   /** --token: the server token to use instead of the saved one. */
   token?: string;
+  /** --new-token: replace the saved server token with a fresh one. */
+  newToken: boolean;
 }
 
-/** Thrown by parseArgs on an invalid --port. Kept separate from process.exit so
+/** Thrown by parseArgs on an invalid argument. Kept separate from process.exit so
  *  the parsing logic stays a pure, unit-testable function -- main() is the only
  *  place that turns a bad argument into an exit code. */
 export class CliArgsError extends Error {}
 
 export function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { host: '127.0.0.1' };
+  const args: CliArgs = { host: '127.0.0.1', newToken: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--port' || argv[i] === '-p') {
       const raw = argv[i + 1];
@@ -83,19 +87,31 @@ export function parseArgs(argv: string[]): CliArgs {
       }
       args.token = raw;
       i++;
+    } else if (argv[i] === '--new-token') {
+      args.newToken = true;
     } else if (argv[i] === '--help') {
       console.log(`Usage: pixel-agents [options]
 
 Options:
-  --port, -p <number>   Port to listen on (default: OS-assigned ephemeral port)
+  --port, -p <number>   Port to listen on (default: the last run's port, else an
+                        OS-assigned one)
   --host <string>       Host to bind to (default: 127.0.0.1; loopback binds only
                         accept loopback Host headers, use 0.0.0.0 behind a tunnel)
   --token <token>       Server token for this run (16-128 characters of A-Z a-z
                         0-9 . _ -). Default: the one saved in
                         ~/.pixel-agents/server-token, created on first run
+  --new-token           Replace the saved token with a new one; URLs carrying the
+                        old token stop working
   --help                Show this help message`);
       process.exit(0);
     }
+  }
+  // --token never touches the saved token, so with it --new-token would rotate
+  // nothing while the user believes the old URL is dead.
+  if (args.token !== undefined && args.newToken) {
+    throw new CliArgsError(
+      '--token and --new-token cannot be combined: --token leaves the saved token as it is.',
+    );
   }
   return args;
 }
@@ -283,6 +299,7 @@ async function main(): Promise<void> {
       embedded: false,
       host: args.host,
       port: args.port,
+      newToken: args.newToken,
       staticDir,
       assetCache,
       onSetHooksEnabled,
@@ -292,6 +309,11 @@ async function main(): Promise<void> {
       usageLimits,
     });
     currentConfig = { port: config.port, token: config.token };
+    if (args.newToken && config.pid !== process.pid) {
+      // start() handed back the live server, which keeps serving the token it
+      // started with: a new one saved under it would revoke nothing now.
+      console.error('A standalone server is already running; --new-token ignored (stop it first).');
+    }
 
     // Sync runtime refs with persisted settings BEFORE first scan tick. The
     // runtime's single hooksEnabled ref follows the Claude provider until the
@@ -373,6 +395,9 @@ async function main(): Promise<void> {
 
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
+    // A closed terminal sends SIGHUP, whose default kills the process before
+    // stop() removes server.json, leaving a dead pid for hook scripts to find.
+    process.on('SIGHUP', shutdown);
   } catch (err) {
     console.error('Failed to start server:', err);
     process.exit(1);

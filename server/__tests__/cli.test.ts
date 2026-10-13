@@ -30,13 +30,17 @@ async function getFreePort(): Promise<number> {
   });
 }
 
-async function waitForCondition(check: () => boolean | Promise<boolean>): Promise<void> {
-  const deadline = Date.now() + CLI_START_TIMEOUT_MS;
+async function waitForCondition(
+  check: () => boolean | Promise<boolean>,
+  timeoutMs = CLI_START_TIMEOUT_MS,
+  what = 'bundled CLI startup',
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error('Timed out waiting for bundled CLI startup');
+  throw new Error(`Timed out waiting for ${what}`);
 }
 
 async function stopChild(child: ReturnType<typeof spawn>): Promise<void> {
@@ -65,8 +69,8 @@ function runCli(args: string[]): Promise<{ code: number | null; stdout: string; 
 }
 
 describe('parseArgs', () => {
-  // 1. No --port -> ephemeral default (unset), never a hardcoded port
-  it('defaults port to undefined (ephemeral) when --port is omitted', () => {
+  // 1. No --port -> unset (the saved port, else an OS-assigned one), never a hardcoded port
+  it('defaults port to undefined (saved or OS-assigned) when --port is omitted', () => {
     const args = parseArgs([]);
     expect(args.port).toBeUndefined();
     expect(args.host).toBe('127.0.0.1');
@@ -120,25 +124,44 @@ describe('parseArgs', () => {
     expect(parseArgs(['--host', '0.0.0.0']).host).toBe('0.0.0.0');
   });
 
+  /** The CliArgsError message parseArgs throws for `argv`, or 'accepted'. */
+  const rejection = (argv: string[]): string => {
+    try {
+      parseArgs(argv);
+    } catch (err) {
+      if (err instanceof CliArgsError) return err.message;
+    }
+    return 'accepted';
+  };
+
   // --token is a bearer secret in the printed URL: 16-128 URL-safe characters, and a
   // rejected value is never echoed back to the terminal.
   it('accepts a 16-128 character URL-safe --token and rejects anything else', () => {
     expect(parseArgs(['--token', 'Ab0._-Ab0._-Ab0.']).token).toBe('Ab0._-Ab0._-Ab0.');
     expect(parseArgs(['--token', 'a'.repeat(128)]).token).toBe('a'.repeat(128));
-    const rejection = (argv: string[]): string => {
-      try {
-        parseArgs(argv);
-      } catch (err) {
-        if (err instanceof CliArgsError) return err.message;
-      }
-      return 'accepted';
-    };
     for (const value of ['a'.repeat(15), 'a'.repeat(129), 'secret-but-unsafe!']) {
       const message = rejection(['--token', value]);
       expect(message).toMatch(/^invalid --token/);
       expect(message).not.toContain(value);
     }
     expect(rejection(['--token'])).toMatch(/^invalid --token/);
+  });
+
+  // 11. Unknown flags are ignored, so without its parse branch --new-token
+  //     would be a silent no-op and the old token would stay valid. Next to
+  //     --token, which leaves the saved token alone, it would be one too.
+  it('parses --new-token, off by default, and refuses it next to --token', () => {
+    expect(parseArgs([]).newToken).toBe(false);
+    expect(parseArgs(['--new-token']).newToken).toBe(true);
+    const given = 'given-token-0123456789';
+    for (const argv of [
+      ['--token', given, '--new-token'],
+      ['--new-token', '--token', given],
+    ]) {
+      const message = rejection(argv);
+      expect(message).toMatch(/--token and --new-token/);
+      expect(message).not.toContain(given);
+    }
   });
 });
 
@@ -186,10 +209,17 @@ describe('dist/cli.js entry-point guard', () => {
   /** Spawn the real bundled CLI against an isolated HOME, wait for /api/health,
    *  and hand back its output for assertions. Callers seed `tmpHome` first.
    *  `host` is the literal `--host` operand, so a caller can exercise a wildcard
-   *  bind; readiness is always probed over loopback, which every bind serves. */
+   *  bind; readiness is always probed over loopback, which every bind serves.
+   *  stdout and stderr are kept apart so a stderr chunk can never land inside
+   *  a JSON log line; `output()` joins them for substring checks. */
   async function runCliServer(
     tmpHome: string,
-    body: (ctx: { output: () => string; port: number }) => Promise<void>,
+    body: (ctx: {
+      output: () => string;
+      stdout: () => string;
+      stderr: () => string;
+      port: number;
+    }) => Promise<void>,
     host = '127.0.0.1',
     extraArgs: string[] = [],
   ): Promise<void> {
@@ -204,13 +234,15 @@ describe('dist/cli.js entry-point guard', () => {
         stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
-    let output = '';
-    child.stdout.on('data', (chunk: Buffer) => (output += chunk.toString()));
-    child.stderr.on('data', (chunk: Buffer) => (output += chunk.toString()));
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    const output = (): string => `${stdout}\n${stderr}`;
     try {
       await waitForCondition(async () => {
         if (child.exitCode !== null) {
-          throw new Error(`Bundled CLI exited before startup:\n${output}`);
+          throw new Error(`Bundled CLI exited before startup:\n${output()}`);
         }
         try {
           return (await fetch(`http://127.0.0.1:${port.toString()}/api/health`)).ok;
@@ -218,7 +250,7 @@ describe('dist/cli.js entry-point guard', () => {
           return false;
         }
       });
-      await body({ output: () => output, port });
+      await body({ output, stdout: () => stdout, stderr: () => stderr, port });
     } finally {
       await stopChild(child);
       fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -239,6 +271,21 @@ describe('dist/cli.js entry-point guard', () => {
     return new URL(match[1]);
   }
 
+  /** A Fastify "incoming request" JSON log line whose url shows the redaction. */
+  function isRedactedRequestLine(line: string): boolean {
+    if (!line.startsWith('{')) return false;
+    try {
+      const entry = JSON.parse(line) as { msg?: unknown; req?: { url?: unknown } };
+      return (
+        entry.msg === 'incoming request' &&
+        typeof entry.req?.url === 'string' &&
+        entry.req.url.includes('[redacted]')
+      );
+    } catch {
+      return false; // a line still being written
+    }
+  }
+
   /** The token the server actually minted, read from its own discovery file —
    *  an independent witness, so a printed token that drifts from it fails. */
   function mintedToken(tmpHome: string): string {
@@ -254,16 +301,31 @@ describe('dist/cli.js entry-point guard', () => {
   // repo reads the CLI's stdout, so nothing else can catch that.
   itBuilt('prints a URL carrying the token the server actually minted', async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cli-url-'));
-    await runCliServer(tmpHome, async ({ output, port }) => {
+    await runCliServer(tmpHome, async ({ output, stdout, stderr, port }) => {
       await waitForCondition(() => URL_LINE.test(output()));
       const url = printedUrl(output());
 
-      expect(url.searchParams.get('token')).toBe(mintedToken(tmpHome));
+      const token = mintedToken(tmpHome);
+      expect(url.searchParams.get('token')).toBe(token);
       expect(url.port).toBe(port.toString());
       // And it is browsable as printed — the SPA, not a 404 or a dead host.
       const response = await fetch(url);
       expect(response.status).toBe(200);
       expect(await response.text()).toContain('<div id="root">');
+
+      // That request also lands in the JSON request log, whose write is not
+      // ordered with the response: wait for its line, redacted, or a check
+      // over a log that has not caught up yet proves nothing. The printed URL
+      // line above is the one place the token may appear.
+      await waitForCondition(
+        () => stdout().split('\n').some(isRedactedRequestLine),
+        3_000,
+        'a redacted "incoming request" log line',
+      );
+      const logLines = [...stdout().split('\n'), ...stderr().split('\n')].filter((line) =>
+        line.startsWith('{'),
+      );
+      for (const line of logLines) expect(line).not.toContain(token);
     });
   });
 
@@ -290,6 +352,27 @@ describe('dist/cli.js entry-point guard', () => {
       );
     },
   );
+
+  // --new-token revokes every URL the saved token was printed in: the run serves and
+  // prints a fresh token and saves it, so the next plain start serves the new URL.
+  itBuilt('serves, prints and saves a new token on --new-token', async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-cli-new-token-'));
+    const tokenFile = path.join(tmpHome, '.pixel-agents', 'server-token');
+    fs.mkdirSync(path.dirname(tokenFile), { recursive: true });
+    fs.writeFileSync(tokenFile, 'saved-token-0123456789');
+    await runCliServer(
+      tmpHome,
+      async ({ output }) => {
+        await waitForCondition(() => URL_LINE.test(output()));
+        const printed = printedUrl(output()).searchParams.get('token');
+        expect(printed).not.toBe('saved-token-0123456789');
+        expect(printed).toBe(mintedToken(tmpHome));
+        expect(fs.readFileSync(tokenFile, 'utf-8')).toBe(printed);
+      },
+      '127.0.0.1',
+      ['--new-token'],
+    );
+  });
 
   // `--host 0.0.0.0` is a BIND target, not an address to browse to: printing
   // `http://0.0.0.0:PORT` hands the operator a URL that is dead on Windows and

@@ -6,6 +6,7 @@ import { CONTEXT_SEED_TAIL_BYTES } from './constants.js';
 import { seedHealth } from './health.js';
 import { type DerivedTurnState, deriveTurnState } from './turnState.js';
 import type { AgentState } from './types.js';
+import { completeUtf8Length } from './utf8Boundary.js';
 
 /** A derivation and the hook count it was computed against. */
 export interface TurnDerivation {
@@ -55,7 +56,8 @@ export function transcriptClockMs(jsonlFile: string): number {
  * Stats the file a single time and reads up to that size, then moves
  * `fileOffset` to that size: whatever lands after the stat is parsed live, so no
  * record is both derived and replayed or lost in between. A partial last line
- * goes to `lineBuffer` for the live reader to complete.
+ * goes to `lineBuffer` for the live reader to complete, and an incomplete last
+ * character stays behind the offset.
  *
  * Returns null (offset untouched) when the provider can't classify turns or the
  * file can't be read; the agent then stays "unknown", which reads as idle.
@@ -70,6 +72,7 @@ export function deriveAgentTurnState(
   let size: number;
   let mtimeMs: number;
   let text: string;
+  let heldBack: number;
   try {
     const stat = fs.statSync(agent.jsonlFile);
     size = stat.size;
@@ -85,7 +88,11 @@ export function deriveAgentTurnState(
         fs.closeSync(fd);
       }
     }
-    text = buf.toString('utf8');
+    // A writer paused mid-character: leave those bytes, and the offset, to the
+    // live reader, which decodes them once the character is whole.
+    const complete = completeUtf8Length(buf);
+    heldBack = length - complete;
+    text = buf.toString('utf8', 0, complete);
     // A mid-file start lands inside a record: drop that leading fragment.
     if (start > 0) text = text.slice(text.indexOf('\n') + 1);
   } catch {
@@ -104,7 +111,7 @@ export function deriveAgentTurnState(
     }
   }
 
-  agent.fileOffset = size;
+  agent.fileOffset = size - heldBack;
   agent.lineBuffer = partial;
   const subagentMtimesMs = subagentMtimes(agent.jsonlFile);
   const state = deriveTurnState(

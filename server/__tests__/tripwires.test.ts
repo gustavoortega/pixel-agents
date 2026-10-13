@@ -131,30 +131,35 @@ const NEAR_MISSES: Call[] = [
   B('curl -s x | jq .'),
 ];
 
-/** Repeated fragments that make a backtracking-prone pattern slow. */
-const ADVERSARIAL: string[] = [
-  'curl '.repeat(12000),
-  'git push '.repeat(6000) + '-x',
-  'aws '.repeat(12000),
-  'rm -r '.repeat(8000),
-  'aws --a b '.repeat(4000),
-  'kubectl -a '.repeat(8000),
-  'gh api '.repeat(9000),
-  'git push -x '.repeat(5000),
-  'curl -x '.repeat(7000),
-  'wget '.repeat(12000) + '|',
-  'terraform '.repeat(6000),
-  'helm '.repeat(12000),
-  'rm --a '.repeat(8000),
-  'cat .env'.repeat(7000),
-  '.ssh/id_a'.repeat(6000),
-  'rm '.repeat(12000),
-  'aws s3 cp '.repeat(6000),
-  'aws --a b s3 cp -x '.repeat(3000),
-  'terraform -x '.repeat(5000),
-  'gh api -f '.repeat(6000),
-  'curl | sudo -x '.repeat(4000),
+/** Repeated fragments that make a backtracking-prone pattern slow: the unit,
+ *  its repeat count in the ~60 KB inputs, and what follows the repeats. */
+const ADVERSARIAL_FRAGMENTS: Array<[unit: string, repeats: number, suffix?: string]> = [
+  ['curl ', 12000],
+  ['git push ', 6000, '-x'],
+  ['aws ', 12000],
+  ['rm -r ', 8000],
+  ['aws --a b ', 4000],
+  ['kubectl -a ', 8000],
+  ['gh api ', 9000],
+  ['git push -x ', 5000],
+  ['curl -x ', 7000],
+  ['wget ', 12000, '|'],
+  ['terraform ', 6000],
+  ['helm ', 12000],
+  ['rm --a ', 8000],
+  ['cat .env', 7000],
+  ['.ssh/id_a', 6000],
+  ['rm ', 12000],
+  ['aws s3 cp ', 6000],
+  ['aws --a b s3 cp -x ', 3000],
+  ['terraform -x ', 5000],
+  ['gh api -f ', 6000],
+  ['curl | sudo -x ', 4000],
 ];
+
+const ADVERSARIAL: string[] = ADVERSARIAL_FRAGMENTS.map(
+  ([unit, repeats, suffix = '']) => unit.repeat(repeats) + suffix,
+);
 
 describe('default tripwire pack: verdict table', () => {
   it.each(HITS)('%s %j trips %s', (tool, input, ruleId) => {
@@ -265,4 +270,41 @@ describe('default tripwire pack: backtracking budget', () => {
       }
     },
   );
+});
+
+describe('default tripwire pack: 1 MiB string leaves', () => {
+  // The hook body limit is 1 MiB, so one string leaf can be about that long.
+  // A linear rule takes tens of ms on it; catastrophic backtracking takes
+  // seconds. The budget sits between them with room for slow CI machines.
+  const ONE_MIB = 1_048_576;
+  const inputRules = DEFAULT_TRIPWIRE_RULES.filter((r) => r.input);
+
+  /** `unit` repeated to exactly `length` characters. */
+  function fill(unit: string, length: number): string {
+    return unit.repeat(Math.ceil(length / unit.length)).slice(0, length);
+  }
+
+  it.each(
+    ADVERSARIAL_FRAGMENTS.map(([unit, , suffix = '']) => [JSON.stringify(unit), unit, suffix]),
+  )('every input pattern finishes under 500 ms on %s filling 1 MiB', (_label, unit, suffix) => {
+    const text = fill(unit, ONE_MIB - suffix.length) + suffix;
+    for (const rule of inputRules) {
+      const start = performance.now();
+      rule.input!.test(text);
+      const elapsed = performance.now() - start;
+      expect(elapsed, rule.id).toBeLessThan(500);
+    }
+  });
+
+  it('evaluates a 1 MiB command and a 1 MiB file body with every rule within 2 s', () => {
+    const start = performance.now();
+    evaluateTripwires(DEFAULT_TRIPWIRE_RULES, 'Bash', { command: fill('kubectl -a ', ONE_MIB) });
+    // Path rules skip `content`; secret-literal scans it, and every AKIA
+    // starts a key match that the next character ends.
+    evaluateTripwires(DEFAULT_TRIPWIRE_RULES, 'Write', {
+      file_path: '/tmp/a',
+      content: fill('AKIA' + 'x', ONE_MIB),
+    });
+    expect(performance.now() - start).toBeLessThan(2_000);
+  });
 });

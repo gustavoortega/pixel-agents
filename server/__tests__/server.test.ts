@@ -1,7 +1,11 @@
 import * as fs from 'fs';
+import * as http from 'http';
+import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { ServerConfig } from '../src/serverConfig.js';
 
 // Use isolated temp HOME to avoid touching real ~/.pixel-agents/
 let tmpBase: string;
@@ -41,6 +45,53 @@ async function postHook(
       Authorization: `Bearer ${token}`,
     },
     body,
+  });
+}
+
+/**
+ * A hook POST that declares a `contentLength` body and sends only its headers,
+ * resolving with the status the server answers before reading any of it, or 0
+ * if it waits for the body instead. Sending a body the server refuses to read
+ * races its answer: after a 413 Fastify closes the connection, which resets a
+ * client still writing and can drop the response it already sent.
+ */
+function postDeclaredLength(port: number, contentLength: number, token: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      method: 'POST',
+      path: '/api/hooks/claude',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': contentLength.toString(),
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const timer = setTimeout(() => {
+      req.destroy();
+      resolve(0);
+    }, 2_000);
+    req.on('response', (res) => {
+      clearTimeout(timer);
+      resolve(res.statusCode ?? 0);
+      res.resume();
+      req.destroy();
+    });
+    req.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    req.flushHeaders();
+  });
+}
+
+/** The error code binding 127.0.0.1:`port` fails with right now, or undefined if it binds. */
+function listenErrorCode(port: number): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once('error', (err: NodeJS.ErrnoException) => resolve(err.code));
+    probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(undefined)));
   });
 }
 
@@ -126,12 +177,45 @@ describe('PixelAgentsServer', () => {
     expect(received[0].event.hook_event_name).toBe('Stop');
   });
 
-  // 6. Hook endpoint rejects oversized body
-  it('hook endpoint returns 413 for oversized body', async () => {
+  // 6. Hook bodies carry whole Write and Edit payloads: at the old 64 KB limit
+  //    a big Write got a 413 and its tool start never reached the runtime.
+  it('hook endpoint hands a 900 KB Write event to the runtime', async () => {
     const config = await server.start();
-    const bigBody = 'x'.repeat(70_000); // > 64KB
-    const res = await postHook(config.port, config.token, bigBody);
-    expect(res.status).toBe(413);
+    const onHookEvent = vi.fn();
+    server.onHookEvent(onHookEvent);
+    const content = 'x'.repeat(921_000);
+
+    const res = await postHook(
+      config.port,
+      config.token,
+      JSON.stringify({
+        session_id: 's1',
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Write',
+        tool_input: { file_path: '/tmp/a', content },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('ok');
+    expect(onHookEvent).toHaveBeenCalledTimes(1);
+    expect(onHookEvent.mock.calls[0][1]).toMatchObject({ tool_input: { content } });
+  });
+
+  // 6b. The limit still holds above 1 MiB.
+  it('hook endpoint returns 413 for a body declared at 2 MiB', async () => {
+    const config = await server.start();
+    expect(await postDeclaredLength(config.port, 2_097_152, config.token)).toBe(413);
+  });
+
+  // 6c. The token is checked before the body is read: under --host 0.0.0.0 any
+  //     client past the Host check could otherwise make the server buffer and
+  //     parse up to 1 MiB per request without it. Read first, this invalid
+  //     JSON would be a 400.
+  it('hook endpoint answers a wrong token 401 before parsing the body', async () => {
+    const config = await server.start();
+    const res = await postHook(config.port, 'wrong', 'x'.repeat(921_600));
+    expect(res.status).toBe(401);
   });
 
   // 7. Hook endpoint rejects invalid JSON
@@ -421,5 +505,174 @@ describe('PixelAgentsServer', () => {
       expect(res.status).toBe(400);
       expect(limits.latest().receivedAt).toBe(0);
     });
+
+    // The twin of test 6c: this ingress also checks the token before it reads a body.
+    it('answers a wrong token 401 before parsing the body', async () => {
+      const { port, limits } = await startWithLimits();
+
+      const res = await fetch(`http://127.0.0.1:${port}/api/statusline/claude-statusline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer wrong' },
+        body: 'x'.repeat(921_600),
+      });
+
+      expect(res.status).toBe(401);
+      expect(limits.latest().receivedAt).toBe(0);
+    });
+  });
+
+  // ── ~/.pixel-agents/server-token and server-port: the standalone URL across restarts ──
+
+  function tokenFile(): string {
+    return path.join(serverJsonDir, 'server-token');
+  }
+
+  function portFile(): string {
+    return path.join(serverJsonDir, 'server-port');
+  }
+
+  /** A standalone run that has already exited. stop() leaves Fastify's close to
+   *  the event loop, so wait until its port can be bound again: a restart that
+   *  found it still taken would fall back and prove nothing about reuse. */
+  async function previousStandaloneRun(): Promise<ServerConfig> {
+    const config = await server.start({ embedded: false });
+    server.stop();
+    const deadline = Date.now() + 5_000;
+    while ((await listenErrorCode(config.port)) !== undefined) {
+      if (Date.now() > deadline) throw new Error(`port ${config.port} was never released`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return config;
+  }
+
+  /** What crypto.randomUUID() mints. */
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+  // 23. A bookmarked URL keeps its port too (the token is the test above).
+  it('restarts a standalone server on the port it picked for itself', async () => {
+    const first = await previousStandaloneRun();
+
+    const second = await server.start({ embedded: false });
+
+    expect(second.port).toBe(first.port);
+    expect(fs.readFileSync(portFile(), 'utf-8')).toBe(String(first.port));
+  });
+
+  // 24. --new-token revokes old URLs without moving the server.
+  it('saves a new token over the old one on newToken and keeps the port', async () => {
+    const first = await previousStandaloneRun();
+
+    const rotated = await server.start({ embedded: false, newToken: true });
+
+    expect(rotated.token).toMatch(UUID);
+    expect(rotated.token).not.toBe(first.token);
+    expect(rotated.port).toBe(first.port);
+    expect(fs.readFileSync(tokenFile(), 'utf-8')).toBe(rotated.token);
+    // The file holds a long-lived bearer token.
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(tokenFile()).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  // 25. A taken saved port must not fail the start, and must not be forgotten
+  //     either: the next start tries it again.
+  it('falls back from a taken saved port and keeps it saved', async () => {
+    const first = await previousStandaloneRun();
+    const blocker = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      blocker.once('error', reject);
+      blocker.listen(first.port, '127.0.0.1', () => resolve());
+    });
+
+    try {
+      const second = await server.start({ embedded: false });
+
+      expect(second.port).not.toBe(first.port);
+      expect(fs.readFileSync(portFile(), 'utf-8')).toBe(String(first.port));
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+  });
+
+  // 26. The embedded token reaches hook scripts through server.json only: saved,
+  //     it would become a long-lived credential, and the standalone one must not
+  //     open the embedded server either. Nor may embedded take the standalone's port.
+  it('never reads or writes the token or port file from an embedded server', async () => {
+    await server.start({ embedded: true });
+    expect(fs.existsSync(tokenFile())).toBe(false);
+    expect(fs.existsSync(portFile())).toBe(false);
+    server.stop();
+
+    // Below every OS-assigned range, so only a read of the file could pick it.
+    fs.writeFileSync(tokenFile(), 'saved-token-0123456789');
+    fs.writeFileSync(portFile(), '23456');
+    const config = await server.start({ embedded: true });
+    expect(config.token).not.toBe('saved-token-0123456789');
+    expect(config.port).not.toBe(23456);
+    expect(fs.readFileSync(tokenFile(), 'utf-8')).toBe('saved-token-0123456789');
+    expect(fs.readFileSync(portFile(), 'utf-8')).toBe('23456');
+  });
+
+  // 27. An explicit port is for that run only, so test and e2e runs, which
+  //     always pass one, never move a user's saved port.
+  it('serves an explicit port without saving it', async () => {
+    const first = await previousStandaloneRun();
+    const probe = net.createServer();
+    const explicitPort = await new Promise<number>((resolve) =>
+      probe.listen(0, '127.0.0.1', () => resolve((probe.address() as net.AddressInfo).port)),
+    );
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+
+    const second = await server.start({ embedded: false, port: explicitPort });
+
+    expect(second.port).toBe(explicitPort);
+    expect(fs.readFileSync(portFile(), 'utf-8')).toBe(String(first.port));
+  });
+
+  // 28. Only the saved port falls back: a taken explicit port fails the start
+  //     instead of serving where nobody asked.
+  it('fails the start on a taken explicit port', async () => {
+    const blocker = net.createServer();
+    const busyPort = await new Promise<number>((resolve) =>
+      blocker.listen(0, '127.0.0.1', () => resolve((blocker.address() as net.AddressInfo).port)),
+    );
+
+    try {
+      await expect(server.start({ embedded: false, port: busyPort })).rejects.toMatchObject({
+        code: 'EADDRINUSE',
+      });
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+  });
+
+  // 29. Whatever the port file holds, the start succeeds and saves the port it
+  //     picked; a port below 1024, where a bind can need privileges, is never tried.
+  it.each([
+    ['text', 'not a port'],
+    ['a port below 1024', '80'],
+    ['a port above 65535', '70000'],
+  ])('starts over a server-port file holding %s', async (_case, contents) => {
+    fs.writeFileSync(portFile(), contents);
+
+    const config = await server.start({ embedded: false });
+
+    expect(config.port).toBeGreaterThanOrEqual(1024);
+    expect(fs.readFileSync(portFile(), 'utf-8')).toBe(String(config.port));
+  });
+
+  // 30. A live server keeps serving the token it started with, so a new one
+  //     saved under it would revoke nothing.
+  it('leaves a live standalone server and its token file alone on newToken', async () => {
+    const live = await server.start({ embedded: false });
+
+    const second = new PixelAgentsServer();
+    try {
+      const config = await second.start({ embedded: false, newToken: true });
+      expect(config.token).toBe(live.token);
+      expect(fs.readFileSync(tokenFile(), 'utf-8')).toBe(live.token);
+    } finally {
+      second.stop();
+    }
   });
 });
