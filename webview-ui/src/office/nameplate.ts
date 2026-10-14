@@ -52,12 +52,20 @@ export function plateScale(zoom: number, fitZoomWholeMap: number): number {
   );
 }
 
-/** Plates are one-line compact (`Lv N  Name`, no title) up to zoom level 3; from 4x the full two-line plate shows. */
+/** Plates are one-line compact (`Lv N  Name`, no title) up to zoom level 3; from 4x the full two-line plate shows.
+ *  Beside the monitor's full attention rail they keep both lines at every zoom. */
 export function plateIsCompact(zoom: number): boolean {
-  return !fullPlates && zoom / ART_DENSITY <= PLATE_COMPACT_MAX_LEVEL;
+  return !fullPlates && !monitorFullPlates && zoom / ART_DENSITY <= PLATE_COMPACT_MAX_LEVEL;
 }
 
 let fullPlates = false;
+let monitorFullPlates = false;
+
+/** The monitor layout's rule (monitorLayout `fullPlates`): a full rail beside a stage tall enough
+ *  for two-line plates. Unlike the hero scene's switch it leaves the plates' scale alone. */
+export function setMonitorFullPlates(on: boolean): void {
+  monitorFullPlates = on;
+}
 
 /** Dev-only (the README hero scene): keeps the two-line plate at any zoom, since a 1x display fits the room at a compact zoom. */
 export function forceFullPlates(on: boolean): void {

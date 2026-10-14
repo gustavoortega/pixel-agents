@@ -272,6 +272,22 @@ test('AutoFit: a manual zoom or pan, an open editor or a followed agent stops re
   assert.equal(following.enabled, false);
 });
 
+test('AutoFit: a stage that changes size is framed again; with auto-fit off it is left alone', () => {
+  const fit = new AutoFit();
+  fit.step(input());
+  // Narrower by a 360 px rail: the 40-tile map no longer fits at 2.
+  const narrow = { width: 920, height: 720 };
+  const refit = fit.step(input({ canvas: narrow, nowMs: 50 }));
+  assert.equal(refit.zoom, 1);
+  assert.equal(refit.panZoom, 1);
+  assert.deepEqual(fit.step(input({ canvas: narrow, zoom: 1, nowMs: 100 })), {});
+
+  const manual = new AutoFit();
+  manual.step(input());
+  manual.disable();
+  assert.deepEqual(manual.step(input({ canvas: narrow, nowMs: 50 })), {});
+});
+
 // ── Camera follow ──────────────────────────────────────────────
 
 test('camera follow: the same pan at 30 and 60 fps, then it lands on the legal goal and stops', () => {

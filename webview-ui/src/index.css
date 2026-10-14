@@ -62,6 +62,52 @@
   /* Non-utility values */
   --vignette: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.6) 100%);
   --btn-disabled-opacity: 0.35;
+
+  /* ── Monitor (attention rail, pace, plates, inspector): one palette for every piece.
+     Paper surfaces, ink outlines, gold = needs you, rust = stuck, sage = ok. ── */
+  --mon-night: #140d08;
+  --mon-paper: #f6e3bd;
+  --mon-paper-2: #e9d2a8;
+  --mon-paper-3: #dcc191;
+  --mon-ink: #3b2412;
+  --mon-ink-2: #5a3a22;
+  --mon-ink-3: #7a5a3c;
+  --mon-gold: #f6c64a;
+  --mon-gold-deep: #c99a2e;
+  --mon-rust: #c0563f;
+  --mon-rust-ink: #9c3f2c;
+  --mon-rust-light: #ec9277;
+  --mon-sage: #8fb09a;
+  --mon-sage-ink: #4f735c;
+  --mon-cream: #f6e3bd;
+  --mon-cream-2: #d9c29b;
+  --mon-cream-3: #b39b78;
+  --mon-light: #fff4dc;
+  --mon-face-wait: #f3d77f;
+  --mon-face-stuck: #eeb19f;
+  --mon-rule: rgba(59, 36, 18, 0.22);
+  --mon-dash: rgba(59, 36, 18, 0.2);
+  --mon-grid: rgba(59, 36, 18, 0.35);
+  --mon-ring-track: rgba(59, 36, 18, 0.24);
+  --mon-edge: rgba(246, 227, 189, 0.16);
+  /* Privacy mode's bar over a masked text: paper surfaces use the first, ink surfaces (plates)
+     set --pv-mask to the second on their own element. */
+  --mon-mask: rgba(59, 36, 18, 0.18);
+  --mon-mask-on-ink: rgba(255, 244, 220, 0.25);
+  --pv-mask: var(--mon-mask);
+  /* Medal: hole, ring, ring when 85 % full, track; then each tier's glyph fill and highlight. */
+  --medal-hole: #22140a;
+  --medal-ring: #f6e3bd;
+  --medal-hot: #ec9277;
+  --medal-track: #5a3d27;
+  --tier-1-fill: #9ec99b;
+  --tier-1-hi: #e2f3dc;
+  --tier-2-fill: #8fb0e0;
+  --tier-2-hi: #e0ebfb;
+  --tier-3-fill: #ab9ce6;
+  --tier-3-hi: #ece6ff;
+  --tier-4-fill: #ec9fd2;
+  --tier-4-hi: #ffe6f5;
 }
 
 @theme inline {
@@ -295,4 +341,610 @@
   100% {
     left: 130%;
   }
+}
+
+/* ── Monitor: the attention rail and its Pace panel ─────────────────────────────────────────
+   Sizes are per rail mode (MonitorRail sets data-rail): the 300 px rail uses the laptop
+   tokens of the design, the 360 px rail those x1.2, the slim one (76 px) only faces and
+   minutes. Every length is a whole px so the pixel font and the borders stay crisp. */
+.mon-rail {
+  --bw: 3px;
+  --sh: 4px;
+  --rail-pad: 12px;
+  --att-fs: 17px;
+  --tk-face: 44px;
+  --tk-tw: 74px;
+  --tk-pad: 10px;
+  --tk-gap: 11px;
+  --tk-rg: 6px;
+  --tk-ic: 15px;
+  --tk-why: 22px;
+  --tk-name: 17px;
+  --tk-time: 50px;
+  --tk-stub: 14px;
+  --pc-h: 14px;
+  --pc-k: 16px;
+  --pc-v: 32px;
+  --pc-note: 14px;
+  --bar-h: 12px;
+  --keys-fs: 12px;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  height: 100%;
+  box-sizing: border-box;
+  padding: var(--rail-pad) var(--rail-pad) calc(var(--rail-pad) + 2px);
+  gap: 12px;
+  background: var(--mon-night);
+  color: var(--mon-cream);
+  border-right: 2px solid var(--mon-edge);
+  user-select: none;
+}
+.mon-rail[data-rail='wide'] {
+  --sh: 5px;
+  --rail-pad: 16px;
+  --att-fs: 20px;
+  --tk-face: 53px;
+  --tk-tw: 89px;
+  --tk-pad: 12px;
+  --tk-gap: 13px;
+  --tk-rg: 7px;
+  --tk-ic: 18px;
+  --tk-why: 26px;
+  --tk-name: 20px;
+  --tk-time: 60px;
+  --tk-stub: 15px;
+  --pc-h: 17px;
+  --pc-k: 19px;
+  --pc-v: 38px;
+  --pc-note: 16px;
+  --bar-h: 14px;
+  --keys-fs: 14px;
+}
+.mon-rail[data-rail='slim'] {
+  --rail-pad: 8px;
+  --att-fs: 14px;
+  --tk-ic: 13px;
+  gap: 8px;
+}
+
+/* The list scrolls; the Pace panel stays pinned below it. */
+.mon-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* Room for the hard shadows and the corner badges, which hang outside the tickets. */
+  padding: 10px 10px 8px 2px;
+  margin-right: -10px;
+}
+.mon-rail[data-rail='slim'] .mon-list {
+  gap: 14px;
+  padding: 8px 2px 6px;
+  margin-right: 0;
+  align-items: center;
+}
+
+.att-h {
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  margin: 2px 0 0;
+  font-size: var(--att-fs);
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mon-gold);
+}
+.att-h.stuck {
+  color: var(--mon-rust-light);
+  margin-top: 8px;
+}
+.att-h .cnt {
+  color: var(--mon-ink);
+  background: var(--mon-gold);
+  padding: 2px 0.32em 3px;
+  letter-spacing: 0;
+}
+.att-h.stuck .cnt {
+  background: var(--mon-rust-light);
+}
+.att-h.zero .cnt {
+  color: var(--mon-cream-2);
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--mon-edge);
+}
+.mon-rail[data-rail='slim'] .att-h {
+  justify-content: center;
+  margin: 0;
+}
+.att-clear {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: -4px 0 2px;
+  font-size: var(--tk-stub);
+  line-height: 1.2;
+  color: var(--mon-cream-3);
+}
+
+/* Ticket: the reason is the line to read from 2 m, the minutes the biggest thing on it. */
+.tk {
+  display: grid;
+  grid-template-columns: var(--tk-face) minmax(0, 1fr) var(--tk-tw);
+  grid-template-areas: 'face name time' 'why why time' 'stub stub stub';
+  column-gap: var(--tk-gap);
+  row-gap: var(--tk-rg);
+  align-items: center;
+  width: 100%;
+  margin: 0;
+  padding: var(--tk-pad) var(--tk-pad) 0;
+  background: var(--mon-paper);
+  color: var(--mon-ink);
+  border: var(--bw) solid var(--mon-ink);
+  border-radius: 0;
+  box-shadow: 0 var(--sh) 0 var(--mon-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tk:hover {
+  background: var(--mon-light);
+}
+.tk:focus-visible,
+.tk[data-selected='true'] {
+  outline: 3px solid var(--mon-gold);
+  outline-offset: 3px;
+}
+.tk.stuck:focus-visible,
+.tk.stuck[data-selected='true'] {
+  outline-color: var(--mon-rust-light);
+}
+.tk-face {
+  grid-area: face;
+  position: relative;
+  width: var(--tk-face);
+  height: var(--tk-face);
+  box-sizing: border-box;
+  background: var(--mon-face-wait);
+  border: var(--bw) solid var(--mon-ink);
+}
+.tk.stuck .tk-face {
+  background: var(--mon-face-stuck);
+}
+.tk-face .pic {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tk-icon {
+  position: absolute;
+  right: -10px;
+  top: -10px;
+  width: calc(var(--tk-ic) + 6px);
+  height: calc(var(--tk-ic) + 6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--tk-ic);
+  line-height: 1;
+  background: var(--mon-gold);
+  color: var(--mon-ink);
+  border: var(--bw) solid var(--mon-ink);
+}
+.tk.stuck .tk-icon {
+  background: var(--mon-rust);
+  color: var(--mon-light);
+}
+.tk-md {
+  position: absolute;
+  left: -7px;
+  bottom: -7px;
+  line-height: 0;
+}
+.mon-rail[data-rail='wide'] .tk-md {
+  left: -11px;
+  bottom: -11px;
+}
+.tk-name {
+  grid-area: name;
+  display: flex;
+  align-items: center;
+  gap: 0.36em;
+  min-width: 0;
+  font-size: var(--tk-name);
+  line-height: 1;
+  color: var(--mon-ink-2);
+  white-space: nowrap;
+}
+.tk-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tk-why {
+  grid-area: why;
+  min-width: 0;
+  font-size: var(--tk-why);
+  line-height: 1.15;
+  color: var(--mon-ink);
+  overflow-wrap: anywhere;
+}
+.tk-why .cmd {
+  display: inline-block;
+  background: var(--mon-paper-2);
+  border: 2px solid var(--mon-ink);
+  box-shadow: 0 2px 0 var(--mon-ink);
+  padding: 0 0.18em 1px;
+  margin: 0 0.06em;
+  line-height: 1.04;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+.tk-why small {
+  display: block;
+  margin-top: 0.22em;
+  font-size: 0.62em;
+  color: var(--mon-ink-2);
+}
+.tk-time {
+  grid-area: time;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(var(--tk-face) + 8px);
+  background: var(--mon-gold);
+  color: var(--mon-ink);
+  border: var(--bw) solid var(--mon-ink);
+  font-size: var(--tk-time);
+  line-height: 0.86;
+  white-space: nowrap;
+}
+.tk-time.long {
+  font-size: calc(var(--tk-time) * 0.5);
+}
+.tk.stuck .tk-time {
+  background: var(--mon-rust);
+  color: var(--mon-light);
+}
+.tk-time .unit {
+  font-size: calc(var(--tk-time) * 0.3);
+  letter-spacing: 0.06em;
+  margin-top: 0.3em;
+}
+.tk-stub {
+  grid-area: stub;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8em;
+  margin: 0 calc(-1 * var(--tk-pad));
+  padding: 0.36em var(--tk-pad) 0.42em;
+  color: var(--mon-ink-3);
+  background: var(--mon-paper-2);
+  border-top: 2px solid var(--mon-rule);
+  font-size: var(--tk-stub);
+  line-height: 1.1;
+  white-space: nowrap;
+}
+.tk-stub .l {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.tk-stub .r {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.36em;
+}
+.tk-stub .r b {
+  font-weight: 400;
+  color: var(--mon-ink-2);
+}
+.tk-stub .r b.hot {
+  color: var(--mon-rust-ink);
+}
+
+/* Slim: the face tile with its glyph and medal, the minutes joined under it; the full ticket
+   opens beside the rail on hover. */
+.tk-slim {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 56px;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  color: var(--mon-ink);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tk-slim[data-selected='true'],
+.tk-slim:focus-visible {
+  outline: 3px solid var(--mon-gold);
+  outline-offset: 3px;
+}
+.tk-slim .tk-face {
+  --tk-face: 56px;
+}
+.tk-slim .tk-icon {
+  right: -8px;
+  top: -8px;
+  width: 19px;
+  height: 19px;
+}
+.tk-slim .tk-md {
+  left: -6px;
+  bottom: -6px;
+}
+.tk-slim .min {
+  padding: 4px 0 5px;
+  text-align: center;
+  font-size: 15px;
+  line-height: 1;
+  background: var(--mon-gold);
+  border: var(--bw) solid var(--mon-ink);
+  border-top: 0;
+  box-shadow: 0 var(--sh) 0 var(--mon-ink);
+}
+.tk-slim:hover .tk-face {
+  filter: brightness(1.06);
+}
+.tk-slim.stuck .tk-face {
+  background: var(--mon-face-stuck);
+}
+.tk-slim.stuck .tk-icon {
+  background: var(--mon-rust);
+  color: var(--mon-light);
+}
+.tk-slim.stuck .min {
+  background: var(--mon-rust);
+  color: var(--mon-light);
+}
+.tk-pop {
+  position: fixed;
+  z-index: 44;
+  width: 300px;
+  pointer-events: none;
+}
+
+/* Pace: one phrase per window, then its bar, its reset and how much is used. */
+.pace {
+  flex: none;
+  box-sizing: border-box;
+  background: var(--mon-paper-2);
+  color: var(--mon-ink);
+  border: var(--bw) solid var(--mon-ink);
+  box-shadow: 0 var(--sh) 0 var(--mon-ink);
+  padding: 10px 14px 12px;
+}
+.mon-rail[data-rail='wide'] .pace {
+  padding: 12px 18px 14px;
+}
+.pace-h {
+  font-size: var(--pc-h);
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mon-ink-2);
+  margin-bottom: 8px;
+}
+.pc-row + .pc-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 2px dashed var(--mon-dash);
+}
+.pc-row.stale {
+  opacity: 0.6;
+}
+.pc-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.32em;
+  white-space: nowrap;
+  font-size: var(--pc-k);
+  line-height: 1;
+  color: var(--mon-ink-2);
+}
+.pc-line .k {
+  color: var(--mon-ink);
+}
+.pc-line .dot {
+  color: var(--mon-ink-3);
+}
+.pc-line .v {
+  font-size: var(--pc-v);
+  line-height: 0.8;
+  color: var(--mon-ink);
+}
+.pc-row.red .v {
+  color: var(--mon-rust-ink);
+}
+.pc-row.green .v {
+  color: var(--mon-sage-ink);
+}
+.bar {
+  position: relative;
+  height: var(--bar-h);
+  margin: 8px 0 8px;
+  background: var(--mon-paper);
+  border: var(--bw) solid var(--mon-ink);
+}
+.bar i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  display: block;
+  background: var(--mon-gold);
+}
+.pc-row.red .bar i {
+  background: var(--mon-rust);
+}
+.pc-row.green .bar i {
+  background: var(--mon-sage);
+}
+.bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(5% - 2px),
+    var(--mon-grid) calc(5% - 2px) 5%
+  );
+}
+.bar u {
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  width: var(--bw);
+  margin-left: -1px;
+  background: var(--mon-ink);
+  display: block;
+  z-index: 1;
+}
+.pc-note {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3em;
+  white-space: nowrap;
+  font-size: var(--pc-note);
+  color: var(--mon-ink-2);
+  line-height: 1.1;
+}
+.pc-note b {
+  font-weight: 400;
+  color: var(--mon-ink);
+}
+.pc-note .used {
+  margin-left: auto;
+  color: var(--mon-ink-3);
+}
+.pc-tip {
+  margin-top: 0.3em;
+  font-size: var(--pc-note);
+  line-height: 1.15;
+  color: var(--mon-rust-ink);
+}
+.pc-hint {
+  font-size: var(--pc-note);
+  line-height: 1.25;
+  color: var(--mon-ink-2);
+}
+/* Slim Pace: the two windows as one figure each, in their pace color. */
+.pace-slim {
+  padding: 6px 4px 7px;
+  text-align: center;
+}
+.pace-slim .pc-mini {
+  font-size: 13px;
+  line-height: 1.2;
+}
+.pace-slim .pc-mini + .pc-mini {
+  margin-top: 3px;
+}
+.pace-slim .red {
+  color: var(--mon-rust-ink);
+}
+.pace-slim .yellow {
+  color: var(--mon-ink);
+}
+.pace-slim .green {
+  color: var(--mon-sage-ink);
+}
+
+/* Keys: what the window answers to, quiet under the Pace panel. */
+.mon-keys {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: var(--keys-fs);
+  line-height: 1;
+  color: var(--mon-cream-3);
+  opacity: 0.85;
+}
+.mon-keys > span,
+.mon-keys > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.mon-keys > button {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.mon-keys > button[aria-pressed='true'] {
+  color: var(--mon-gold);
+}
+.mon-keys kbd {
+  font: inherit;
+  padding: 2px 4px 3px;
+  background: var(--mon-paper-3);
+  color: var(--mon-ink);
+  border: 2px solid var(--mon-ink);
+  box-shadow: 0 2px 0 var(--mon-ink);
+}
+
+/* Privacy mode (P): every .pv text turns into a flat bar of its own size. Names, minutes,
+   models and contexts are never .pv. A surface on ink sets --pv-mask to --mon-mask-on-ink. */
+.mon-privacy .pv,
+.mon-privacy .pv * {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent;
+  text-shadow: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  user-select: none;
+}
+.mon-privacy .pv {
+  background: var(--pv-mask) !important;
+}
+.mon-privacy .pv * {
+  background: transparent !important;
+}
+
+/* The 300 px rail sits in a laptop window: tighter vertical rhythm so three tickets and the
+   Pace panel fit 800 px without scrolling. */
+.mon-rail[data-rail='mid'] {
+  gap: 10px;
+}
+.mon-rail[data-rail='mid'] .mon-list {
+  gap: 10px;
+  padding-top: 8px;
+}
+.mon-rail[data-rail='mid'] .pace {
+  padding: 8px 12px 10px;
+}
+.mon-rail[data-rail='mid'] .pace-h {
+  margin-bottom: 6px;
+}
+.mon-rail[data-rail='mid'] .bar {
+  margin: 6px 0;
+}
+.mon-rail[data-rail='mid'] .pc-row + .pc-row {
+  margin-top: 8px;
+  padding-top: 8px;
 }

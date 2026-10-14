@@ -820,3 +820,9 @@ export const MONITOR_RAIL_MID_PX = 300;
 export const MONITOR_RAIL_SLIM_PX = 76;
 export const MONITOR_SHEET_INLINE_PX = 420;
 export const MONITOR_SHEET_OVERLAY_PX = 360;
+/** The rail and sheet re-read their clocks this often: their ages are whole minutes. */
+export const MONITOR_CLOCK_TICK_MS = 30_000;
+/** localStorage key of privacy mode (P), a per-browser preference: '1' on, anything else off. */
+export const MONITOR_PRIVACY_STORAGE_KEY = 'pixel-agents.monitor.privacy';
+/** Context share (%) at which a medal or context ring turns hot. */
+export const MONITOR_RING_HOT_PCT = 85;

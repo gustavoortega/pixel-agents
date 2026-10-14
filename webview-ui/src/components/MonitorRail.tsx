@@ -1,17 +1,372 @@
+import { useState } from 'react';
+
+import type { UsageLimits } from '../../../core/src/messages.js';
+import { MONITOR_CLOCK_TICK_MS, MONITOR_RING_HOT_PCT } from '../constants.js';
 import type { MonitorSnapshot } from '../hooks/monitorVersion.js';
+import { useNow } from '../hooks/useNow.js';
+import { officeNow } from '../office/clock.js';
 import type { OfficeState } from '../office/engine/officeState.js';
+import {
+  type Attention,
+  contextPercent,
+  minutesBlock,
+  modelLabel,
+  type Ticket,
+} from './attention.js';
+import { formatDuration } from './limitsPace.js';
 import type { MonitorLayout } from './monitorLayout.js';
+import { PacePanel } from './PacePanel.js';
+import { CheckMark, Face, Medal, Ring } from './railArt.js';
 
 export interface MonitorRailProps {
   officeState: OfficeState;
   monitor: MonitorSnapshot;
   layout: MonitorLayout;
+  attention: Attention;
+  limits: UsageLimits | null;
+  statuslineInstalled: boolean;
+  privacy: boolean;
+  onTogglePrivacy: () => void;
+  /** A ticket was clicked: select, follow and focus that agent. */
+  onSelect: (id: number) => void;
+}
+
+/** The face tile's inner box, CSS px, per rail mode: the tile minus its two borders. */
+const FACE_BOX: Record<MonitorLayout['rail'], number> = { wide: 47, mid: 38, slim: 50 };
+
+/** What a ticket shows about its agent beyond the reason: read straight off the stores. */
+interface TicketView {
+  ticket: Ticket;
+  name: string;
+  /** The name is the folder (no roster member yet): it masks like one. */
+  nameIsFolder: boolean;
+  palette: number;
+  hueShift: number;
+  tier?: number;
+  pct?: number;
+  model: string | null;
+  /** Branch, else folder; masked in privacy mode. */
+  where?: string;
+  age?: string;
+}
+
+function viewOf(os: OfficeState, ticket: Ticket, now: number): TicketView | null {
+  const ch = os.characters.get(ticket.id);
+  if (!ch) return null;
+  const member = os.rosters.get(ticket.id)?.name || ch.agentName;
+  const model = os.models.get(ticket.id);
+  const meta = os.sessionMeta.get(ticket.id);
+  return {
+    ticket,
+    name: member || ch.folderName || `Agent ${ticket.id}`,
+    nameIsFolder: !member && !!ch.folderName,
+    palette: ch.palette,
+    hueShift: ch.hueShift,
+    tier: model?.tier,
+    pct: contextPercent(ch.contextTokens, ch.maxContextTokens),
+    model: modelLabel(model?.model, model?.tier),
+    where: meta?.branch || ch.folderName || undefined,
+    age: meta?.startedAt === undefined ? undefined : formatDuration(now - meta.startedAt),
+  };
+}
+
+/** `Allow git push?` with the command boxed; a stuck reason's tail (` · no edits`) on its own line. */
+function Reason({ ticket }: { ticket: Ticket }) {
+  const allow = ticket.kind === 'permission' ? /^Allow (.+)\?$/.exec(ticket.reason) : null;
+  if (allow) {
+    return (
+      <>
+        Allow <span className="cmd">{allow[1]}</span>?
+      </>
+    );
+  }
+  const cut = ticket.reason.indexOf(' · ');
+  if (ticket.kind === 'stuck' && cut > 0) {
+    return (
+      <>
+        {ticket.reason.slice(0, cut)}
+        <small>{ticket.reason.slice(cut + 3)}</small>
+      </>
+    );
+  }
+  return <>{ticket.reason}</>;
+}
+
+function Minutes({ ticket, now }: { ticket: Ticket; now: number }) {
+  const block = minutesBlock(ticket.since, now);
+  return (
+    <div className={block.value.length > 2 ? 'tk-time long' : 'tk-time'}>
+      <span>{block.value}</span>
+      {block.unit && <span className="unit">{block.unit}</span>}
+    </div>
+  );
+}
+
+function FaceTile({
+  view,
+  box,
+  medalScale,
+}: {
+  view: TicketView;
+  box: number;
+  medalScale: number;
+}) {
+  return (
+    <div className="tk-face">
+      <div className="pic">
+        <Face palette={view.palette} hueShift={view.hueShift} boxCss={box} />
+      </div>
+      <span className="tk-icon">{view.ticket.glyph}</span>
+      <span className="tk-md">
+        <Medal tier={view.tier} pct={view.pct} scale={medalScale} />
+      </span>
+    </div>
+  );
+}
+
+function FullTicket({
+  view,
+  now,
+  box,
+  medalScale,
+  selected,
+  onSelect,
+}: {
+  view: TicketView;
+  now: number;
+  box: number;
+  /** Medal size: art px per device-independent px (the wide rail draws it twice the size). */
+  medalScale: number;
+  selected: boolean;
+  onSelect?: (id: number) => void;
+}) {
+  const { ticket } = view;
+  const stuck = ticket.kind === 'stuck';
+  const hot = view.pct !== undefined && view.pct >= MONITOR_RING_HOT_PCT;
+  const right = [
+    view.model && <span key="model">{view.model}</span>,
+    view.pct !== undefined && (
+      <span key="ctx" className="flex items-center gap-3">
+        <Ring pct={view.pct} scale={1} />
+        <b className={hot ? 'hot' : undefined}>{view.pct}%</b>
+      </span>
+    ),
+    view.age && <span key="age">{view.age}</span>,
+  ].filter(Boolean);
+  const Tag = onSelect ? 'button' : 'div';
+  return (
+    <Tag
+      {...(onSelect
+        ? {
+            type: 'button' as const,
+            onClick: (e: React.MouseEvent<HTMLElement>) => {
+              onSelect(ticket.id);
+              // A mouse click leaves no focus behind, so Enter next opens the inspector.
+              if (e.detail > 0) e.currentTarget.blur();
+            },
+          }
+        : {})}
+      className={stuck ? 'tk stuck' : 'tk'}
+      data-testid={onSelect ? 'monitor-ticket' : undefined}
+      data-agent-id={ticket.id}
+      data-kind={ticket.kind}
+      data-selected={selected}
+    >
+      <FaceTile view={view} box={box} medalScale={medalScale} />
+      <div className="tk-name">
+        <span className={view.nameIsFolder ? 'pv' : undefined} data-part="name">
+          {view.name}
+        </span>
+      </div>
+      <div className="tk-why pv" data-part="reason">
+        <Reason ticket={ticket} />
+      </div>
+      <Minutes ticket={ticket} now={now} />
+      <div className="tk-stub">
+        <span className="l">
+          {view.where && (
+            <span className="pv" data-part="where">
+              {view.where}
+            </span>
+          )}
+        </span>
+        <span className="r">
+          {right.flatMap((part, i) =>
+            i === 0 ? [part] : [<span key={`dot${i}`}>{'·'}</span>, part],
+          )}
+        </span>
+      </div>
+    </Tag>
+  );
+}
+
+function SlimTicket({
+  view,
+  now,
+  selected,
+  onSelect,
+  onHover,
+}: {
+  view: TicketView;
+  now: number;
+  selected: boolean;
+  onSelect: (id: number) => void;
+  onHover: (id: number | null, rect?: DOMRect) => void;
+}) {
+  const block = minutesBlock(view.ticket.since, now);
+  return (
+    <button
+      type="button"
+      className={view.ticket.kind === 'stuck' ? 'tk-slim stuck' : 'tk-slim'}
+      data-testid="monitor-ticket"
+      data-agent-id={view.ticket.id}
+      data-kind={view.ticket.kind}
+      data-selected={selected}
+      aria-label={view.nameIsFolder ? 'Agent' : view.name}
+      onClick={(e) => {
+        onSelect(view.ticket.id);
+        if (e.detail > 0) e.currentTarget.blur();
+      }}
+      onMouseEnter={(e) => onHover(view.ticket.id, e.currentTarget.getBoundingClientRect())}
+      onMouseLeave={() => onHover(null)}
+    >
+      <FaceTile view={view} box={FACE_BOX.slim} medalScale={1} />
+      <span className="min">
+        {block.value}
+        {block.unit === 'MIN' ? 'm' : ''}
+      </span>
+    </button>
+  );
+}
+
+function Section({
+  stuck,
+  count,
+  slim,
+  children,
+}: {
+  stuck: boolean;
+  count: number;
+  slim: boolean;
+  children: React.ReactNode;
+}) {
+  const title = stuck ? 'Stuck' : 'Needs you';
+  const cls = ['att-h', stuck ? 'stuck' : '', count === 0 ? 'zero' : ''].filter(Boolean).join(' ');
+  return (
+    <>
+      <h2 className={cls} title={slim ? title : undefined}>
+        {!slim && <span>{title}</span>}
+        <span className="cnt">{count}</span>
+      </h2>
+      {count === 0 && !slim && (
+        <div className="att-clear">
+          <CheckMark scale={2} color="var(--mon-sage)" />
+          all clear
+        </div>
+      )}
+      {children}
+    </>
+  );
 }
 
 /**
- * The attention rail's slot, left of the stage. Empty for now, so it takes no width and the
- * stage keeps the whole window; the rail fills it and takes `layout.railPx`.
+ * The attention rail, left of the stage: who needs an answer, who is stuck, oldest first, and
+ * the official limits' pace pinned below them. Clocks tick every 30 s (no frame loop); every
+ * age is read off the office clock so the staged scene keeps its minutes.
  */
-export function MonitorRail({ layout }: MonitorRailProps) {
-  return <div data-testid="monitor-rail" data-rail={layout.rail} className="shrink-0 h-full" />;
+export function MonitorRail({
+  officeState,
+  layout,
+  attention,
+  limits,
+  statuslineInstalled,
+  privacy,
+  onTogglePrivacy,
+  onSelect,
+}: MonitorRailProps) {
+  useNow(MONITOR_CLOCK_TICK_MS);
+  const now = officeNow().getTime();
+  const [hover, setHover] = useState<{ id: number; rect: DOMRect } | null>(null);
+  const slim = layout.rail === 'slim';
+  const selected = officeState.selectedAgentId;
+  const views = (tickets: Ticket[]) =>
+    tickets.map((t) => viewOf(officeState, t, now)).filter((v): v is TicketView => v !== null);
+  const needs = views(attention.needs);
+  const stuck = views(attention.stuck);
+  const render = (v: TicketView) =>
+    slim ? (
+      <SlimTicket
+        key={v.ticket.id}
+        view={v}
+        now={now}
+        selected={selected === v.ticket.id}
+        onSelect={onSelect}
+        onHover={(id, rect) => setHover(id === null || !rect ? null : { id, rect })}
+      />
+    ) : (
+      <FullTicket
+        key={v.ticket.id}
+        view={v}
+        now={now}
+        box={FACE_BOX[layout.rail]}
+        medalScale={layout.rail === 'wide' ? 2 : 1}
+        selected={selected === v.ticket.id}
+        onSelect={onSelect}
+      />
+    );
+  const popView = hover ? [...needs, ...stuck].find((v) => v.ticket.id === hover.id) : undefined;
+  return (
+    <aside
+      data-testid="monitor-rail"
+      data-rail={layout.rail}
+      className="mon-rail"
+      style={{ width: layout.railPx }}
+      aria-label="Attention"
+    >
+      <div className="mon-list pixel-scrollbar">
+        <Section stuck={false} count={needs.length} slim={slim}>
+          {needs.map(render)}
+        </Section>
+        <Section stuck count={stuck.length} slim={slim}>
+          {stuck.map(render)}
+        </Section>
+      </div>
+      <PacePanel limits={limits} installed={statuslineInstalled} now={now} slim={slim} />
+      {!slim && (
+        <div className="mon-keys">
+          <span>
+            <kbd>{'←'}</kbd>
+            <kbd>{'→'}</kbd>
+            select
+          </span>
+          <span>
+            <kbd>Enter</kbd>
+            inspect
+          </span>
+          <button
+            type="button"
+            aria-pressed={privacy}
+            onClick={(e) => {
+              onTogglePrivacy();
+              if (e.detail > 0) e.currentTarget.blur();
+            }}
+          >
+            <kbd>P</kbd>
+            hide text
+          </button>
+        </div>
+      )}
+      {slim && popView && hover && (
+        <div
+          className="tk-pop"
+          style={{
+            left: hover.rect.right + 14,
+            top: Math.max(8, Math.min(hover.rect.top, window.innerHeight - 180)),
+          }}
+        >
+          <FullTicket view={popView} now={now} box={FACE_BOX.mid} medalScale={1} selected={false} />
+        </div>
+      )}
+    </aside>
+  );
 }

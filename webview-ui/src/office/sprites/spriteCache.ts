@@ -142,3 +142,60 @@ export function getCachedSprite(sprite: SpriteData, zoom: number): HTMLCanvasEle
   cache.set(sprite, canvas);
   return canvas;
 }
+
+/** The head crop of a character frame: art rows 6..31 (the head with its bob room) of the
+ *  32x64 front frame, centred in a square with clear rows above and below. */
+export const HEAD_CROP_TOP = 6;
+export const HEAD_CROP_ROWS = 26;
+
+/**
+ * A character's face for the attention rail: the head rows of a front frame, centred in a
+ * square as wide as the frame (32 art px for 32x64 art). Pure; transparent pixels stay ''.
+ */
+export function headCrop(frame: SpriteData): SpriteData {
+  const w = frame[0]?.length ?? 0;
+  const pad = Math.floor((w - HEAD_CROP_ROWS) / 2);
+  const out: SpriteData = [];
+  for (let y = 0; y < w; y++) {
+    const src = frame[HEAD_CROP_TOP + y - pad];
+    out.push(y >= pad && y < pad + HEAD_CROP_ROWS && src ? [...src] : new Array(w).fill(''));
+  }
+  return out;
+}
+
+/**
+ * The largest face that fits `boxCss` and lands on whole device px per art px (or per world px
+ * off the half-size downsample): a multiple of 16 device px. 0 when none fits.
+ */
+export function faceDevicePx(boxCss: number, dpr: number): number {
+  const step = 16;
+  return Math.floor(((boxCss + 1) * dpr) / step) * step;
+}
+
+const faceUrls = new Map<string, string>();
+
+/**
+ * A face as a PNG data URL exactly `devicePx` square, drawn at a whole number of device px per
+ * art px (or per world px off the half-size downsample), so the browser never resamples it.
+ * Null when the frame is still blank (sprites not loaded yet): that is never cached.
+ */
+export function faceDataUrl(key: string, frame: SpriteData, devicePx: number): string | null {
+  const cacheKey = `${key}@${devicePx}`;
+  const hit = faceUrls.get(cacheKey);
+  if (hit) return hit;
+  const crop = headCrop(frame);
+  if (!crop.some((row) => row.some(Boolean))) return null;
+  const art = spritePixels(crop);
+  const source = devicePx % art.w === 0 ? art : downsample(art);
+  const scale = Math.max(1, Math.floor(devicePx / source.w));
+  const canvas = document.createElement('canvas');
+  canvas.width = devicePx;
+  canvas.height = devicePx;
+  const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+  const offset = Math.floor((devicePx - source.w * scale) / 2);
+  ctx.drawImage(canvasOf(source), offset, offset, source.w * scale, source.h * scale);
+  const url = canvas.toDataURL('image/png');
+  faceUrls.set(cacheKey, url);
+  return url;
+}

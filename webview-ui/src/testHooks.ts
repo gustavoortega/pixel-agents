@@ -91,6 +91,8 @@ declare global {
         parentToolId?: string;
       }>;
       selectAgent?: (id: number | null) => void;
+      /** The office's selection and camera follow, as a click (canvas or rail) left them. */
+      getSelection?: () => { selectedAgentId: number | null; cameraFollowId: number | null };
       /** Render loop counters (gameLoop.ts installs them when it loads): read deltas, never absolutes. */
       frames?: FrameCounters;
     };
@@ -144,6 +146,14 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
   // The ghost setting lives in the renderer module (read on every drawn frame), not
   // in OfficeState, so e2e reads it from there to assert what is actually drawn.
   hooks.getGhostHeadlessAgents = () => isGhostHeadlessAgentsEnabled();
+
+  hooks.getSelection = () => {
+    const os = officeStateRef.current;
+    return {
+      selectedAgentId: os?.selectedAgentId ?? null,
+      cameraFollowId: os?.cameraFollowId ?? null,
+    };
+  };
 
   hooks.selectAgent = (id) => {
     const os = officeStateRef.current;

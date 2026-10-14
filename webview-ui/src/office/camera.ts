@@ -439,6 +439,9 @@ export class AutoFit {
   private on = true;
   private started = false;
   private lastKey = '';
+  /** The view size the last fit was for: a stage that changes size (the rail or the sheet
+   *  taking width, a resized window) is framed again from scratch, as the Fit button does. */
+  private lastSize = '';
   private anim: { from: Point; to: Point; startMs: number } | null = null;
   private zoom = 0;
 
@@ -470,6 +473,11 @@ export class AutoFit {
     if (!this.on || input.canvas.width <= 0 || input.canvas.height <= 0) return {};
     const { map, canvas, dpr } = input;
     const key = input.target ? JSON.stringify(input.target) : '';
+    const size = `${canvas.width}x${canvas.height}@${dpr}`;
+    if (size !== this.lastSize) {
+      this.lastSize = size;
+      this.started = false;
+    }
     // Pans leave here already legal for the zoom they are valid at, so the canvas applies them as given.
     const legal = (center: Point, zoom: number): Point =>
       clampPan(
