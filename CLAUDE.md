@@ -130,6 +130,7 @@ webview-ui/                          React 19 + Canvas UI (depends only on core/
       useEditorKeyboard.ts           Keyboard shortcuts (R, T, Esc, Ctrl+Z/Y)
       introTourState.ts              Intro tour wire-state machine (pure reducer, Node-runner tested)
       useIntroTour.ts                Wires the reducer to React + transport (snapshot, verdict, choices)
+      useFrame.ts                    Runs a callback after every drawn canvas frame (the DOM overlays' redraw)
     office/
       types.ts                       OfficeLayout, Character, etc. + re-exports constants
       toolUtils.ts                   STATUS_TO_TOOL mapping, extractToolName (DOM-free; defaultZoom lives in useEditorActions)
@@ -157,7 +158,7 @@ webview-ui/                          React 19 + Canvas UI (depends only on core/
         characters.ts                Character FSM (idle/walk/type) + wander AI
         officeState.ts               Game world (layout, characters, seats, selection, subagents, consent greeter)
         resync.ts                    ResyncController: the window from a reconnect's existingAgents to handshakeDone
-        gameLoop.ts                  rAF loop with delta-time cap (0.1 s)
+        gameLoop.ts                  Render scheduler: frames capped at 30 fps while active, a 100 ms timer otherwise (requestRedraw, onFrame)
         renderer.ts                  Canvas: tiles, z-sorted entities, overlays, edit UI
         matrixEffect.ts              Spawn/despawn digital rain (drawing only)
         matrixEffectState.ts         Effect state: startMatrixEffect/advanceMatrixEffect (DOM-free)
@@ -193,7 +194,8 @@ e2e/                                 Playwright suite (real VS Code + mock-claud
   tests/
     claude/hooks-on/                 basic.spec.ts, lifecycle.spec.ts, teams.spec.ts
     claude/hooks-off/                lifecycle.spec.ts, matrix.spec.ts
-    standalone/                      hooks.spec.ts
+    standalone/                      hooks.spec.ts, render-loop.spec.ts
+  perf/                              render-cost.spec.ts + its own config (npm run e2e:perf), outside the suite
   README.md                          Auto-generated test inventory (regen via npm run e2e:inventory)
 
 scripts/
@@ -541,6 +543,8 @@ Claude Code passes its status line command a JSON on stdin that carries the offi
 
 **Rendering**: Game state in imperative `OfficeState` class (not React state). Zoom = device px per WORLD px, restricted to `ZOOM_LEVELS` {1, 2, 4, ..., 20}; art is `ART_DENSITY` (2) art px per world px, so an art px is zoom/2 device px and zoom 1 draws a 2x2 alpha-weighted downsample. The badge shows zoom/2; fit, +/- and the wheel walk the levels (`snapZoom`, `stepZoom`). No `ctx.scale(dpr)`. Default zoom = `Math.round(2 * devicePixelRatio)` snapped down to a level. World->device is `worldToDevice` (scale, then round once), shared by the canvas and the DOM overlays. Z-sort all entities by Y. Pan via middle-mouse drag (`panRef`). **Camera follow**: `cameraFollowId` (separate from `selectedAgentId`) smoothly centers camera on the followed agent; set on agent click, cleared on deselection or manual pan.
 
+**Render loop** (`engine/gameLoop.ts`): the canvas draws only as often as the office moves. After every update the busier of `OfficeState.activityLevel()` and the canvas's own level (edit mode, a fit still easing, a camera follow or greeter drift not landed) picks the mode: `active` runs on animation frames capped at `ACTIVE_FPS_CAP` (30) and lingers `ACTIVE_LINGER_MS` after the last active reading or wake; `ambient` (only slow loops: anyone in the office, an awake pet, lit fairy lights, a monitor left on) steps and draws on a 100 ms timer; `idle` steps on the same timer but draws once a second, for the light of the hour, plus the tick that left `ambient`. Timer ticks step in fixed `IDLE_STEP_SEC` (= `MAX_DELTA_TIME_SEC`) steps, so every dt timer keeps wall time and only drawing slows down. Hidden (the document, or the canvas off screen: a VS Code panel kept alive) nothing ticks. Anything that changes what is drawn outside a host message, a canvas input or a resize must call `requestRedraw()`, or it shows up to a second late; the message handler wakes on every type except the periodic ones in `NO_WAKE_MESSAGE_TYPES` (`tokenUsage`, re-sent every 30 s, and `usageLimits`, which only the DOM reads). DOM overlays redraw through `useFrame` after each drawn frame, never with a rAF loop of their own. Motion is time-based, never per frame: a walk carries its overshoot into the next tile, and the camera follow eases per second and lands within `CAMERA_FOLLOW_SNAP_THRESHOLD` of its legal goal (a bare lerp never settles and would pin the loop at 30 fps). e2e reads the loop through `window.__pixelAgentsTestHooks.frames` (`raf`, `update`, `render` counts and `mode`), as deltas.
+
 **Cozy look**: brand CSS vars (`--brand-ink/-paper/-paper-2/-gold/-rust`, `--brand-shadow`, `--page-bg`) in `index.css`; `.brand-panel` / `Button variant="brand"` apply them to the toolbar, Settings, Usage, zoom controls and the HUD clock. Lighting is split because the canvas is transparent outside the map: a DOM `LightingTint` (soft-light, sized by `mapRectCss` through the same `overlayProjection` as the labels) plus canvas glows clipped to the map. At night the DOM tint is off and the canvas multiplies the map by `NIGHT_DARKEN_*` (ramped over `NIGHT_RAMP_MIN` either side of the phase by `nightDarkness`), then lays the lamp, monitor and fairy-band pools back on with `POOL_BLEND_MODE` (soft-light; the fairy bulbs and the glows stay `screen`). Pools are clipped to the map only; the fairy band is also cut to the wall rows under its strand; bubbles and DOM overlays stay outside it. `cozyLighting` toggles both. The Area color wash draws only while the Areas tool is active; Show Areas shows room signs only. Camera auto-fit (`AutoFit`) zooms only out by itself; the Fit button re-frames.
 
 **UI styling**: Pixel art aesthetic — sharp corners (`borderRadius: 0`), solid backgrounds (`#1e1e2e`), `2px solid` borders, hard offset shadows (`2px 2px 0px #0a0a14`, no blur). CSS variables in `index.css` `:root` (`--pixel-bg`, `--pixel-border`, `--pixel-accent`, ...). Pixel font: FS Pixel Sans (`webview-ui/src/fonts/`), loaded via `@font-face`, applied globally.
@@ -681,6 +685,7 @@ npm run e2e -- --grep "lifecycle"              # filter by name
 npm run e2e:debug                              # step-through
 npm run e2e -- --attach-videos-on-success      # keep videos for passes too
 npm run e2e:inventory                          # regen e2e/README.md inventory
+npm run e2e:perf                               # render cost per dev scene (own config, not in the suite)
 npm run test:report                            # build combined Allure report
 npm run test:report:open                       # serve Allure locally (file:// can't fetch)
 ```

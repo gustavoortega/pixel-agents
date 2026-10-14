@@ -9,6 +9,8 @@ import {
   INTRO_BUBBLE_Z_INDEX,
 } from '../constants.js';
 import type { ConsentChoice } from '../hooks/introTourState.js';
+import { useFrame } from '../hooks/useFrame.js';
+import { requestRedraw } from '../office/engine/gameLoop.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import { DiscordIcon } from './ChangelogModal.js';
 import { computeIntroBubbleGeometry } from './introBubbleGeometry.js';
@@ -113,7 +115,11 @@ export function IntroBubble({
   // The greeter lives exactly as long as this component.
   useEffect(() => {
     officeState.spawnGreeter();
-    return () => officeState.despawnGreeter();
+    requestRedraw();
+    return () => {
+      officeState.despawnGreeter();
+      requestRedraw();
+    };
   }, [officeState]);
 
   useEffect(() => {
@@ -130,32 +136,26 @@ export function IntroBubble({
   // renders — and feed the camera target from the same geometry the render
   // uses, so the drift and the drawn bubble can never disagree. Ignored after
   // a manual pan (cancelGreeterCamera).
-  useEffect(() => {
-    let rafId = 0;
-    const tick = () => {
-      const ch = officeState.greeter;
-      const bubble = bubbleRef.current;
-      const container = containerRef.current;
-      if (ch && bubble && container && bubble.offsetWidth > 0) {
-        officeState.setGreeterCameraTarget(
-          computeIntroBubbleGeometry({
-            layout: officeState.getLayout(),
-            containerRect: container.getBoundingClientRect(),
-            zoom,
-            pan: panRef.current,
-            dpr: window.devicePixelRatio || 1,
-            greeter: ch,
-            bubbleWidth: bubble.offsetWidth,
-            bubbleHeight: bubble.offsetHeight,
-          }).cameraTarget,
-        );
-      }
-      setTick((n) => n + 1);
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [officeState, zoom, containerRef, panRef]);
+  useFrame(() => {
+    const ch = officeState.greeter;
+    const bubble = bubbleRef.current;
+    const container = containerRef.current;
+    if (ch && bubble && container && bubble.offsetWidth > 0) {
+      officeState.setGreeterCameraTarget(
+        computeIntroBubbleGeometry({
+          layout: officeState.getLayout(),
+          containerRect: container.getBoundingClientRect(),
+          zoom,
+          pan: panRef.current,
+          dpr: window.devicePixelRatio || 1,
+          greeter: ch,
+          bubbleWidth: bubble.offsetWidth,
+          bubbleHeight: bubble.offsetHeight,
+        }).cameraTarget,
+      );
+    }
+    setTick((n) => n + 1);
+  });
 
   // The held install's verdict arrived (installPending fell): move on to the
   // closing step. Back is disabled while pending, so the fall can only ever
@@ -179,7 +179,7 @@ export function IntroBubble({
     rect.width - 2 * INTRO_BUBBLE_EDGE_MARGIN_PX,
   );
 
-  // Measurements come from the previous frame's node (the rAF tick re-renders
+  // Measurements come from the previous frame's node (the frame tick re-renders
   // continuously); until the first measure, stay hidden.
   const bw = bubbleRef.current?.offsetWidth ?? 0;
   const bh = bubbleRef.current?.offsetHeight ?? 0;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { spriteWorldHeight, spriteWorldWidth } from '../../../../core/src/assets/artDensity.js';
 import { Button } from '../../components/ui/Button.js';
@@ -36,6 +36,7 @@ import {
   TOOL_OVERLAY_VERTICAL_OFFSET,
 } from '../../constants.js';
 import type { SubagentCharacter } from '../../hooks/subagentMessages.js';
+import { useFrame } from '../../hooks/useFrame.js';
 import { fitZoomWholeMap } from '../camera.js';
 import { sheetFrameIndex } from '../engine/characters.js';
 import type { OfficeState } from '../engine/officeState.js';
@@ -373,18 +374,10 @@ export function ToolOverlay({
   onCloseAgent,
   onAckTripwire,
 }: ToolOverlayProps) {
-  // Re-render every frame. The frame's wall-clock time drives the cache countdown; it is
-  // taken here, outside render, and is 0 until the first frame.
+  // Re-render after every drawn canvas frame. The frame's wall-clock time drives the cache
+  // countdown; it is taken here, outside render, and is 0 until the first frame.
   const [frameMs, setFrameMs] = useState(0);
-  useEffect(() => {
-    let rafId = 0;
-    const tick = () => {
-      setFrameMs(Date.now());
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, []);
+  useFrame(() => setFrameMs(Date.now()));
 
   const el = containerRef.current;
   if (!el) return null;

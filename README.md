@@ -116,6 +116,8 @@ cd webview-ui && npx vite --host 127.0.0.1 --port 5199
 # open http://127.0.0.1:5199/?scene=hero&hud=0
 ```
 
+`npm run e2e:perf` measures what the dev scenes cost per second (frames drawn, animation frames requested, main-thread time): `?scene=hero`, the default mock and `?scene=empty`, an office where nothing moves.
+
 [CLAUDE.md](CLAUDE.md) documents the architecture, [docs/cozy-art.md](docs/cozy-art.md) the art generator.
 
 ## License

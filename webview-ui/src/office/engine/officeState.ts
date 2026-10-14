@@ -18,6 +18,7 @@ import {
   LOBBY_CAT_ID,
   LOUNGE_FURNITURE_TYPE,
   MAX_PET_ID_LENGTH,
+  MONITOR_ON_TYPE_PREFIX,
   PET_HIT_HALF_WIDTH,
   PET_HIT_HEIGHT,
   SOFA_MAX_OCCUPANTS,
@@ -29,6 +30,7 @@ import { officeNow } from '../clock.js';
 import type { Companion, Tile } from '../flair/companion.js';
 import {
   advanceTrail,
+  CompanionSet,
   companionTile,
   createCompanion,
   tableCompanionTile,
@@ -40,7 +42,7 @@ import { type HeroCandidate, heroPerRoom } from '../flair/hero.js';
 import { modelFlair } from '../flair/modelFlair.js';
 import { FxEngine } from '../fx/fxEngine.js';
 import { MoodWeather } from '../fx/moodWeather.js';
-import type { AgentHealthView } from '../health.js';
+import { type AgentHealthView, healthMark } from '../health.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
   createDefaultLayout,
@@ -53,6 +55,7 @@ import {
   layoutToTileMap,
 } from '../layout/layoutSerializer.js';
 import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
+import { lightFixtures, nightDarkness } from '../lighting.js';
 import { darkScreenSprite, monitorLook, monitorTick } from '../monitor.js';
 import { seatedDrawOffsetPx } from '../seatDraw.js';
 import { brightestShaftCell, shaftsAt, shaftsOff } from '../shafts.js';
@@ -72,9 +75,11 @@ import type {
 } from '../types.js';
 import { CharacterState, Direction, IdlePose, PetState, TILE_SIZE, WorkStatus } from '../types.js';
 import { createCharacter, updateCharacter } from './characters.js';
+import type { ActivityLevel } from './gameLoop.js';
 import { stepPose } from './idleLife.js';
 import { advanceMatrixEffect, startMatrixEffect } from './matrixEffectState.js';
 import { createPet, type PetGoal, updatePet } from './petEntity.js';
+import { isCozyLightingEnabled } from './renderer.js';
 import { anchorTile, closestFreeSeat } from './seatPlacement.js';
 
 /** Internal helper: facing-tile coords for a seat. Returns null for invalid direction. */
@@ -1848,6 +1853,50 @@ export class OfficeState {
         }
       }
     }
+  }
+
+  /**
+   * How much of the office moves, for the render loop's rate (see gameLoop.ts). 'active' when
+   * something changes every frame: a working agent (its typing frames, its lit monitor cycling on
+   * the furniture timer), a walker or a pet on the move, a matrix effect, the greeter, an XP pop or
+   * level-up, a storm or a rising mood heart, a tripwire beacon, health smoke, a companion in
+   * flight. 'ambient' when only slow loops run, which a 10 Hz redraw shows: anyone in the office
+   * (page turns, naps and their Zz, steam, sparkles, a waiting bubble), an awake pet or a heart
+   * bubble, a companion, a monitor left on in the layout (its dim flicker), lit fairy lights.
+   * Otherwise 'idle': only the light of the hour changes.
+   */
+  activityLevel(): ActivityLevel {
+    if (this.greeter) return 'active';
+    for (const ch of this.characters.values()) {
+      if (ch.agentStatus === WorkStatus.ACTIVE || ch.path.length > 0 || ch.matrixEffect) {
+        return 'active';
+      }
+      // The tripwire beacon pulses and the smoke over a stuck or looping agent rises, every frame.
+      if (this.tripwires.has(ch.id) || healthMark(this.health.get(ch.id)?.state) === 'smoke') {
+        return 'active';
+      }
+    }
+    if (this.pets.some((pet) => pet.path.length > 0)) return 'active';
+    if (this.fx.active.length > 0 || this.weather.moving(Date.now())) return 'active';
+    for (const c of this.companions.values()) {
+      if (c.visible && c.set === CompanionSet.MOVE) return 'active';
+    }
+
+    if (this.characters.size > 0 || this.companions.size > 0) return 'ambient';
+    if (this.pets.some((pet) => pet.state !== PetState.SLEEP || pet.bubbleType)) return 'ambient';
+    if (isCozyLightingEnabled()) {
+      if (this.furniture.some((f) => !f.mirrored && f.type?.startsWith(MONITOR_ON_TYPE_PREFIX))) {
+        return 'ambient';
+      }
+      const now = officeNow();
+      if (
+        nightDarkness(now.getHours(), now.getMinutes()) > 0 &&
+        lightFixtures(this.layout.furniture).fairyLights.length > 0
+      ) {
+        return 'ambient';
+      }
+    }
+    return 'idle';
   }
 
   // ── Coffee trips ──────────────────────────────────────────────

@@ -26,6 +26,7 @@ import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { editorState } from './office/editor/editorState.js';
 import { EditorToolbar } from './office/editor/EditorToolbar.js';
+import { requestRedraw } from './office/engine/gameLoop.js';
 import { OfficeState } from './office/engine/officeState.js';
 import { exportLayoutToFile } from './office/layout/exportLayout.js';
 import { isRotatable } from './office/layout/furnitureCatalog.js';
@@ -65,7 +66,11 @@ function App() {
     },
     [autoFit, handleZoomChange],
   );
-  const handleFit = useCallback(() => autoFit.enable(), [autoFit]);
+  const handleFit = useCallback(() => {
+    autoFit.enable();
+    // The fit lands on the next drawn frame, which a quiet office would only draw a second later.
+    requestRedraw();
+  }, [autoFit]);
 
   // Browser runtime (dev or static dist): dispatch mock messages after the
   // useExtensionMessages listener has been registered.

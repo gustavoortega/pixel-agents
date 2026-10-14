@@ -43,6 +43,8 @@ interface MockPayload {
   layout: unknown;
   /** Set only for `?scene=hero`. */
   hero: { options: HeroSceneOptions; pets: PetSpriteFrames[]; petNames: string[] } | null;
+  /** `?scene=empty`: the bundled office with no pets and the cozy lighting off, where nothing moves. */
+  empty: boolean;
 }
 
 // ── Module-level state ─────────────────────────────────────────────────────────
@@ -199,10 +201,12 @@ export async function initBrowserMock(): Promise<void> {
       ]);
 
   const heroOptions = parseHeroScene(window.location.search);
+  const empty = new URLSearchParams(window.location.search).get('scene') === 'empty';
   const layoutPath = heroOptions ? HERO_LAYOUT_PATH : assetIndex.defaultLayout;
-  const layout = layoutPath
+  const fetched: Record<string, unknown> | null = layoutPath
     ? await fetch(`${base}assets/${layoutPath}`).then((r) => r.json())
     : null;
+  const layout = empty && fetched ? { ...fetched, pets: [] } : fetched;
   // The dev mock sends no pets; the scene's cat needs its sprites.
   const heroPets = heroOptions ? await decodeHeroPets(base) : null;
 
@@ -222,6 +226,7 @@ export async function initBrowserMock(): Promise<void> {
     furnitureSprites,
     layout,
     hero: heroOptions && heroPets ? { options: heroOptions, ...heroPets } : null,
+    empty,
   };
 
   console.log(
@@ -252,6 +257,7 @@ export function dispatchMockMessages(host?: {
     furnitureSprites,
     layout,
     hero,
+    empty,
   } = mockPayload;
 
   function dispatch(data: unknown): void {
@@ -274,6 +280,8 @@ export function dispatchMockMessages(host?: {
     extensionVersion: '1.3.0',
     // The scene gets no "what's new" toast.
     lastSeenVersion: hero ? '1.3' : '1.2',
+    // Fairy lights twinkle at night with the lighting on: the empty scene keeps it off.
+    ...(empty ? { cozyLighting: false } : {}),
   });
 
   // StrictMode runs the mount effect twice in dev; the scene stages once.

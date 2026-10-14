@@ -248,6 +248,30 @@ test('WALK → IDLE when path exhausted (resets frameTimer)', () => {
   assert.ok(pet.wanderTimer > 0);
 });
 
+test('at bedtime a pet mid-wander finishes only the step under way, then sleeps there', () => {
+  const tileMap = buildOpenTileMap(8, 3);
+  const walkable = buildWalkableTiles(8, 3);
+  const pet = createPet('p1', 0, 1, 1);
+  pet.state = PetState.WALK;
+  pet.path = [
+    { col: 2, row: 1 },
+    { col: 3, row: 1 },
+    { col: 4, row: 1 },
+    { col: 5, row: 1 },
+  ];
+  // A quarter of the way into its first step when the office goes to sleep (no sofa: no bed).
+  updatePet(pet, 0.125, walkable, new Map(), tileMap, new Set());
+  assert.ok(pet.moveProgress > 0 && pet.moveProgress < 1);
+  for (let tick = 0; tick < 40; tick++) {
+    updatePet(pet, 0.1, walkable, new Map(), tileMap, new Set(), undefined, {
+      kind: 'bed',
+      bed: null,
+    });
+  }
+  assert.equal(pet.state, PetState.SLEEP);
+  assert.deepEqual([pet.tileCol, pet.tileRow], [2, 1]);
+});
+
 // ── FOLLOW exits ──────────────────────────────────────────────
 
 test('FOLLOW → IDLE when target despawns (no longer in characters map)', () => {

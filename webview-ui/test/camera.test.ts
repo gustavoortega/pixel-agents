@@ -16,7 +16,9 @@ import {
   fitTarget,
   fitView,
   fitZoomWholeMap,
+  followPan,
   panAfterZoom,
+  type Point,
   refitView,
   roomsOf,
   stepZoom,
@@ -268,4 +270,25 @@ test('AutoFit: a manual zoom or pan, an open editor or a followed agent stops re
   following.step(input());
   assert.deepEqual(following.step({ ...far, followed: true }), {});
   assert.equal(following.enabled, false);
+});
+
+// ── Camera follow ──────────────────────────────────────────────
+
+test('camera follow: the same pan at 30 and 60 fps, then it lands on the legal goal and stops', () => {
+  // The target sits past the map's left edge: the clamp stops the pan at x = -300.
+  const legal = (p: Point): Point => ({ x: Math.min(0, Math.max(-300, p.x)), y: p.y });
+  const target = { x: -400, y: 120 };
+  const follow = (fps: number, seconds: number) => {
+    let step = { pan: { x: 0, y: 0 }, settled: false };
+    for (let i = 0; i < seconds * fps; i++) step = followPan(step.pan, target, 1 / fps, legal);
+    return step;
+  };
+
+  const fast = follow(60, 0.5).pan;
+  const capped = follow(30, 0.5).pan;
+  assert.ok(
+    Math.abs(fast.x - capped.x) + Math.abs(fast.y - capped.y) < 1,
+    'same pan at either rate',
+  );
+  assert.deepEqual(follow(30, 5), { pan: { x: -300, y: 120 }, settled: true });
 });

@@ -8,6 +8,9 @@
  */
 
 import {
+  CAMERA_FOLLOW_LERP,
+  CAMERA_FOLLOW_LERP_FPS,
+  CAMERA_FOLLOW_SNAP_THRESHOLD,
   FIT_CENTER_EASE_MS,
   FIT_MIN_ROOMS,
   FIT_PADDING_CSS_PX,
@@ -371,6 +374,33 @@ export function easeCenter(from: Point, to: Point, t: number): Point {
   return { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e };
 }
 
+/**
+ * One step of the camera follow, `dt` seconds long. The pan closes CAMERA_FOLLOW_LERP of the gap to
+ * `target` per frame at CAMERA_FOLLOW_LERP_FPS, the same per second at any frame rate, and lands on
+ * the legal goal once within CAMERA_FOLLOW_SNAP_THRESHOLD of it on both axes: a bare lerp never
+ * arrives, and an unsettled follow keeps the render loop drawing at full rate. The goal is the legal
+ * pan, since a target past the map edge is one the clamp never lets the pan reach.
+ */
+export function followPan(
+  pan: Point,
+  target: Point,
+  dt: number,
+  legal: (p: Point) => Point,
+): { pan: Point; settled: boolean } {
+  const goal = legal(target);
+  if (
+    Math.abs(goal.x - pan.x) < CAMERA_FOLLOW_SNAP_THRESHOLD &&
+    Math.abs(goal.y - pan.y) < CAMERA_FOLLOW_SNAP_THRESHOLD
+  ) {
+    return { pan: goal, settled: true };
+  }
+  const alpha = 1 - Math.pow(1 - CAMERA_FOLLOW_LERP, dt * CAMERA_FOLLOW_LERP_FPS);
+  return {
+    pan: legal({ x: pan.x + (target.x - pan.x) * alpha, y: pan.y + (target.y - pan.y) * alpha }),
+    settled: false,
+  };
+}
+
 export interface AutoFitInput {
   /** What the fit frames: the working rooms (see `fitTarget`); null frames the whole map. */
   target: TileBox | null;
@@ -391,6 +421,8 @@ export interface AutoFitCommand {
   /** Pan for the canvas, valid at `panZoom`; the host applies it once its zoom matches. */
   pan?: Point;
   panZoom?: number;
+  /** Set while a re-centre is still easing: the host keeps drawing every frame until it lands. */
+  easing?: true;
 }
 
 /**
@@ -480,6 +512,7 @@ export class AutoFit {
       cmd.pan = legal(easeCenter(this.anim.from, this.anim.to, t), this.zoom);
       cmd.panZoom = this.zoom;
       if (t >= 1) this.anim = null;
+      else cmd.easing = true;
     }
     return cmd;
   }

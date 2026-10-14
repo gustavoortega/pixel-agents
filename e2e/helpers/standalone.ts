@@ -172,10 +172,15 @@ async function killProcess(child: ChildProcessWithoutNullStreams): Promise<void>
  * Install a WebSocket recorder BEFORE page navigation. Proxies window.WebSocket
  * so every incoming message frame is JSON-parsed and pushed to
  * window.__pixelAgentsMessages, which drainMessages() reads from.
+ *
+ * It also sets window.__pixelAgentsDeliver(msg): the message reaches the app's
+ * own socket handler as if the server had sent it, for tests that time what
+ * the webview does with one message.
  */
 async function installMessageRecorder(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const recordedMessages: unknown[] = [];
+    const deliverer = window as Window & { __pixelAgentsDeliver?: (msg: unknown) => void };
     const OriginalWebSocket = window.WebSocket;
     const RecordingWebSocket = new Proxy(OriginalWebSocket, {
       construct(target, args) {
@@ -190,12 +195,33 @@ async function installMessageRecorder(page: Page): Promise<void> {
             // Ignore non-JSON frames.
           }
         });
+        deliverer.__pixelAgentsDeliver = (msg) => {
+          socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(msg) }));
+        };
         return socket;
       },
     });
     window.WebSocket = RecordingWebSocket as typeof WebSocket;
     (window as Window & { __pixelAgentsMessages?: unknown[] }).__pixelAgentsMessages =
       recordedMessages;
+  });
+}
+
+/**
+ * Count every requestAnimationFrame call on the page in
+ * window.__pixelAgentsRafCalls, installed BEFORE navigation. The render loop's
+ * own counter sees only its frames; a component running a frame loop of its
+ * own shows up here.
+ */
+async function installFrameRequestCounter(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const counted = window as Window & { __pixelAgentsRafCalls?: number };
+    counted.__pixelAgentsRafCalls = 0;
+    const request = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (callback) => {
+      counted.__pixelAgentsRafCalls = (counted.__pixelAgentsRafCalls ?? 0) + 1;
+      return request(callback);
+    };
   });
 }
 
@@ -301,6 +327,7 @@ export async function launchStandalone(
       (window as unknown as { __PIXEL_AGENTS_E2E?: boolean }).__PIXEL_AGENTS_E2E = true;
     });
     await installMessageRecorder(page);
+    await installFrameRequestCounter(page);
     await waitForHttpOk(`${hostUrl}/api/health`);
     // The hook-endpoint Bearer token is a different channel and legitimately
     // read from the registry — that is where the real hook script reads it too.

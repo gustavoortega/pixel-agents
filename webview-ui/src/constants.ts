@@ -146,7 +146,10 @@ export const CANVAS_ERROR_TILE_COLOR = '#FF00FF';
 export const WALL_COLOR = '#3A3A5C';
 
 // ── Camera ───────────────────────────────────────────────────
+/** Share of the gap the follow closes per frame at CAMERA_FOLLOW_LERP_FPS (time-based at any rate). */
 export const CAMERA_FOLLOW_LERP = 0.1;
+export const CAMERA_FOLLOW_LERP_FPS = 60;
+/** Device px: within this of its goal on both axes the follow lands on it and stops. */
 export const CAMERA_FOLLOW_SNAP_THRESHOLD = 0.5;
 
 // ── Zoom ─────────────────────────────────────────────────────
@@ -272,6 +275,23 @@ export const WHATS_NEW_FADE_MS = 1000;
 
 // ── Game Logic ───────────────────────────────────────────────
 export const MAX_DELTA_TIME_SEC = 0.1;
+
+// ── Render loop ──────────────────────────────────────────────
+/** While anything moves the canvas draws at most this often: the art steps at 0.15 s at the fastest. */
+export const ACTIVE_FPS_CAP = 30;
+/** A frame this early still draws: animation-frame timestamps jitter around the display interval. */
+export const ACTIVE_FRAME_SLACK_MS = 1;
+/** Keep drawing every frame this long after the last activity or wake, so a short gap never drops to the timer. */
+export const ACTIVE_LINGER_MS = 500;
+/** Timer tick of a quiet office: the world steps every tick so every timer keeps wall time. */
+export const IDLE_TICK_MS = 100;
+/** One timer-tick step. Equal to the per-frame clamp, so a dt timer sees the same steps either way. */
+export const IDLE_STEP_SEC = MAX_DELTA_TIME_SEC;
+/** A late timer catches up at most this many steps at once. */
+export const MAX_IDLE_SUBSTEPS = 10;
+/** With nothing moving the canvas still redraws this often, for the light of the hour. */
+export const IDLE_REDRAW_MS = 1000;
+
 export const WAITING_BUBBLE_DURATION_SEC = 2.0;
 export const DISMISS_BUBBLE_FAST_FADE_SEC = 0.3;
 export const INACTIVE_SEAT_TIMER_MIN_SEC = 3.0;
