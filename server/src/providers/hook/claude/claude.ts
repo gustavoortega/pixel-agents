@@ -8,6 +8,7 @@ import type {
   AgentEvent,
   HookProvider,
   ModelTier,
+  SessionMetaFacts,
   SignalHit,
   ToolVerdict,
   TurnSignal,
@@ -459,6 +460,35 @@ export function extractPermissionMode(record: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Claude Code stamps `gitBranch` and `cwd` on every user, assistant, attachment and system
+ * record, and appends a `cost-state` row (no timestamp of its own) with the process's running
+ * `totalCostUSD`. Values pass through raw; the runtime caps the branch before it leaves.
+ */
+export function extractSessionMeta(record: unknown): SessionMetaFacts | null {
+  const r = record as {
+    type?: unknown;
+    gitBranch?: unknown;
+    cwd?: unknown;
+    totalCostUSD?: unknown;
+  } | null;
+  if (typeof r !== 'object' || r === null) return null;
+  const facts: SessionMetaFacts = {};
+  const timestampMs = recordTimestampMs(record);
+  if (timestampMs !== undefined) facts.timestampMs = timestampMs;
+  if (typeof r.gitBranch === 'string' && r.gitBranch) facts.branch = r.gitBranch;
+  if (typeof r.cwd === 'string' && r.cwd) facts.cwd = r.cwd;
+  if (
+    r.type === 'cost-state' &&
+    typeof r.totalCostUSD === 'number' &&
+    Number.isFinite(r.totalCostUSD) &&
+    r.totalCostUSD >= 0
+  ) {
+    facts.totalCostUsd = r.totalCostUSD;
+  }
+  return Object.keys(facts).length > 0 ? facts : null;
+}
+
 // ── Turn signals ──
 
 /** Interrupt marker Claude writes as a user text record, with or without the
@@ -870,6 +900,7 @@ export const claudeProvider: HookProvider = {
   modelTier,
   extractSessionTitle,
   extractPermissionMode,
+  extractSessionMeta,
   turnSignal,
   turnTraits: TURN_TRAITS,
   toolVerdicts,

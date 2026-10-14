@@ -83,6 +83,7 @@ server/                              Lifecycle runtime + Fastify HTTP/WS server
     utf8Boundary.ts                  completeUtf8Length: a read never decodes half a character
     transcriptParser.ts              JSONL parsing for heuristic / file-fallback mode
     timerManager.ts                  Waiting / permission timers
+    sessionMeta.ts                   The monitor's `agentSession` (start, branch, short id, cost): per-record fold, head/tail seed, `costFromRecord` (the one cost extractor), scan-adopted folder from the transcript's cwd
     statusSince.ts                   When each status and pending permission prompt began (the monitor's `since`): stamped on a change, never on a repeat
     assetLoader.ts                   PNG → SpriteData via pngjs
     teamUtils.ts                     isInlineTeammateOf, getInlineTeammates, hasInlineTeammates
@@ -498,6 +499,16 @@ Three things Claude Code's statusline shows, made real per agent end to end: `ag
 - **Webview**: `cacheByAgent`, `modeByAgent`, `shellsByAgent` on `OfficeState`, keyed by id (they can precede `agentCreated`), cleared by `removeAgent`; an omitted field deletes the entry. The full box adds `cache`, `mode`, `shells` rows after the model row (`fullBoxRows`, lifted by `fullBoxTopOffsetPx`); none on sub-agents, no cache row below `CACHE_ROW_MIN_CONTEXT_TOKENS` (20k), no mode row for `default`.
 - **Known gaps**: a teammate's transcript is sidechain top to bottom, so its shells never count and its clock is never seeded (the live path still moves it).
 - **Handoff**: when the official-limits piece lands `agentStatusline`, its cache row wins while its data is fresh (received within 90 s; the statusline refreshes every 30 s) and falls back to `cacheByAgent` otherwise. On both sides cold derives from `expires_at` vs now, never from `warm`, which can be stale. `cacheByAgent` keeps its name and shape for that piece.
+
+### Session meta (server/src/sessionMeta.ts)
+
+`agentSession {startedAt, branch, sessionId8, costUsd, costAt}`, every field optional and absent until known (a real 0 only when a `cost-state` said 0). `HookProvider.extractSessionMeta` (Claude: `timestamp`, `gitBranch`, `cwd`, `cost-state.totalCostUSD`) feeds one fold; `applySessionMeta` runs it per record at the transcriptParser seam and broadcasts only when a field changed. The shown view lives on `AgentState.sessionMeta` (the resend spreads it); the fold's own state is `sessionMetaTrack`, tied to one `jsonlFile`.
+
+- **Start** = the first record with a parseable timestamp in the file's head (first 256 KiB, the cut line dropped; none found = absent). Line 1 is usually a metadata row without one. A resume writes a new file with copied older records, so this is the start of the transcript, not of the work. A file empty at the seed takes its first live record.
+- **Branch**: last record wins, flattened and cut at 120 code points (`sanitizeWorkflowText`). User text: never logged.
+- **Cost**: `cost-state.totalCostUSD` is one CLI process's counter and restarts on resume, so the total is the sum of every process's last value (a drop starts a new process; equal repeats change nothing). The rows carry no timestamp: `costAt` is the newest record timestamp folded before the row. `costFromRecord(track, record, provider)` is the one extractor for the live path, the adoption tail and any history scan; call it on every record in order.
+- **Seed** (`seedSessionMeta`, in `startFileWatching`, once per `jsonlFile`): head for the start, and for an agent starting mid-file the 256 KiB before its `fileOffset` (never past it: the live reader folds those) for branch and cost. At offset 0 the live replay does it all. A new `jsonlFile` (`/clear`, resume) starts the fold over and the message replaces the old one. A cost undercounts when a process's rows sit before the tail window.
+- **Folder**: a global-scan adoption takes `basename(cwd)` of the newest record with a `cwd` (`folderNameFromTranscript`), then the old hashed-dir segment. Hook adoption and the workspace-dir scan are unchanged.
 
 ### Tripwires (server/src/tripwires.ts)
 

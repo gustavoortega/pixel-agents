@@ -47,6 +47,13 @@ export const CONTEXT_WINDOW_TIERS = [200_000, 1_000_000] as const;
  *  adoption or restore. Comfortably more than one turn's worth of records. */
 export const CONTEXT_SEED_TAIL_BYTES = 256 * 1024;
 
+// ── Session meta (sessionMeta.ts) ───────────────────────────
+/** How much of a transcript's head to read for the session's first timestamp. A line the window
+ *  cuts is dropped unread, which also keeps a huge first line from being decoded. */
+export const SESSION_META_HEAD_BYTES = 256 * 1024;
+/** The branch is user text headed for one plate line: cut at this many code points. */
+export const SESSION_BRANCH_MAX_LENGTH = 120;
+
 // ── Session signals (sessionSignals.ts) ─────────────────────
 /** Task notifications remembered without a matching running shell. One that
  *  lands before its launch's result is a few lines ahead of it, so a short

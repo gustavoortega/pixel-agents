@@ -52,6 +52,7 @@ import { beginHealthCatchUp, endHealthCatchUp, resetHealth } from './health.js';
 import { assignPaletteIfNeeded } from './paletteAssigner.js';
 import { pathsMatch } from './pathKey.js';
 import { claimRosterMember } from './rosterAgent.js';
+import { folderNameFromTranscript, seedSessionMeta } from './sessionMeta.js';
 import { resetSessionSignals, seedPermissionMode } from './sessionSignals.js';
 import { seedSessionTitle } from './sessionTitle.js';
 import type { SubagentWatch } from './subagentWatch.js';
@@ -126,6 +127,7 @@ export function startFileWatching(
   seedContextUsage(agentId, agents, getHookProvider());
   seedSessionTitle(agentId, agents, getHookProvider());
   seedPermissionMode(agentId, agents, getHookProvider());
+  seedSessionMeta(agentId, agents, getHookProvider());
   // Lines already in the file replay as history: health compares wait until they are read,
   // so a loop that history shows ending never flashes on and off.
   const watched = agents.get(agentId);
@@ -1590,8 +1592,10 @@ function scanGlobalProjectDirs(
         continue;
       }
 
+      // The hashed dir cannot tell `my-repo` from `repo`; the transcript's own cwd can.
       const folderName =
         folderNameResolver?.({ projectDir: dirPath }) ??
+        folderNameFromTranscript(file, hookProvider) ??
         folderNameFromProjectDir(path.basename(dirPath));
       knownJsonlFiles.add(file);
       console.log(

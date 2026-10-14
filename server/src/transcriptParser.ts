@@ -11,6 +11,7 @@ import {
   healthOnToolUse,
   healthOnTurnEnd,
 } from './health.js';
+import { applySessionMeta } from './sessionMeta.js';
 import {
   applyPermissionMode,
   noteShellEnded,
@@ -167,6 +168,9 @@ export function processTranscriptLine(
 
     // -- Permission mode (permission-mode records, and every user record repeats it) --
     applyPermissionMode(agentId, agent, agents, hookProvider?.extractPermissionMode?.(record));
+
+    // -- Session meta (start, branch, cost): user text and money, never logged --
+    applySessionMeta(agentId, agent, agents, record, hookProvider);
 
     // -- Background shells: a task notification also reaches the model as a prompt or a
     // queued attachment, and for some shells that copy is the only one written --
