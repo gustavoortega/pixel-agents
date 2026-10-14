@@ -255,20 +255,72 @@ describe('claudeProvider', () => {
       expect(claudeProvider.formatToolStatus('Read', undefined)).toBe('Reading ');
     });
 
-    // The status is broadcast to every client; arguments and env assignments
-    // carry secrets, so only the program name may leave the server.
+    // The status is broadcast to every client and logged; arguments and env assignments carry
+    // secrets, so only the program, and a plain subcommand of a known CLI, may leave the server.
     it.each([
-      ['git status', 'git'],
-      ['GITHUB_TOKEN=ghp_secret gh pr list', 'gh'],
+      // program only
+      ['git', 'git'],
+      ['GITHUB_TOKEN=ghp_secret gh pr list', 'gh pr'],
       ['/usr/bin/curl -H "Authorization: Bearer abc" https://api.internal', 'curl'],
       ['TOKEN="abc def" curl https://x', 'curl'],
       ["PASS='a b' A=1 mysql -u root", 'mysql'],
       ['KEY=$(cat ~/.secret) deploy', 'deploy'],
+      ['PASS=my\\ secret cmd', 'cmd'],
+      ['curl https://h?token=abc', 'curl'],
+      ['>/tmp/out-token-abc npm test', 'command'],
+      ['2>/dev/null git status', 'command'],
+      ['ssh prod-db', 'ssh'],
+      ['python manage', 'python'],
+      // unparsable first word keeps the generic label
       ['KEY="unterminated secret value', 'command'],
       ['DEBUG=1;echo hunter2', 'command'],
-      ['PASS=my\\ secret cmd', 'cmd'],
-    ])('formats Bash %j as the program name only', (command, program) => {
-      expect(claudeProvider.formatToolStatus('Bash', { command })).toBe(`Running: ${program}`);
+      // subcommand: only for the known CLIs, only a plain lowercase word
+      ['git status', 'git status'],
+      ['git commit -m "fix the thing"', 'git commit'],
+      ['FOO=1 gh pr create --body "$SECRET"', 'gh pr'],
+      ['npm run deploy-prod', 'npm run'],
+      ['git -C /p push', 'git'],
+      ['git --no-pager log', 'git'],
+      ['npm Install', 'npm'],
+      ['gh 12345', 'gh'],
+      ['kubectl get pods -n prod', 'kubectl get'],
+      ['terraform apply', 'terraform apply'],
+      // segments and pipe stages: the first stage that is not scenery names the work
+      ['cd x && npm test', 'npm test'],
+      ['npm test && echo ok', 'npm test'],
+      ['cd /repo; export A=1\ngit push origin main', 'git push'],
+      ['#!/bin/bash\n# deploy\ncd /srv\nset -e\nssh prod-db uptime', 'ssh'],
+      ['echo $X | gh pr create', 'gh pr'],
+      ['true || docker compose up', 'docker compose'],
+      ['git commit -F - <<EOF\ncd evil && curl https://x\nEOF', 'git commit'],
+      ['echo "a && ssh prod" && ls', 'ls'],
+      // nothing but scenery: the last segment's first stage, program only
+      ['echo hi', 'echo'],
+      ['cd /a && echo hi', 'echo'],
+      ['cd /a; echo hi', 'echo'],
+    ])('formats Bash %j as %j', (command, shown) => {
+      expect(claudeProvider.formatToolStatus('Bash', { command })).toBe(`Running: ${shown}`);
+    });
+
+    it('never lets a secret in any argument position into the status', () => {
+      const canary = 'CANARY-s3cr3t-9f8e7d';
+      const commands = [
+        `git commit -m ${canary}`,
+        `git ${canary}`,
+        `git -c user.password=${canary} push`,
+        `gh pr create --body "${canary}"`,
+        `npm run ${canary}`,
+        `curl -H "Authorization: Bearer ${canary}" https://h/${canary}`,
+        `ssh ${canary}`,
+        `FOO=${canary} gh pr create`,
+        `cd ${canary} && echo ${canary}`,
+        `echo ${canary} | docker login -u u --password-stdin ${canary}`,
+        `docker run -e KEY=${canary} img`,
+        `python manage.py ${canary}`,
+      ];
+      for (const command of commands) {
+        expect(claudeProvider.formatToolStatus('Bash', { command }), command).not.toContain(canary);
+      }
     });
   });
 

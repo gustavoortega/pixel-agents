@@ -41,15 +41,70 @@ import { claudeSessionLiveness } from './sessionFiles.js';
 const LEADING_ASSIGNMENTS =
   /^\s*(?:[A-Za-z_][A-Za-z0-9_]*=(?:"(?:[^"\\]|\\.)*"|'[^']*'|\$\([^)]*\)|\\[\s\S]|[^\s"'$;&|\\])*\s+)*/;
 
-/** Program a shell command runs, without its arguments. The status text is
- *  broadcast to every connected client, and arguments routinely carry tokens,
- *  passwords and hostnames. Leading assignments are skipped for the same
- *  reason; when they don't parse cleanly (unbalanced quote, nested `$(`), the
- *  next word may be part of a secret, so a generic label is shown instead. */
+/** Programs whose first plain word after the name is a verb (`git commit`), not data. */
+const SUBCOMMAND_PROGRAMS: ReadonlySet<string> = new Set([
+  'git',
+  'gh',
+  'npm',
+  'pnpm',
+  'yarn',
+  'docker',
+  'cargo',
+  'go',
+  'kubectl',
+  'terraform',
+]);
+/** A subcommand is a short lowercase word. A flag, path, URL, host or value never fits. */
+const SUBCOMMAND_WORD = /^[a-z][a-z-]{0,23}$/;
+/** Programs that set the scene for the command that follows: the work is the next stage. */
+const SCENERY_PROGRAMS: ReadonlySet<string> = new Set([
+  'cd',
+  'export',
+  'source',
+  'set',
+  'true',
+  ':',
+  'echo',
+  'printf',
+]);
+/** Top-level command separators. A pipe splits a segment into stages, so it is not here. */
+const SEGMENT_SEPARATORS = /\n|&&|\|\||;/;
+
+/** The words of one pipe stage, leading `VAR=value` assignments dropped. */
+function stageWords(stage: string): string[] {
+  return stage.replace(LEADING_ASSIGNMENTS, '').trim().split(/\s+/);
+}
+
+/** What a shell command runs, for the status text: the program and, for a few known CLIs, its
+ *  subcommand. The status is broadcast to every connected client and logged, and arguments
+ *  routinely carry tokens, passwords and hostnames, so no other word may leave. Quotes,
+ *  comments and heredoc bodies are blanked first. The command is walked segment by segment and
+ *  stage by stage, and the first stage that is not scenery (`cd x && npm test`, `echo $X | gh
+ *  pr create`) names the work; when every stage is scenery, the last segment's first stage does.
+ *  Leading assignments are skipped for the same reason; when they don't parse cleanly
+ *  (unbalanced quote, nested `$(`), the next word may be part of a secret, so a generic label
+ *  is shown instead. */
 function programName(command: string): string {
-  const program = command.replace(LEADING_ASSIGNMENTS, '').split(/\s+/)[0] ?? '';
-  if (/["'`$()=]/.test(program)) return 'command';
-  return path.basename(program);
+  const blanked = blankQuotesAndComments(stripHeredocs(command)).replace(/\\\n/g, ' ');
+  let fallback: string | undefined;
+  for (const segment of blanked.split(SEGMENT_SEPARATORS)) {
+    const stages = segment.split('|').map(stageWords);
+    for (const words of stages) {
+      const word = words[0] ?? '';
+      if (!word) continue;
+      // A redirect target (`>/tmp/out cmd`) is a path, never a program name.
+      const program = /["'`$()=<>&]/.test(word) ? 'command' : path.basename(word);
+      if (!SCENERY_PROGRAMS.has(program)) {
+        const sub = words[1] ?? '';
+        return SUBCOMMAND_PROGRAMS.has(program) && SUBCOMMAND_WORD.test(sub)
+          ? `${program} ${sub}`
+          : program;
+      }
+    }
+    const first = stages[0]?.[0];
+    if (first) fallback = path.basename(first);
+  }
+  return fallback ?? '';
 }
 
 export function formatToolStatus(toolName: string, input?: unknown): string {

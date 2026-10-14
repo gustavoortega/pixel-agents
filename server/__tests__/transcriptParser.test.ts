@@ -612,3 +612,35 @@ describe('transcriptParser: record types', () => {
     expect([...agent.seenUnknownRecordTypes]).toEqual([]);
   });
 });
+
+describe('transcriptParser: Bash status privacy', () => {
+  it('keeps a secret in any argument out of the broadcast status and the server log line', () => {
+    const canary = 'CANARY-s3cr3t-9f8e7d';
+    setHookProvider(claudeProvider);
+    const agents = new AgentStateStore();
+    agents.set(1, createTestAgent());
+    const sent: Array<Record<string, unknown>> = [];
+    agents.on('broadcast', (msg) => sent.push(msg as Record<string, unknown>));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const timers = new Map<number, ReturnType<typeof setTimeout>>();
+      processTranscriptLine(
+        1,
+        agentToolUseRecord('toolu_1', 'Bash', {
+          command: `FOO=${canary} ssh ${canary} --token "${canary}" https://h/${canary}`,
+        }),
+        agents,
+        timers,
+        timers,
+      );
+      const start = sent.find((m) => m.type === 'agentToolStart');
+      expect(start).toMatchObject({ status: 'Running: ssh' });
+      const logged = log.mock.calls.map((args) => args.join(' ')).join('\n');
+      expect(logged).toContain('tool start: toolu_1 Running: ssh');
+      expect(logged).not.toContain(canary);
+      expect(JSON.stringify(sent)).not.toContain(canary);
+    } finally {
+      log.mockRestore();
+    }
+  });
+});
