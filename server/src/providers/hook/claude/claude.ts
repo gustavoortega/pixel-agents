@@ -7,6 +7,7 @@ import { normalizeProjectPath } from '../../../../../core/src/normalizeProjectPa
 import type {
   AgentEvent,
   HookProvider,
+  LoopEvent,
   ModelTier,
   SessionMetaFacts,
   SignalHit,
@@ -876,6 +877,72 @@ export function resultSignals(verdicts: ToolVerdict[], record: unknown): SignalH
   return hits;
 }
 
+// ── Artifacts and loops ──
+
+const ARTIFACT_TOOL = 'Artifact';
+const WAKEUP_TOOL = 'ScheduleWakeup';
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * The page an Artifact call published. A publish has no action or `publish`, and its result
+ * carries the page's `url`; a redeploy returns the same url. Everything else the tool does
+ * (read, list, open, quickstart, an asset upload, a page created from a template) either
+ * names another action or carries no top-level url, and a failed call has no result object.
+ */
+function extractArtifact(
+  call: { name: string; input: unknown },
+  result: { isError: boolean; record: unknown },
+): { url: string; title?: string } | undefined {
+  if (call.name !== ARTIFACT_TOOL || result.isError) return undefined;
+  const input = asRecord(call.input);
+  const action = input?.action;
+  if (action !== undefined && action !== 'publish') return undefined;
+  if (input?.asset === true || input?.type_url !== undefined) return undefined;
+  const out = asRecord(asRecord(result.record)?.toolUseResult);
+  if (typeof out?.url !== 'string' || out.created_from_type === true) return undefined;
+  return { url: out.url, title: typeof out.title === 'string' ? out.title : undefined };
+}
+
+/**
+ * A self-scheduled wake-up in one record: the tool call that stops the loop, the result that
+ * schedules (or, with a time of 0, cancels) the next wake, and the system record a wake leaves
+ * when it fires. Only wake-ups of the loop kind count; a cron job's fire has no `taskKind`.
+ */
+function extractLoop(record: unknown): LoopEvent | undefined {
+  const r = asRecord(record);
+  if (!r) return undefined;
+  if (r.type === 'system') {
+    return r.subtype === 'scheduled_task_fire' && r.taskKind === 'loop'
+      ? { kind: 'fire' }
+      : undefined;
+  }
+  if (r.type === 'assistant') {
+    const content = asRecord(r.message)?.content ?? r.content;
+    if (!Array.isArray(content)) return undefined;
+    for (const block of content as unknown[]) {
+      const b = asRecord(block);
+      if (b?.type === 'tool_use' && b.name === WAKEUP_TOOL && asRecord(b.input)?.stop === true) {
+        return { kind: 'stop' };
+      }
+    }
+    return undefined;
+  }
+  if (r.type === 'user') {
+    const out = asRecord(r.toolUseResult);
+    const scheduledFor = out?.scheduledFor;
+    // The shape of the wake-up tool's result: a cron job's has no `scheduledFor`.
+    if (typeof scheduledFor !== 'number' || !Number.isFinite(scheduledFor)) return undefined;
+    if (typeof out?.clampedDelaySeconds !== 'number' && out?.stopped !== true) return undefined;
+    return scheduledFor > 0 ? { kind: 'schedule', nextAt: scheduledFor } : { kind: 'stop' };
+  }
+  return undefined;
+}
+
 // ── The provider ──
 
 export const claudeProvider: HookProvider = {
@@ -905,6 +972,8 @@ export const claudeProvider: HookProvider = {
   turnTraits: TURN_TRAITS,
   toolVerdicts,
   resultSignals,
+  extractArtifact,
+  extractLoop,
   liveness: claudeSessionLiveness,
   transcriptUsage: createClaudeTranscriptUsage(extractSessionTitle),
 

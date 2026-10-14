@@ -126,7 +126,7 @@ function inputHash(input: unknown): string {
 }
 
 /** A tool_result's text: the string itself, or its text blocks joined. */
-function resultText(content: unknown): string {
+export function resultText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   const texts: string[] = [];

@@ -230,6 +230,21 @@ export interface HookProvider {
    *  and must never be logged. */
   extractSessionMeta?(record: unknown): SessionMetaFacts | null;
 
+  /** The page one tool call published, or undefined when the call is anything else (a read, a
+   *  list, an asset upload, a page created from a template, a failed publish). `url` keys the
+   *  page: a redeploy of it is the same page. The title is user text: the runtime caps it and
+   *  never logs it, and the url is an access link that is never logged or persisted either.
+   *  `record` is the transcript record carrying the call's only result. */
+  extractArtifact?(
+    call: { name: string; input: unknown },
+    result: { isError: boolean; record: unknown },
+  ): { url: string; title?: string } | undefined;
+
+  /** What one transcript record says about the agent's self-scheduled wake-ups, or undefined
+   *  when it says nothing. `schedule` carries the next wake in epoch ms; `stop` ends the loop;
+   *  `fire` is a wake that happened. The wake-up prompt text never comes out. */
+  extractLoop?(record: unknown): LoopEvent | undefined;
+
   /** Classify one parsed transcript record. Required for the adoption-time tail
    *  walk (server/src/turnState.ts); a provider without it keeps the old behavior
    *  of showing adopted agents as unknown. */
@@ -288,6 +303,9 @@ export interface HookProvider {
 
 // TODO(provider type taxonomy): FileProvider (polling-only CLIs) and StreamProvider
 // (push-based external services) will be added alongside the first real second provider
+
+/** A self-scheduled wake-up event found in a transcript record. */
+export type LoopEvent = { kind: 'schedule'; nextAt: number } | { kind: 'stop' } | { kind: 'fire' };
 
 /** One deduplicable usage report found in a transcript line. Counts are raw
  *  tokens: [input, cache-creation, cache-read, output]. */

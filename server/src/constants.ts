@@ -114,6 +114,23 @@ export const HEALTH_TOOL_MEMORY = 64;
 /** Lines from the end of a shell result searched for a test runner summary: runners print it
  *  last, and stack traces above it must not be read as one. */
 export const TEST_SUMMARY_TAIL_LINES = 40;
+/** History scan (historyScan.ts): wall clock and bytes one scan may spend reading an agent's
+ *  transcript from 0 to its watch offset. A scan the budget stops sends `complete: false`. */
+export const HISTORY_SCAN_WALL_MS = 2_000;
+export const HISTORY_SCAN_MAX_BYTES = 64 * 1024 * 1024;
+/** Distinct artifact urls kept per agent; past it the oldest go and the count is a floor. */
+export const MONITOR_ARTIFACTS_MAX = 200;
+/** Artifacts a wire message lists, newest first (the contract's maxItems). */
+export const MONITOR_ARTIFACT_ITEMS = 20;
+/** Cap on an artifact title, in code points (the contract's maxLength). */
+export const MONITOR_ARTIFACT_TITLE_MAX = 120;
+/** Longest artifact url accepted. An access link is a few dozen characters; more is not one. */
+export const MONITOR_ARTIFACT_URL_MAX = 2_048;
+/** Tool calls remembered per agent to pair a later result with its call. */
+export const MONITOR_CALL_MEMORY = 64;
+/** A call's input keeps only scalars up to this long: a pair needs the action and flags, never a
+ *  file's contents. */
+export const MONITOR_CALL_INPUT_VALUE_MAX = 256;
 /** A hung `ps` must not hold the health tick: past this its answer is dropped and every pid
  *  stays alive. */
 export const HEALTH_PS_TIMEOUT_MS = 2_000;

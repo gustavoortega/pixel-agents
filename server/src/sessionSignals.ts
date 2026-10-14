@@ -3,6 +3,7 @@ import type { HookProvider } from '../../core/src/provider.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import { CONTEXT_SEED_TAIL_BYTES, SHELL_DONE_MEMO_MAX } from './constants.js';
 import { clearCacheClock, readTailLines } from './contextUsage.js';
+import { resetMonitorFacts } from './monitorFacts.js';
 import type { AgentState } from './types.js';
 
 /**
@@ -192,6 +193,8 @@ export function resetSessionSignals(
   agent.runningShellIds = undefined;
   agent.shellDoneBeforeLaunch = undefined;
   agents.broadcast(shellsMessage(agentId, agent));
+  // Artifacts, loop and tests belong to the transcript that is gone too.
+  resetMonitorFacts(agentId, agent, agents);
   if (opts.keepMode) return;
   agent.permissionMode = undefined;
   agents.broadcast(modeMessage(agentId, agent));

@@ -222,6 +222,8 @@ export interface CostTrack {
   settled: number;
   /** The current process's latest counter; undefined until a cost row was seen. */
   last?: number;
+  /** The first counter folded: it says whether a stream continues the process before it. */
+  first?: number;
   /** Epoch ms of the newest cost row. */
   at?: number;
   /** Newest record timestamp folded so far: cost rows carry none of their own. */
@@ -237,6 +239,11 @@ export interface SessionMetaTrack {
   headRead: boolean;
   branch?: string;
   cost: CostTrack;
+  /** While the history scan reads the rows before the watch offset: what it has folded. The
+   *  live `cost` then holds only later rows, so no total is shown until the two are joined. */
+  costHold?: CostTrack;
+  /** The scan's cost is already in `cost`: a second scan of this file must not add it again. */
+  costMerged?: boolean;
 }
 
 /** A per-agent monitor message minus its envelope: what the agent state keeps. */
