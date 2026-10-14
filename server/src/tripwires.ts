@@ -88,6 +88,7 @@ function tripwireMessage(agent: AgentState): Record<string, unknown> {
     ruleName: t.ruleName,
     severity: t.severity,
     count: t.count,
+    since: t.since,
   };
 }
 
@@ -97,7 +98,11 @@ function tripwireMessage(agent: AgentState): Record<string, unknown> {
  * severity seen since then (the latest among equals), so a lower-severity hit
  * only bumps the count. Only ids and labels cross the wire, never matched text.
  */
-export function applyTripwireHit(agent: AgentState, rule: TripwireRule): Record<string, unknown> {
+export function applyTripwireHit(
+  agent: AgentState,
+  rule: TripwireRule,
+  now = Date.now(),
+): Record<string, unknown> {
   const prev = agent.tripwire;
   const count = (prev?.count ?? 0) + 1;
   if (!prev || SEVERITY_RANK[rule.severity] >= SEVERITY_RANK[prev.severity]) {
@@ -106,6 +111,8 @@ export function applyTripwireHit(agent: AgentState, rule: TripwireRule): Record<
       ruleName: rule.name,
       severity: rule.severity,
       count,
+      // The alarm is as old as its first hit since the last ack; a louder rule keeps it.
+      since: prev?.since ?? now,
     };
   } else {
     agent.tripwire = { ...prev, count };

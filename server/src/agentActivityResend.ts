@@ -4,6 +4,7 @@ import { healthResendMessage } from './health.js';
 import { rosterMessage } from './rosterAgent.js';
 import { modeMessage, shellsMessage } from './sessionSignals.js';
 import { derivedTitle } from './sessionTitle.js';
+import { permissionSince, statusSince } from './statusSince.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 import { tripwireResendMessage } from './tripwires.js';
 import type { AgentState } from './types.js';
@@ -18,16 +19,31 @@ import { workflowPresenceMessages } from './workflowRuns.js';
  */
 export function agentStatusMessage(id: number, agent: AgentState): Record<string, unknown> {
   if (agent.isWaiting) {
+    const awaitingInput = agent.awaitingInput === true;
     return {
       type: 'agentStatus',
       id,
       status: 'waiting',
-      awaitingInput: agent.awaitingInput === true,
+      awaitingInput,
+      since: statusSince(agent, 'waiting', awaitingInput),
     };
   }
   const working =
     agent.activeToolStatuses.size > 0 || agent.hadToolsInTurn || agent.derivedActive === true;
-  return { type: 'agentStatus', id, status: working ? 'active' : 'idle' };
+  const status = working ? 'active' : 'idle';
+  return { type: 'agentStatus', id, status, since: statusSince(agent, status, false) };
+}
+
+/**
+ * A monitor message in its always-sent form: the fields the agent holds, or only `id`
+ * (the clear) when it holds none, so a client that missed a clear keeps nothing stale.
+ */
+function monitorMessage(
+  type: 'agentSession' | 'agentArtifacts' | 'agentLoop' | 'agentTests',
+  id: number,
+  view: object | undefined,
+): Record<string, unknown> {
+  return { type, id, ...view };
 }
 
 /**
@@ -43,12 +59,15 @@ export function agentStatusMessage(id: number, agent: AgentState): Record<string
  * 6. Model look
  * 7. Session title
  * 7b. Session signals: cache clock, permission mode, background shells
+ * 7c. Monitor: session meta, artifacts, loop, tests (always, the clear form when unknown)
  * 8. Tripwire alarm
  * 9. Health mark
  * 10. Roster member (only for agents that hold one; mood depends on the alarm, so it follows it)
  *
- * Tool starts carry permissionActive while a permission prompt is pending: a client takes
- * a start without it as the prompt answered and drops the bubble.
+ * Tool starts carry permissionActive (and when the prompt went up) while a permission prompt
+ * is pending: a client takes a start without it as the prompt answered and drops the bubble.
+ * Every status, health mark and alarm carries the server's `since`, so a reconnecting client
+ * keeps the minutes it showed.
  */
 export function resendAgentActivity(
   send: (message: Record<string, unknown>) => void,
@@ -83,6 +102,7 @@ export function resendAgentActivity(
         status,
         toolName,
         permissionActive: agent.permissionSent || undefined,
+        permissionSince: permissionSince(agent),
       });
     }
 
@@ -102,6 +122,7 @@ export function resendAgentActivity(
         status,
         toolName,
         permissionActive: agent.permissionSent || undefined,
+        permissionSince: permissionSince(agent),
         runInBackground: true,
         isTeammateSpawn: agent.teammateSpawnToolIds?.has(toolId) || undefined,
       });
@@ -137,6 +158,13 @@ export function resendAgentActivity(
     send(cacheMessage(id, agent));
     send(modeMessage(id, agent));
     send(shellsMessage(id, agent));
+
+    // 7c. Monitor. Sent for every agent, as the clear form when nothing is known: a client
+    // that reconnects must not keep another session's branch or artifacts.
+    send(monitorMessage('agentSession', id, agent.sessionMeta));
+    send(monitorMessage('agentArtifacts', id, agent.artifacts));
+    send(monitorMessage('agentLoop', id, agent.loop));
+    send(monitorMessage('agentTests', id, agent.tests));
 
     // 8. Tripwire alarm, or a clear for agents without one: a client that was offline
     // during an ack would otherwise keep an alarm the user already dismissed.

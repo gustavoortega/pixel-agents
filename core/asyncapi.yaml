@@ -116,6 +116,12 @@ components:
         # Agent health
         - $ref: '#/components/schemas/AgentHealth'
         - $ref: '#/components/schemas/AgentHealthClear'
+        # Monitor: session meta, artifacts, loop, tests, workflow runs
+        - $ref: '#/components/schemas/AgentSession'
+        - $ref: '#/components/schemas/AgentArtifacts'
+        - $ref: '#/components/schemas/AgentLoop'
+        - $ref: '#/components/schemas/AgentTests'
+        - $ref: '#/components/schemas/WorkflowRun'
         # Roster + XP
         - $ref: '#/components/schemas/AgentRoster'
         - $ref: '#/components/schemas/RosterEvent'
@@ -217,6 +223,20 @@ components:
         hueShift:
           type: integer
           description: Server-assigned hue shift in degrees (0-360).
+        isTeammate:
+          type: boolean
+          description: True when the agent has a lead (`parentAgentId` is set).
+        teammateName:
+          type: string
+          description: The teammate's name in its team, when it has one.
+        parentAgentId:
+          type: integer
+          description: The lead's agent id, for a teammate.
+        teamName:
+          type: string
+        hooksOnly:
+          type: boolean
+          description: True when the agent has no transcript file and all its state comes from hooks.
 
     AgentClosed:
       description: An agent has been removed from the office.
@@ -303,6 +323,13 @@ components:
             Only meaningful when status is "waiting". True when the agent went
             idle waiting on the user (drives the "Waiting for input" label);
             absent/false means the agent finished its turn ("Done").
+        since:
+          type: integer
+          description: >-
+            Epoch ms this status (with its awaitingInput) began. Server stamped
+            when the status changes, not on a repeat; a status read from the
+            transcript takes the timestamp of the record that set it. Absent
+            when unknown.
 
     AgentActivityStatus:
       description: >-
@@ -332,6 +359,9 @@ components:
           type: string
         permissionActive:
           type: boolean
+        permissionSince:
+          type: integer
+          description: Epoch ms the pending permission prompt went up. Only with permissionActive.
         runInBackground:
           type: boolean
         isTeammateSpawn:
@@ -375,6 +405,9 @@ components:
           const: agentToolPermission
         id:
           type: integer
+        permissionSince:
+          type: integer
+          description: Epoch ms the prompt went up (server clock).
 
     AgentToolPermissionClear:
       description: Permission prompt resolved.
@@ -675,6 +708,9 @@ components:
         count:
           type: integer
           minimum: 1
+        since:
+          type: integer
+          description: Epoch ms of the first hit since the last ack (server clock).
 
     AgentTripwireClear:
       description: |
@@ -728,6 +764,11 @@ components:
         count:
           type: integer
           minimum: 0
+        since:
+          type: integer
+          description: >-
+            Epoch ms the agent entered this state and reason (server clock). A
+            count that grows keeps it.
 
     AgentHealthClear:
       description: |
@@ -741,6 +782,182 @@ components:
           const: agentHealthClear
         id:
           type: integer
+
+    AgentSession:
+      description: |
+        What the transcript says about the agent's session. Every field is optional and sent
+        only when known; a message with only `id` clears it. `startedAt` is the first
+        timestamped record of the watched transcript (a resume writes a new file, so it is
+        this transcript's start, not the session's). `branch` is user text: never logged,
+        never persisted. `costUsd` is present only when the transcript stated a cost (a
+        stated 0 is sent as 0), with `costAt` the record time of the newest one. Sent on
+        change and on reconnect for every agent. Sub-agents never receive one.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: agentSession
+        id:
+          type: integer
+        startedAt:
+          type: integer
+          description: Epoch ms.
+        branch:
+          type: string
+          maxLength: 120
+        sessionId8:
+          type: string
+          maxLength: 8
+          description: The first 8 characters of the session id.
+        costUsd:
+          type: number
+          minimum: 0
+        costAt:
+          type: integer
+          description: Epoch ms.
+
+    AgentArtifacts:
+      description: |
+        Artifacts the agent published, newest first. A message with only `id` means none
+        (`count: 0` is never sent). `complete` is false when the history scan was cut by its
+        budget, so `count` is a floor. Titles are user text and urls are access links: never
+        logged, never persisted. Sent on change and on reconnect for every agent.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: agentArtifacts
+        id:
+          type: integer
+        count:
+          type: integer
+          minimum: 1
+        complete:
+          type: boolean
+        items:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/ArtifactItem'
+
+    ArtifactItem:
+      description: One published artifact, keyed by its url (a redeploy keeps one entry).
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          maxLength: 120
+        url:
+          type: string
+        publishes:
+          type: integer
+          minimum: 1
+          description: Publishes seen for this url. Omitted when the scan was not complete.
+        at:
+          type: integer
+          description: Epoch ms of the newest publish.
+
+    AgentLoop:
+      description: |
+        The agent runs in a loop that wakes itself. A message with only `id` means it is not
+        a loop. `nextAt` (epoch ms) is the next scheduled wake, absent while it is awake;
+        `wakes` counts the wakes seen, absent until the first. Sent on change and on
+        reconnect for every agent.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: agentLoop
+        id:
+          type: integer
+        nextAt:
+          type: integer
+        wakes:
+          type: integer
+          minimum: 1
+
+    AgentTests:
+      description: |
+        The newest test run summary the agent's shell results carried: counts only, never the
+        output. A message with only `id` means none seen. Sent on change and on reconnect for
+        every agent.
+      type: object
+      additionalProperties: false
+      required: [type, id]
+      properties:
+        type:
+          const: agentTests
+        id:
+          type: integer
+        passed:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        at:
+          type: integer
+          description: Epoch ms of the record that carried the summary.
+
+    WorkflowRunStatus:
+      description: Whether a workflow run is still going.
+      type: string
+      enum: [running, done]
+
+    WorkflowRun:
+      description: |
+        One workflow run of the lead `id`. Only `runId` is required besides the envelope; a
+        message with only `id` and `runId` clears the run. `name` is user script text
+        (never logged, never persisted), so it and `since` (epoch ms the server first saw the
+        run) are absent after a server restart. `phases` are in first-seen order. `started`
+        and `done` count the run's agents, finished ones included after their helper is
+        gone. Sent on change and on every handshake.
+      type: object
+      additionalProperties: false
+      required: [type, id, runId]
+      properties:
+        type:
+          const: workflowRun
+        id:
+          type: integer
+        runId:
+          type: string
+        status:
+          $ref: '#/components/schemas/WorkflowRunStatus'
+        name:
+          type: string
+          maxLength: 60
+        phases:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowPhase'
+        started:
+          type: integer
+          minimum: 0
+        done:
+          type: integer
+          minimum: 0
+        since:
+          type: integer
+
+    WorkflowPhase:
+      description: One phase of a workflow run, with its agents started and done.
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          maxLength: 40
+        started:
+          type: integer
+          minimum: 0
+        done:
+          type: integer
+          minimum: 0
 
     RosterMood:
       description: |

@@ -1,6 +1,14 @@
 import type * as vscode from 'vscode';
 
-import type { AgentHealth, CacheTtlSeconds, PermissionMode } from '../../core/src/messages.js';
+import type {
+  AgentArtifacts,
+  AgentHealth,
+  AgentLoop,
+  AgentSession,
+  AgentTests,
+  CacheTtlSeconds,
+  PermissionMode,
+} from '../../core/src/messages.js';
 import type { ModelTier, ToolVerdict } from '../../core/src/provider.js';
 import type { HookSubRow } from './hookSubRows.js';
 import type { LeadWorkflowState } from './workflowRuns.js';
@@ -34,6 +42,13 @@ export interface AgentState {
    *  if the count did not move while it was computed: a hook is fresher. */
   hookSeq?: number;
   permissionSent: boolean;
+  /** Epoch ms the pending permission prompt went up (server clock). Meaningful only
+   *  while `permissionSent`: set on its false -> true edge, so a stale value is never read. */
+  permissionSince?: number;
+  /** The status (with its awaitingInput) clients were last put in, and when it began
+   *  (statusSince.ts). `statusSince` is undefined when the start is unknown. */
+  statusKey?: string;
+  statusSince?: number;
   hadToolsInTurn: boolean;
   /** Workspace folder name (only set for multi-root workspaces) */
   folderName?: string;
@@ -151,12 +166,22 @@ export interface AgentState {
     ruleName: string;
     severity: 'high' | 'medium' | 'low';
     count: number;
+    /** Epoch ms of the first hit since the last ack. */
+    since: number;
   };
 
   // -- Health (server/src/health.ts) --
   /** Stuck, stalled, looping and dead detection for this agent. Transient: never persisted,
    *  rebuilt at restore and when the character moves to a new session. */
   health?: HealthTracking;
+
+  // -- Monitor (filled by the session-meta, history and workflow pieces) --
+  // What clients are shown, minus the envelope. Absent means unknown and is sent as the
+  // clear form. None is persisted.
+  sessionMeta?: MonitorView<AgentSession>;
+  artifacts?: MonitorView<AgentArtifacts>;
+  loop?: MonitorView<AgentLoop>;
+  tests?: MonitorView<AgentTests>;
 
   // -- Avatar customization --
   /** Preferred character palette (0-11). If undefined, auto-assigned for diversity. */
@@ -185,6 +210,9 @@ export interface AgentState {
   historyBefore?: number;
 }
 
+/** A per-agent monitor message minus its envelope: what the agent state keeps. */
+export type MonitorView<M extends { type: string; id: number }> = Omit<M, 'type' | 'id'>;
+
 /** What a client is shown for an agent's health: the wire message minus its envelope. */
 export type HealthView = Pick<AgentHealth, 'state' | 'reason' | 'count'>;
 
@@ -204,6 +232,8 @@ export interface HealthTracking {
   deadAt: number | null;
   /** What clients were last told, so only a change goes on the wire. */
   lastSent: HealthView | null;
+  /** Epoch ms `lastSent` entered its state and reason; a growing count keeps it. */
+  lastSentSince?: number;
 }
 
 export interface PersistedAgent {

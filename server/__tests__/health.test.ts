@@ -127,6 +127,8 @@ const stuck = (count: number) => ({
   state: 'stuck',
   reason: 'tests_failing_no_edits',
   count,
+  // Server stamped when the state is entered.
+  since: expect.any(Number),
 });
 const looping = (count: number) => ({
   type: 'agentHealth',
@@ -134,6 +136,8 @@ const looping = (count: number) => ({
   state: 'looping',
   reason: 'same_call_repeated',
   count,
+  // Server stamped when the state is entered.
+  since: expect.any(Number),
 });
 const CLEAR = { type: 'agentHealthClear', id: 1 };
 

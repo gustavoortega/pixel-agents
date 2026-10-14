@@ -51,7 +51,11 @@ function isShadow(agent: AgentState): boolean {
   return agent.id >= SHADOW_ID_BASE;
 }
 
-function freshHealth(progressAt: number, lastSent: HealthView | null = null): HealthTracking {
+function freshHealth(
+  progressAt: number,
+  lastSent: HealthView | null = null,
+  lastSentSince?: number,
+): HealthTracking {
   return {
     redRuns: 0,
     lastCall: null,
@@ -60,6 +64,7 @@ function freshHealth(progressAt: number, lastSent: HealthView | null = null): He
     permissionPendingAt: null,
     deadAt: null,
     lastSent,
+    lastSentSince,
   };
 }
 
@@ -184,8 +189,15 @@ function sameView(a: HealthView | null, b: HealthView | null): boolean {
 }
 
 /** Typed against the generated protocol, so a reason outside the vocabulary cannot compile. */
-function healthMessage(id: number, view: HealthView | null): AgentHealth | AgentHealthClear {
-  return view ? { type: 'agentHealth', id, ...view } : { type: 'agentHealthClear', id };
+function healthMessage(
+  id: number,
+  view: HealthView | null,
+  since: number | undefined,
+): AgentHealth | AgentHealthClear {
+  if (!view) return { type: 'agentHealthClear', id };
+  return since === undefined
+    ? { type: 'agentHealth', id, ...view }
+    : { type: 'agentHealth', id, ...view, since };
 }
 
 /** Recompute and broadcast only a change. Held while the agent's transcript history replays,
@@ -200,8 +212,13 @@ function publish(
   if (!h || catchUpUntil.has(agent.id)) return;
   const next = deriveHealth(h, now, contextOf(agent, traits));
   if (sameView(h.lastSent, next)) return;
+  // A new state or reason starts the clock; a count that grows (stalled minutes) keeps it.
+  if (!next) h.lastSentSince = undefined;
+  else if (h.lastSent?.state !== next.state || h.lastSent.reason !== next.reason) {
+    h.lastSentSince = now;
+  }
   h.lastSent = next;
-  store.broadcast({ ...healthMessage(agent.id, next) });
+  store.broadcast({ ...healthMessage(agent.id, next, h.lastSentSince) });
 }
 
 // ── Transcript events (the only source of calls and results) ──
@@ -341,7 +358,11 @@ export function healthOnPermission(
  *  were last shown survives, so the compare clears a mark they still display. */
 export function resetHealth(agent: AgentState, store: AgentStateStore, traits: Traits): void {
   if (isShadow(agent)) return;
-  agent.health = freshHealth(Date.now(), agent.health?.lastSent ?? null);
+  agent.health = freshHealth(
+    Date.now(),
+    agent.health?.lastSent ?? null,
+    agent.health?.lastSentSince,
+  );
   toolMemory.delete(agent.id);
   catchUpUntil.delete(agent.id);
   publish(agent, store, traits);
@@ -432,5 +453,6 @@ export function forgetHealth(agentId: number): void {
 
 /** What a reconnecting client needs for this agent: the mark it should show, or a clear. */
 export function healthResendMessage(agent: AgentState): Record<string, unknown> {
-  return { ...healthMessage(agent.id, agent.health?.lastSent ?? null) };
+  const h = agent.health;
+  return { ...healthMessage(agent.id, h?.lastSent ?? null, h?.lastSentSince) };
 }

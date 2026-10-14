@@ -36,6 +36,11 @@ export type ServerMessage =
   | AgentTripwireClear
   | AgentHealth
   | AgentHealthClear
+  | AgentSession
+  | AgentArtifacts
+  | AgentLoop
+  | AgentTests
+  | WorkflowRun
   | AgentRoster
   | RosterEvent
   | LayoutLoaded
@@ -96,6 +101,11 @@ export interface AgentCreated {
   isExternal?: boolean;
   palette?: number;
   hueShift?: number;
+  isTeammate?: boolean;
+  teammateName?: string;
+  parentAgentId?: number;
+  teamName?: string;
+  hooksOnly?: boolean;
 }
 
 export interface AgentClosed {
@@ -131,6 +141,7 @@ export interface AgentStatus {
   id: number;
   status: AgentActivityStatus;
   awaitingInput?: boolean;
+  since?: number;
 }
 
 export type AgentActivityStatus = 'active' | 'waiting' | 'idle';
@@ -142,6 +153,7 @@ export interface AgentToolStart {
   status: string;
   toolName?: string;
   permissionActive?: boolean;
+  permissionSince?: number;
   runInBackground?: boolean;
   isTeammateSpawn?: boolean;
 }
@@ -160,6 +172,7 @@ export interface AgentToolsClear {
 export interface AgentToolPermission {
   type: 'agentToolPermission';
   id: number;
+  permissionSince?: number;
 }
 
 export interface AgentToolPermissionClear {
@@ -265,6 +278,7 @@ export interface AgentTripwire {
   ruleName: string;
   severity: TripwireSeverity;
   count: number;
+  since?: number;
 }
 
 export type TripwireSeverity = 'high' | 'medium' | 'low';
@@ -280,6 +294,7 @@ export interface AgentHealth {
   state: HealthState;
   reason: HealthReason;
   count: number;
+  since?: number;
 }
 
 export type HealthState = 'stuck' | 'stalled' | 'looping' | 'dead';
@@ -290,6 +305,66 @@ export type HealthReason =
 export interface AgentHealthClear {
   type: 'agentHealthClear';
   id: number;
+}
+
+export interface AgentSession {
+  type: 'agentSession';
+  id: number;
+  startedAt?: number;
+  branch?: string;
+  sessionId8?: string;
+  costUsd?: number;
+  costAt?: number;
+}
+
+export interface AgentArtifacts {
+  type: 'agentArtifacts';
+  id: number;
+  count?: number;
+  complete?: boolean;
+  items?: ArtifactItem[];
+}
+
+export interface ArtifactItem {
+  title?: string;
+  url?: string;
+  publishes?: number;
+  at?: number;
+}
+
+export interface AgentLoop {
+  type: 'agentLoop';
+  id: number;
+  nextAt?: number;
+  wakes?: number;
+}
+
+export interface AgentTests {
+  type: 'agentTests';
+  id: number;
+  passed?: number;
+  failed?: number;
+  at?: number;
+}
+
+export interface WorkflowRun {
+  type: 'workflowRun';
+  id: number;
+  runId: string;
+  status?: WorkflowRunStatus;
+  name?: string;
+  phases?: WorkflowPhase[];
+  started?: number;
+  done?: number;
+  since?: number;
+}
+
+export type WorkflowRunStatus = 'running' | 'done';
+
+export interface WorkflowPhase {
+  name?: string;
+  started?: number;
+  done?: number;
 }
 
 export interface AgentRoster {

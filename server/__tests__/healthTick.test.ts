@@ -46,6 +46,8 @@ const stalled = (id: number, count: number) => ({
   state: 'stalled',
   reason: 'no_progress',
   count,
+  // Server stamped when the state is entered.
+  since: expect.any(Number),
 });
 const dead = (id: number) => ({
   type: 'agentHealth',
@@ -53,6 +55,8 @@ const dead = (id: number) => ({
   state: 'dead',
   reason: 'process_gone',
   count: 0,
+  // Server stamped when the state is entered.
+  since: expect.any(Number),
 });
 const clear = (id: number) => ({ type: 'agentHealthClear', id });
 
@@ -368,13 +372,15 @@ describe('health tick', () => {
       expect(health).toEqual([stalled(1, 10), clear(1)]);
     });
 
-    it('a stalled count is re-sent as the minutes grow, once per minute', async () => {
+    it('a stalled count is re-sent as the minutes grow, once per minute, from one start', async () => {
       const agent = addAgent();
       feed(agent, prompt(), toolUse('Read'));
       await tickAt(T0 + 10 * MIN);
       await tickAt(T0 + 10 * MIN + 30_000);
       await tickAt(T0 + 11 * MIN);
       expect(health).toEqual([stalled(1, 10), stalled(1, 11)]);
+      // A growing count is the same mark: the rail's minutes run from when it was entered.
+      expect(health.map((m) => m.since)).toEqual([T0 + 10 * MIN, T0 + 10 * MIN]);
     });
   });
 

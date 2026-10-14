@@ -1,6 +1,14 @@
 import { spriteWorldHeight } from '../../../../core/src/assets/artDensity.js';
 import { WORKFLOW_PARENT_TOOL_ID_PREFIX } from '../../../../core/src/constants.js';
-import type { CacheTtlSeconds, PermissionMode } from '../../../../core/src/messages.js';
+import type {
+  AgentArtifacts,
+  AgentLoop,
+  AgentSession,
+  AgentTests,
+  CacheTtlSeconds,
+  PermissionMode,
+  WorkflowRun,
+} from '../../../../core/src/messages.js';
 import { pickDiversePalette } from '../../../../core/src/paletteUtils.js';
 import type { ModelTier } from '../../../../core/src/provider.js';
 import {
@@ -95,6 +103,13 @@ export function isCrewParentToolId(parentToolId: string): boolean {
   return parentToolId.startsWith(WORKFLOW_PARENT_TOOL_ID_PREFIX);
 }
 
+/** A per-agent monitor message minus its envelope: what the monitor stores keep. */
+export type AgentSessionView = Omit<AgentSession, 'type' | 'id'>;
+export type AgentArtifactsView = Omit<AgentArtifacts, 'type' | 'id'>;
+export type AgentLoopView = Omit<AgentLoop, 'type' | 'id'>;
+export type AgentTestsView = Omit<AgentTests, 'type' | 'id'>;
+export type WorkflowRunView = Omit<WorkflowRun, 'type' | 'id' | 'runId'>;
+
 export class OfficeState {
   layout: OfficeLayout;
   tileMap: TileTypeVal[][];
@@ -142,6 +157,28 @@ export class OfficeState {
   cacheByAgent: Map<number, { ttlSeconds: CacheTtlSeconds; expiresAt: number }> = new Map();
   modeByAgent: Map<number, PermissionMode> = new Map();
   shellsByAgent: Map<number, number> = new Map();
+  /** The monitor's stores (attention rail, plates, inspector), as the server last sent them.
+   *  Keyed by agent id like sessionTitles, so a message may precede its character; cleared by
+   *  removeAgent. An absent entry is unknown, never 0. Every change bumps monitorVersion. */
+  sessionMeta: Map<number, AgentSessionView> = new Map();
+  artifacts: Map<number, AgentArtifactsView> = new Map();
+  loops: Map<number, AgentLoopView> = new Map();
+  tests: Map<number, AgentTestsView> = new Map();
+  /** The lead's workflow runs by runId. */
+  workflowRuns: Map<number, Map<string, WorkflowRunView>> = new Map();
+  /** Epoch ms (server clock) each state began: the status, the pending permission prompt,
+   *  the health mark and the tripwire alarm. Absent when the server did not say. */
+  statusSince: Map<number, number> = new Map();
+  permissionSince: Map<number, number> = new Map();
+  healthSince: Map<number, number> = new Map();
+  tripwireSince: Map<number, number> = new Map();
+  /** Bumped by every change to the monitor stores above and by every host-message write the
+   *  monitor panels also read (title, model, context, session signals, tripwire, health,
+   *  roster, team), never by per-frame state; React panels re-render when it moves
+   *  (useMonitorVersion), with no poll of their own. */
+  monitorVersion = 0;
+  /** The inspector sheet is open: the canvas overlay skips the selected agent's full box. */
+  monitorSheetOpen = false;
   /** The follower of each agent whose tier brings a companion, by agent id. */
   companions: Map<number, Companion> = new Map();
   /** Every furniture footprint tile, background rows included (blockedTiles skips those). */
@@ -812,6 +849,82 @@ export class OfficeState {
     this.cacheByAgent.delete(id);
     this.modeByAgent.delete(id);
     this.shellsByAgent.delete(id);
+    for (const store of this.monitorStores()) store.delete(id);
+    this.monitorVersion++;
+  }
+
+  /** Every per-agent monitor store, for the clear on removal. */
+  private monitorStores(): Array<Map<number, unknown>> {
+    return [
+      this.sessionMeta,
+      this.artifacts,
+      this.loops,
+      this.tests,
+      this.workflowRuns,
+      this.statusSince,
+      this.permissionSince,
+      this.healthSince,
+      this.tripwireSince,
+    ];
+  }
+
+  /** Set or (undefined) delete one monitor entry, bumping the version only on a change. */
+  private writeMonitor<V>(store: Map<number, V>, id: number, value: V | undefined): void {
+    if (value === undefined) {
+      if (store.delete(id)) this.monitorVersion++;
+    } else if (store.get(id) !== value) {
+      store.set(id, value);
+      this.monitorVersion++;
+    }
+  }
+
+  /** Undefined (the clear form) means unknown. */
+  setSessionMeta(id: number, view: AgentSessionView | undefined): void {
+    this.writeMonitor(this.sessionMeta, id, view);
+  }
+
+  /** Undefined (the clear form) means no artifacts. */
+  setArtifacts(id: number, view: AgentArtifactsView | undefined): void {
+    this.writeMonitor(this.artifacts, id, view);
+  }
+
+  /** Undefined (the clear form) means not a loop. */
+  setLoop(id: number, view: AgentLoopView | undefined): void {
+    this.writeMonitor(this.loops, id, view);
+  }
+
+  /** Undefined (the clear form) means no test run seen. */
+  setTests(id: number, view: AgentTestsView | undefined): void {
+    this.writeMonitor(this.tests, id, view);
+  }
+
+  /** Undefined (the clear form) drops the run; a lead with no run left has no entry. */
+  setWorkflowRun(leadId: number, runId: string, view: WorkflowRunView | undefined): void {
+    const runs = this.workflowRuns.get(leadId);
+    if (view === undefined) {
+      if (!runs?.delete(runId)) return;
+      if (runs.size === 0) this.workflowRuns.delete(leadId);
+    } else {
+      if (runs) runs.set(runId, view);
+      else this.workflowRuns.set(leadId, new Map([[runId, view]]));
+    }
+    this.monitorVersion++;
+  }
+
+  setStatusSince(id: number, since: number | undefined): void {
+    this.writeMonitor(this.statusSince, id, since);
+  }
+
+  setPermissionSince(id: number, since: number | undefined): void {
+    this.writeMonitor(this.permissionSince, id, since);
+  }
+
+  setHealthSince(id: number, since: number | undefined): void {
+    this.writeMonitor(this.healthSince, id, since);
+  }
+
+  setTripwireSince(id: number, since: number | undefined): void {
+    this.writeMonitor(this.tripwireSince, id, since);
   }
 
   removeAgent(id: number): void {
@@ -1652,6 +1765,7 @@ export class OfficeState {
   ): void {
     const ch = this.characters.get(id);
     if (!ch) return;
+    this.monitorVersion++;
     const wasUnlinked = ch.leadAgentId === undefined;
     ch.teamName = teamName;
     ch.agentName = agentName;
@@ -1686,16 +1800,19 @@ export class OfficeState {
     if (!ch) return;
     ch.contextTokens = contextTokens;
     ch.maxContextTokens = maxContextTokens;
+    this.monitorVersion++;
   }
 
   /** Undefined clears the title: the label falls back to the folder. */
   setSessionTitle(id: number, title: string | undefined): void {
     if (title) this.sessionTitles.set(id, title);
     else this.sessionTitles.delete(id);
+    this.monitorVersion++;
   }
 
   setRoster(id: number, roster: AgentRosterInfo): void {
     this.rosters.set(id, roster);
+    this.monitorVersion++;
   }
 
   setRosterEvent(id: number, event: RosterEventInfo & { level?: number }, now: number): void {
@@ -1707,6 +1824,7 @@ export class OfficeState {
   setAgentModel(id: number, model: string | undefined, tier: ModelTier | undefined): void {
     if (model) this.models.set(id, { model, tier });
     else this.models.delete(id);
+    this.monitorVersion++;
   }
 
   /** Both fields or neither: a message missing either says the clock is unknown. */
@@ -1720,24 +1838,28 @@ export class OfficeState {
     } else {
       this.cacheByAgent.delete(id);
     }
+    this.monitorVersion++;
   }
 
   /** Undefined clears the mode: unknown. */
   setAgentMode(id: number, mode: PermissionMode | undefined): void {
     if (mode) this.modeByAgent.set(id, mode);
     else this.modeByAgent.delete(id);
+    this.monitorVersion++;
   }
 
   /** Zero keeps no entry: no shells is the default, not a value to remember. */
   setAgentShells(id: number, running: number): void {
     if (typeof running === 'number' && running > 0) this.shellsByAgent.set(id, running);
     else this.shellsByAgent.delete(id);
+    this.monitorVersion++;
   }
 
   /** Undefined clears the alarm. */
   setTripwire(id: number, alarm: TripwireAlarm | undefined): void {
     if (alarm) this.tripwires.set(id, alarm);
     else this.tripwires.delete(id);
+    this.monitorVersion++;
   }
 
   /** Undefined clears it. A mark for an id with no character is dropped: kept, it would
@@ -1745,6 +1867,7 @@ export class OfficeState {
   setHealth(id: number, health: AgentHealthView | undefined): void {
     if (health && this.characters.has(id)) this.health.set(id, health);
     else this.health.delete(id);
+    this.monitorVersion++;
   }
 
   update(dt: number): void {

@@ -729,7 +729,12 @@ describe('clientMessageHandler: ackTripwire', () => {
   let store: AgentStateStore;
   let socketA: Array<Record<string, unknown>>;
   let socketB: Array<Record<string, unknown>>;
-  const alarm = { ruleId: 'dotenv', ruleName: 'Dotenv file access', severity: 'medium' } as const;
+  const alarm = {
+    ruleId: 'dotenv',
+    ruleName: 'Dotenv file access',
+    severity: 'medium',
+    since: 1_000,
+  } as const;
 
   const ack = (id: number, count: number): void =>
     handleClientMessage({ type: 'ackTripwire', id, count }, () => {}, { store, cache: null });

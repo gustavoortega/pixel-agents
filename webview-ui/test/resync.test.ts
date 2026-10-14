@@ -21,6 +21,7 @@ import {
   applyAgentToolStart,
   applyAgentTripwireMessage,
 } from '../src/hooks/agentMessages.js';
+import { applyMonitorMessage } from '../src/hooks/monitorMessages.js';
 import {
   applySubagentMessage,
   applyToolStartHelper,
@@ -226,6 +227,35 @@ describe('resync after a reconnect', () => {
     expect(os.characters.has(ended)).toBe(false);
     expect(state.characters.map((s) => s.id)).toEqual([live]);
     expect([...state.background[1]]).toEqual([`${CREW}live`]);
+  });
+
+  it('a workflow run the catch-up restates stays with its new counts; one it does not goes at handshakeDone; an ordinary handshake drops none', () => {
+    const os = office();
+    const { sink } = hub(os);
+    os.addAgent(1, 0, 0, undefined, true);
+    const run = (runId: string, extra: Record<string, unknown> = {}) => ({
+      type: 'workflowRun',
+      id: 1,
+      runId,
+      status: 'running',
+      started: 2,
+      ...extra,
+    });
+    applyMonitorMessage(os, run('kept'));
+    applyMonitorMessage(os, run('ended'));
+
+    applyExistingAgents(sink, existingAgents([1]));
+    applyHandshakeDone(sink);
+    expect([...os.workflowRuns.get(1)!.keys()]).toEqual(['kept', 'ended']);
+
+    // The run that ended while the socket was down is not in the server's catch-up.
+    reconnect();
+    applyExistingAgents(sink, existingAgents([1]));
+    applyMonitorMessage(os, run('kept', { done: 1 }));
+    applyHandshakeDone(sink);
+    expect(Object.fromEntries(os.workflowRuns.get(1)!)).toEqual({
+      kept: { status: 'running', started: 2, done: 1 },
+    });
   });
 
   it('C3 an undrawn crew helper the server does not re-announce goes too; the one drawn into a freed place shows with no effect', () => {

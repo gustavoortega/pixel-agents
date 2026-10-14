@@ -50,6 +50,7 @@ import {
   applyAgentTripwireMessage,
 } from './agentMessages.js';
 import { admitLayoutLoaded } from './layoutLoadedGate.js';
+import { applyMonitorMessage } from './monitorMessages.js';
 import {
   applySubagentMessage,
   applyToolStartHelper,
@@ -293,6 +294,9 @@ export function useExtensionMessages(
           parentToolId: msg.parentToolId,
         });
       }
+
+      // The monitor messages and the `since` fields: stored by id, read by the monitor panels.
+      applyMonitorMessage(os, msg);
 
       if (msg.type === 'providerCapabilities') {
         setProviderCapabilities({

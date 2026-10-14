@@ -29,6 +29,7 @@ import {
   WORKFLOW_LABEL_MAX_LENGTH,
   WORKFLOW_PARENT_TOOL_ID_PREFIX,
 } from '../../core/src/constants.js';
+import type { WorkflowRun } from '../../core/src/messages.js';
 import type { AgentStateStore } from './agentStateStore.js';
 import {
   WORKFLOW_AGENT_STALE_MS,
@@ -79,6 +80,9 @@ interface WorkflowRunState {
   completed: boolean;
   /** Its journal is past the age window but a transcript is not: when to look again. */
   ageRecheckAtMs: number;
+  /** What clients are shown for the run (`workflowRun` minus its envelope); absent until
+   *  the run's name, phases and counts are known, and then nothing is sent for it. */
+  view?: Omit<WorkflowRun, 'type' | 'id' | 'runId'>;
 }
 
 export interface LeadWorkflowState {
@@ -702,9 +706,10 @@ function presenceMessage(
   };
 }
 
-/** One `subagentPresent` per watched workflow agent of the lead, for a client
- *  doing the handshake (a page load or panel reload): its helpers come back
- *  before their next tool call. */
+/** One `subagentPresent` per watched workflow agent of the lead, then one
+ *  `workflowRun` per tracked run that has a view, for a client doing the handshake
+ *  (a page load or panel reload): its helpers and their run come back before their
+ *  next tool call. */
 export function workflowPresenceMessages(
   leadId: number,
   lead: AgentState,
@@ -716,6 +721,9 @@ export function workflowPresenceMessages(
     const [runId, agentId] = id.slice(WORKFLOW_PARENT_TOOL_ID_PREFIX.length).split(':');
     const entry = state.runs.get(runId)?.started.get(agentId);
     out.push(presenceMessage(leadId, id, entry?.label, entry?.group));
+  }
+  for (const [runId, run] of state.runs) {
+    if (run.view) out.push({ type: 'workflowRun', id: leadId, runId, ...run.view });
   }
   return out;
 }

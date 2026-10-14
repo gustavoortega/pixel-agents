@@ -83,6 +83,7 @@ server/                              Lifecycle runtime + Fastify HTTP/WS server
     utf8Boundary.ts                  completeUtf8Length: a read never decodes half a character
     transcriptParser.ts              JSONL parsing for heuristic / file-fallback mode
     timerManager.ts                  Waiting / permission timers
+    statusSince.ts                   When each status and pending permission prompt began (the monitor's `since`): stamped on a change, never on a repeat
     assetLoader.ts                   PNG → SpriteData via pngjs
     teamUtils.ts                     isInlineTeammateOf, getInlineTeammates, hasInlineTeammates
     types.ts                         ServerAgentState
@@ -119,6 +120,8 @@ webview-ui/                          React 19 + Canvas UI (depends only on core/
       BottomToolbar.tsx, HudCard.tsx, SettingsModal.tsx, InfoModal.tsx,
       Tooltip.tsx, DebugView.tsx, ui/Button.tsx, ...
       limitsPace.ts                  Pure view-model for the official limits (pace, run-out, nudge, colors) behind UsagePanel and HudCard
+      MonitorShell.tsx               The window's row [rail][stage][sheet]; the one reader of the monitor version (MonitorRail/MonitorSheet are its slots)
+      monitorLayout.ts               Pure: rail width, inline or overlay sheet, full plates, per window size
     hooks/
       useExtensionMessages.ts        Message handler — translates ServerMessage into OfficeState mutations
       useNow.ts                      Epoch ms on an interval (the Usage panel's countdowns)
@@ -131,6 +134,8 @@ webview-ui/                          React 19 + Canvas UI (depends only on core/
       introTourState.ts              Intro tour wire-state machine (pure reducer, Node-runner tested)
       useIntroTour.ts                Wires the reducer to React + transport (snapshot, verdict, choices)
       useFrame.ts                    Runs a callback after every drawn canvas frame (the DOM overlays' redraw)
+      monitorMessages.ts             The monitor messages and every `since` field -> OfficeState monitor stores (DOM-free)
+      useMonitorVersion.ts           Re-renders the monitor panels after a drawn frame that found the stores or the selection changed (pure rule: monitorVersion.ts)
     office/
       types.ts                       OfficeLayout, Character, etc. + re-exports constants
       toolUtils.ts                   STATUS_TO_TOOL mapping, extractToolName (DOM-free; defaultZoom lives in useEditorActions)
@@ -251,7 +256,7 @@ Adding a new CLI integration is one subdirectory under `server/src/providers/hoo
 
 `core/asyncapi.yaml` is the contract. Pinned to **3.0.0** because `@asyncapi/modelina@5.10.1` declares `supportedVersions: ['3.0.0']` only; bumping to 3.1.0 produces `export type Root = any`. Revisit when Modelina ships 3.1.0 support.
 
-- **46 ServerMessage variants** (server → client): agent lifecycle (incl. `handshakeDone`, the end of a standalone handshake's catch-up), agent activity, sub-agent activity (incl. `subagentPresent`), team + context usage + model look (`agentModel`) + session title + session signals (`agentCache`, `agentMode`, `agentShells`) + tripwire (`agentTripwire`, `agentTripwireClear`) + health (`agentHealth`, `agentHealthClear`), roster, assets, settings + workspace, token ledger (`tokenUsage`) + official limits (`usageLimits`), diagnostics.
+- **51 ServerMessage variants** (server → client): agent lifecycle (incl. `handshakeDone`, the end of a standalone handshake's catch-up), agent activity, sub-agent activity (incl. `subagentPresent`), team + context usage + model look (`agentModel`) + session title + session signals (`agentCache`, `agentMode`, `agentShells`) + tripwire (`agentTripwire`, `agentTripwireClear`) + health (`agentHealth`, `agentHealthClear`) + monitor (`agentSession`, `agentArtifacts`, `agentLoop`, `agentTests`, `workflowRun`), roster, assets, settings + workspace, token ledger (`tokenUsage`) + official limits (`usageLimits`), diagnostics.
 - **26 ClientMessage variants** (client → server): tripwire ack (`ackTripwire`), lifecycle (`webviewReady`, `launchAgent`, `focusAgent`, `closeAgent`), layout (`saveAgentSeats`, `saveLayout`, `exportLayout`, `importLayout`), settings (`setSoundEnabled`, `setShowModelFlair`, `setCozyLighting`, `setHooksEnabled`, `setWatchAllSessions`, `setAlwaysShowLabels`, `setHooksInfoShown`, `setLastSeenVersion`), discovery + assets, diagnostics.
 
 Both unions use `oneOf` with `discriminator: type`. Every concrete message sets `additionalProperties: false`.
@@ -287,6 +292,7 @@ A reopen (any open after the page's first) flushes the send queue, then fires `o
 - **Rows**: sub-tool rows are cleared when the window opens (the resend never carries them). A lead's row the resend restates takes its status; at `handshakeDone` the rows it did not restate go. Outside the window a repeated start leaves its row as it is.
 - **Permission**: every tool start the resend restates carries `permissionActive` while the agent's prompt is pending (`agentActivityResend.ts`). Inside the window that flag sets both the bubble and the row's `permissionWait`: a prompt raised while the socket was down shows, one answered meanwhile goes, a pending one stays. A live start without it only clears.
 - **Layout**: `layoutLoaded` never replaces unsaved editor changes (the editor singleton in `office/editor/editorState.ts`, read when asked, both runtimes) except a VS Code import (`imported: true`: the user chose it), and in a resync not when it equals, as sorted-key JSON, the last layout this page applied or sent in `saveLayout` (`hooks/layoutLoadedGate.ts`): no rebuild, no checkpoint reset, no seat re-send.
+- **Monitor**: `agentSession`, `agentArtifacts`, `agentLoop` and `agentTests` are resent for every agent, the id alone as the clear, and every status, health mark, alarm and pending prompt carries its server `since`. A `workflowRun` the catch-up does not restate goes at `handshakeDone`.
 - **Sound and effects**: inside the window helpers appear with no spawn effect, and neither the `agentStatus` chime nor the tripwire alarm plays.
 - **Consent**: the webview admits one `hooksConsentRequest` per provider per page load, so a reconnect never replays the Intro.
 

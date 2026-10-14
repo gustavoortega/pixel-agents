@@ -28,9 +28,12 @@ import {
   type HeroOffice,
   type HeroSceneOptions,
   heroZoomFor,
+  monitorMessages,
   parseHeroScene,
+  parseMonitorScene,
   seatHeroAgents,
   startHeroStage,
+  startMonitorStage,
 } from './heroScene.ts';
 
 interface MockPayload {
@@ -45,12 +48,15 @@ interface MockPayload {
   hero: { options: HeroSceneOptions; pets: PetSpriteFrames[]; petNames: string[] } | null;
   /** `?scene=empty`: the bundled office with no pets and the cozy lighting off, where nothing moves. */
   empty: boolean;
+  /** Set only for `?scene=monitor` (the bundled office). */
+  monitor: HeroSceneOptions | null;
 }
 
 // ── Module-level state ─────────────────────────────────────────────────────────
 
 let mockPayload: MockPayload | null = null;
 let heroStaged = false;
+let monitorStaged = false;
 
 // ── PNG decode helpers (browser fallback) ───────────────────────────────────
 // Slicing and density detection are the core decoders the server uses, so a 1x and a 2x asset
@@ -227,6 +233,7 @@ export async function initBrowserMock(): Promise<void> {
     layout,
     hero: heroOptions && heroPets ? { options: heroOptions, ...heroPets } : null,
     empty,
+    monitor: parseMonitorScene(window.location.search),
   };
 
   console.log(
@@ -258,6 +265,7 @@ export function dispatchMockMessages(host?: {
     layout,
     hero,
     empty,
+    monitor,
   } = mockPayload;
 
   function dispatch(data: unknown): void {
@@ -303,10 +311,20 @@ export function dispatchMockMessages(host?: {
     if (!hero.options.hud) hideHud();
   }
 
+  if (monitor && host && !monitorStaged) {
+    monitorStaged = true;
+    const { baseMs } = startMonitorStage();
+    for (const msg of monitorMessages(baseMs)) dispatch(msg);
+    // The last agentCreated selects its agent; the scene opens on the whole office.
+    host.office.selectedAgentId = null;
+    if (!monitor.hud) hideHud();
+  }
+
   console.log('[BrowserMock] Messages dispatched');
 }
 
-/** `&hud=0`: the scene is a screenshot, so the HUD card, toolbar and status badge stay out of it. */
+/** `&hud=0`: the scene is a screenshot, so the HUD card, toolbar, status badge and the monitor's
+ *  rail and sheet stay out of it. */
 function hideHud(): void {
   const style = document.createElement('style');
   style.textContent =
@@ -314,6 +332,8 @@ function hideHud(): void {
       '[data-testid="hud-card"]',
       '.absolute.top-8.pixel-panel',
       '.absolute.bottom-10.left-10.brand-panel',
+      '[data-testid="monitor-rail"]',
+      '[data-testid="monitor-sheet"]',
     ].join(', ') + ' { display: none !important; }';
   document.head.appendChild(style);
 }

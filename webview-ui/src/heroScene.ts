@@ -1,15 +1,18 @@
 /**
- * The README hero scene: four named agents in one room, staged for a screenshot or a GIF.
+ * The README hero scene: four named agents in one room, staged for a screenshot or a GIF. Also the
+ * monitor scene (`?scene=monitor`), at the end of the file.
  *
- * Dev-only. Reached through `?scene=hero` on the Vite dev SPA and imported by browserMock.ts
- * alone, so the standalone server build and the VS Code build never contain it. No DOM here:
- * the module returns messages and drives an OfficeState-shaped object through injected callbacks.
+ * Dev-only. Reached through `?scene=hero` or `?scene=monitor` on the Vite dev SPA and imported by
+ * browserMock.ts alone, so the standalone server build and the VS Code build never contain it. No
+ * DOM here: the module returns messages and drives an OfficeState-shaped object through injected
+ * callbacks.
  */
 
+import { WORKFLOW_PARENT_TOOL_ID_PREFIX } from '../../core/src/constants.js';
 import type { ServerMessage } from '../../core/src/messages.js';
 import { FX_POP_MS, NAP_AFTER_IDLE_SEC } from './constants.js';
 import { fitView } from './office/camera.js';
-import { overrideOfficeClock } from './office/clock.js';
+import { officeNow, overrideOfficeClock } from './office/clock.js';
 import { requestRedraw } from './office/engine/gameLoop.js';
 import type { ActiveFx } from './office/fx/fxEngine.js';
 import { forceFullPlates } from './office/nameplate.js';
@@ -282,4 +285,360 @@ export function startHeroStage(
     overrideOfficeClock(null);
     forceFullPlates(false);
   };
+}
+
+// ── The monitor scene (`?scene=monitor`) ─────────────────────────────────────────
+
+/**
+ * Seven agents in the bundled office, staged for the monitor: two waiting on the user, one stuck,
+ * a lead running a workflow, one with sub-agents, a loop asleep and one idle. Every name, folder,
+ * branch and title is made up: the scene carries no real session data. Every time is relative to
+ * the scene's fixed clock, so the minutes read the same in every screenshot.
+ */
+
+export const MONITOR_HOUR = 15;
+export const MONITOR_MINUTE = 20;
+const MIN_MS = 60_000;
+
+/** `?scene=monitor` on the dev SPA turns the scene on; `&hud=0` hides the HUD and the monitor. */
+export function parseMonitorScene(search: string): HeroSceneOptions | null {
+  const params = new URLSearchParams(search);
+  if (params.get('scene') !== 'monitor') return null;
+  return { hud: params.get('hud') !== '0' };
+}
+
+/** 15:20 today; the seconds follow the real clock, like the hero scene's. */
+export function monitorClock(realMs: number): Date {
+  const d = new Date(realMs);
+  return new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate(),
+    MONITOR_HOUR,
+    MONITOR_MINUTE,
+    d.getSeconds(),
+  );
+}
+
+interface MonitorAgent {
+  id: number;
+  name: string;
+  folder: string;
+  branch: string;
+  title: string;
+  tier: 1 | 2 | 3 | 4;
+  contextTokens: number;
+  maxContextTokens: number;
+  /** Minutes before the scene's clock the transcript started. */
+  startedMinAgo: number;
+  costUsd?: number;
+}
+
+export const MONITOR_AGENTS: readonly MonitorAgent[] = [
+  {
+    id: 1,
+    name: 'Ada',
+    folder: 'billing-api',
+    branch: 'fix/retry-backoff',
+    title: 'Retry failed webhooks',
+    tier: 4,
+    contextTokens: 620_000,
+    maxContextTokens: 1_000_000,
+    startedMinAgo: 154,
+    costUsd: 4.12,
+  },
+  {
+    id: 2,
+    name: 'Alan',
+    folder: 'web-app',
+    branch: 'feat/date-picker',
+    title: 'Pick a date library',
+    tier: 2,
+    contextTokens: 68_000,
+    maxContextTokens: 200_000,
+    startedMinAgo: 47,
+    costUsd: 0.86,
+  },
+  {
+    id: 3,
+    name: 'Grace',
+    folder: 'checkout-service',
+    branch: 'fix/flaky-cart-test',
+    title: 'Fix the flaky cart test',
+    tier: 3,
+    contextTokens: 156_000,
+    maxContextTokens: 200_000,
+    startedMinAgo: 95,
+    costUsd: 2.4,
+  },
+  {
+    id: 4,
+    name: 'Linus',
+    folder: 'api-gateway',
+    branch: 'review/payments-pr',
+    title: 'Review the payments PR',
+    tier: 4,
+    contextTokens: 910_000,
+    maxContextTokens: 1_000_000,
+    startedMinAgo: 63,
+    costUsd: 6.75,
+  },
+  {
+    id: 5,
+    name: 'Barbara',
+    folder: 'data-pipeline',
+    branch: 'feat/events-v2',
+    title: 'Migrate events to v2',
+    tier: 3,
+    contextTokens: 90_000,
+    maxContextTokens: 200_000,
+    startedMinAgo: 38,
+  },
+  {
+    id: 6,
+    name: 'Dennis',
+    folder: 'infra',
+    branch: 'chore/deps-sweep',
+    title: 'Nightly dependency sweep',
+    tier: 1,
+    contextTokens: 36_000,
+    maxContextTokens: 200_000,
+    startedMinAgo: 212,
+    costUsd: 0.31,
+  },
+  {
+    id: 7,
+    name: 'Hedy',
+    folder: 'mobile-app',
+    branch: 'main',
+    title: 'Tidy the onboarding copy',
+    tier: 2,
+    contextTokens: 54_000,
+    maxContextTokens: 200_000,
+    startedMinAgo: 88,
+  },
+];
+
+/** The workflow the lead (Linus) runs: one agent done in `scan`, three at work in `review`. */
+export const MONITOR_WORKFLOW = {
+  leadId: 4,
+  runId: 'monitor-run',
+  name: 'review-pr',
+  helpers: [
+    { agentId: 'a2', label: 'security pass', group: 'review' },
+    { agentId: 'a3', label: 'api contract check', group: 'review' },
+    { agentId: 'a4', label: 'test coverage', group: 'review' },
+  ],
+} as const;
+
+/**
+ * What the scene sends after the layout loads, in the order the real server would, with every
+ * time relative to `baseMs` (the scene's clock, on the minute).
+ */
+export function monitorMessages(baseMs: number): ServerMessage[] {
+  const ago = (min: number): number => baseMs - min * MIN_MS;
+  const out: ServerMessage[] = [
+    {
+      type: 'providerCapabilities',
+      readingTools: ['Read', 'Grep', 'Glob'],
+      subagentToolNames: ['Task', 'Agent'],
+    },
+    // The status line wrapper is on, so the official limits are live.
+    { type: 'hooksStatus', providerId: 'claude-statusline', installed: true },
+    {
+      type: 'usageLimits',
+      receivedAt: ago(1),
+      fiveHour: { usedPercentage: 64, resetsAt: baseMs + 130 * MIN_MS },
+      sevenDay: { usedPercentage: 41, resetsAt: baseMs + 3 * 24 * 60 * MIN_MS },
+    },
+  ];
+  for (const a of MONITOR_AGENTS) {
+    out.push({
+      type: 'agentCreated',
+      id: a.id,
+      folderName: a.folder,
+      palette: a.id - 1,
+      hueShift: 0,
+    });
+    out.push({ type: 'agentModel', id: a.id, model: `monitor-tier-${a.tier}`, tier: a.tier });
+    out.push({ type: 'agentSessionTitle', id: a.id, title: a.title });
+    out.push({
+      type: 'agentContextUsage',
+      id: a.id,
+      contextTokens: a.contextTokens,
+      maxContextTokens: a.maxContextTokens,
+    });
+    out.push({
+      type: 'agentRoster',
+      id: a.id,
+      memberId: `monitor-${a.name.toLowerCase()}`,
+      name: a.name,
+      level: 3 + a.id,
+      xp: 40 * a.id,
+      xpToNext: 400,
+      streak: a.id % 3,
+      mood: a.id === 3 ? 'frustrated' : 'neutral',
+    });
+    out.push({
+      type: 'agentSession',
+      id: a.id,
+      startedAt: ago(a.startedMinAgo),
+      branch: a.branch,
+      sessionId8: `5e55${a.id.toString(16).padStart(4, '0')}`,
+      ...(a.costUsd === undefined ? {} : { costUsd: a.costUsd, costAt: ago(2) }),
+    });
+  }
+
+  // Ada: waiting on a permission prompt for `git push`, 12 minutes.
+  out.push({
+    type: 'agentToolStart',
+    id: 1,
+    toolId: 'monitor-1-push',
+    status: 'Running: git push',
+    toolName: 'Bash',
+  });
+  out.push({ type: 'agentStatus', id: 1, status: 'active', since: ago(31) });
+  out.push({ type: 'agentToolPermission', id: 1, permissionSince: ago(12) });
+
+  // Alan: stopped on a question, 4 minutes.
+  out.push({ type: 'agentStatus', id: 2, status: 'waiting', awaitingInput: true, since: ago(4) });
+
+  // Grace: the same tests failing four runs in a row.
+  out.push({
+    type: 'agentToolStart',
+    id: 3,
+    toolId: 'monitor-3-test',
+    status: 'Running: npm test',
+    toolName: 'Bash',
+  });
+  out.push({ type: 'agentStatus', id: 3, status: 'active', since: ago(26) });
+  out.push({ type: 'agentTests', id: 3, passed: 41, failed: 3, at: ago(1) });
+  out.push({
+    type: 'agentHealth',
+    id: 3,
+    state: 'stuck',
+    reason: 'tests_failing_no_edits',
+    count: 4,
+    since: ago(9),
+  });
+
+  // Linus: leads the `review-pr` workflow, four agents started, one done.
+  const wf = MONITOR_WORKFLOW;
+  out.push({
+    type: 'agentToolStart',
+    id: wf.leadId,
+    toolId: 'monitor-4-workflow',
+    status: 'Using Workflow',
+    toolName: 'Workflow',
+  });
+  out.push({ type: 'agentStatus', id: wf.leadId, status: 'active', since: ago(21) });
+  for (const h of wf.helpers) {
+    out.push({
+      type: 'subagentPresent',
+      id: wf.leadId,
+      parentToolId: `${WORKFLOW_PARENT_TOOL_ID_PREFIX}${wf.runId}:${h.agentId}`,
+      label: h.label,
+      group: h.group,
+    });
+  }
+  out.push({
+    type: 'workflowRun',
+    id: wf.leadId,
+    runId: wf.runId,
+    status: 'running',
+    name: wf.name,
+    phases: [
+      { name: 'scan', started: 1, done: 1 },
+      { name: 'review', started: 3, done: 0 },
+    ],
+    started: 4,
+    done: 1,
+    since: ago(21),
+  });
+  out.push({
+    type: 'agentArtifacts',
+    id: wf.leadId,
+    count: 2,
+    complete: true,
+    items: [
+      {
+        title: 'Payments PR review notes',
+        url: 'https://example.com/a/review-notes',
+        publishes: 2,
+        at: ago(6),
+      },
+      { title: 'Risk matrix', url: 'https://example.com/a/risk-matrix', publishes: 1, at: ago(18) },
+    ],
+  });
+
+  // Barbara: two sub-agents at work.
+  for (const [n, task, tool] of [
+    [1, 'Map the call sites', 'Reading events.ts'],
+    [2, 'Draft the migration', 'Editing migrate.sql'],
+  ] as const) {
+    const toolId = `monitor-5-sub-${n}`;
+    out.push({
+      type: 'agentToolStart',
+      id: 5,
+      toolId,
+      status: `Subtask: ${task}`,
+      toolName: 'Agent',
+    });
+    out.push({
+      type: 'subagentToolStart',
+      id: 5,
+      parentToolId: toolId,
+      toolId: `${toolId}-tool`,
+      status: tool,
+    });
+  }
+  out.push({ type: 'agentStatus', id: 5, status: 'active', since: ago(14) });
+  out.push({
+    type: 'agentArtifacts',
+    id: 5,
+    count: 3,
+    complete: true,
+    items: [
+      {
+        title: 'Events v2 schema',
+        url: 'https://example.com/a/events-schema',
+        publishes: 3,
+        at: ago(9),
+      },
+      {
+        title: 'Migration plan',
+        url: 'https://example.com/a/migration-plan',
+        publishes: 1,
+        at: ago(25),
+      },
+      {
+        title: 'Rollback checklist',
+        url: 'https://example.com/a/rollback',
+        publishes: 1,
+        at: ago(33),
+      },
+    ],
+  });
+
+  // Dennis: a loop asleep until 25 minutes from now, woken three times so far.
+  out.push({ type: 'agentStatus', id: 6, status: 'idle', since: ago(15) });
+  out.push({ type: 'agentLoop', id: 6, nextAt: baseMs + 25 * MIN_MS, wakes: 3 });
+
+  // Hedy: idle for 1h08m.
+  out.push({ type: 'agentStatus', id: 7, status: 'idle', since: ago(68) });
+  return out;
+}
+
+/**
+ * Pins the scene's clock and returns the minute it starts on (what the messages are relative to)
+ * with a function that restores the real clock.
+ */
+export function startMonitorStage(nowMs: () => number = Date.now): {
+  baseMs: number;
+  stop: () => void;
+} {
+  overrideOfficeClock(() => monitorClock(nowMs()));
+  const start = officeNow();
+  start.setSeconds(0, 0);
+  return { baseMs: start.getTime(), stop: () => overrideOfficeClock(null) };
 }

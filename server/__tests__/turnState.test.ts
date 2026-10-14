@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { claudeProvider, turnSignal } from '../src/providers/hook/claude/claude.js';
-import { type DerivedTurnState,deriveTurnState } from '../src/turnState.js';
+import { type DerivedTurnState, deriveTurnState } from '../src/turnState.js';
 
 const NOW = Date.parse('2026-10-11T12:00:00Z');
 const MIN = 60_000;
@@ -189,6 +189,27 @@ describe('deriveTurnState', () => {
   it('a prompt or fresh reasoning as the newest record reads active', () => {
     expect(derive([turnEnd(), prompt('next', ago(2_000))])).toBe('active');
     expect(derive([prompt(), thinking()])).toBe('active');
+  });
+
+  it('dates the state by the record that decided it: not a later attachment, not the mtime', () => {
+    const sinceOf = (records: unknown[]) => {
+      const state = deriveTurnState(
+        records.map((r) => JSON.stringify(r)),
+        NOW,
+        { leadMtimeMs: NOW - 5_000 },
+        turnSignal,
+        traits,
+      );
+      return state.kind === 'idle' ? 'idle' : state.sinceMs;
+    };
+    const attachment = { type: 'attachment', timestamp: ago(10_000), attachment: {} };
+    expect(sinceOf([prompt(), toolUse([['q', 'AskUserQuestion']], ago(4 * MIN)), attachment])).toBe(
+      NOW - 4 * MIN,
+    );
+    expect(sinceOf([prompt(), turnEnd(ago(2 * MIN)), attachment])).toBe(NOW - 2 * MIN);
+    // A deciding record without a timestamp leaves the start unknown, never the mtime.
+    const undated = { type: 'user', message: { content: 'go' } };
+    expect(sinceOf([undated])).toBeUndefined();
   });
 
   it('a pending AskUserQuestion reads awaitingInput, an answered one does not', () => {
