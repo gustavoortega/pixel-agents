@@ -98,19 +98,19 @@ describe('subagent messages', () => {
     expect(sink.tools()).toEqual({});
   });
 
-  it('C6 the plate names a workflow helper by its label and its parent', () => {
+  it('C6 the plate names a workflow helper by its label, isolated and cut', () => {
     const os = officeWithLead();
-    os.sessionTitles.set(1, 'Ada');
     const sink = sinkFor(os);
     applySubagentMessage(sink, start('probe:kappa'));
     applySubagentMessage(sink, start(`${'\u{1F600}'.repeat(20)}abcdefghij`, `${CREW}a2`));
     const helper = os.getSubagentId(1, HELPER)!;
 
-    // The label sits in a bidi isolate: its own direction never reorders the parent's name.
-    expect(plateOf(os, sink, helper)?.name).toBe('\u2068probe:kappa\u2069 · Ada');
+    // The label sits in a bidi isolate: its own direction never reorders the words after it.
+    // The crew line, not the plate, says whose helper it is.
+    expect(plateOf(os, sink, helper)?.name).toBe('\u2068probe:kappa\u2069');
     // Past 24 code points the plate cuts the label; the full box shows all of it, the group under it.
     expect(plateOf(os, sink, os.getSubagentId(1, `${CREW}a2`)!)?.name).toBe(
-      `\u2068${'\u{1F600}'.repeat(20)}abcd…\u2069 · Ada`,
+      `\u2068${'\u{1F600}'.repeat(20)}abcd…\u2069`,
     );
     expect(sink.characters().find((s) => s.id === helper)).toMatchObject({
       plateLabel: 'probe:kappa',
@@ -120,7 +120,6 @@ describe('subagent messages', () => {
 
   it('C45 a presence draws a working helper named by its label; its first tool joins that helper', () => {
     const os = officeWithLead();
-    os.sessionTitles.set(1, 'Ada');
     const sink = sinkFor(os);
     applySubagentMessage(sink, {
       type: 'subagentPresent',
@@ -133,7 +132,7 @@ describe('subagent messages', () => {
 
     // Working before any tool row: an agent that only thinks still shows.
     expect(os.characters.get(helper)?.isActive).toBe(true);
-    expect(plateOf(os, sink, helper)?.name).toBe('\u2068final:top10\u2069 · Ada');
+    expect(plateOf(os, sink, helper)?.name).toBe('\u2068final:top10\u2069');
 
     applySubagentMessage(sink, start('final:top10'));
     expect([...os.characters.values()].filter((ch) => ch.isSubagent)).toHaveLength(1);

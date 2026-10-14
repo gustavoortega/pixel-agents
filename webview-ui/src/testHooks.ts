@@ -1,7 +1,7 @@
 import type { ColorValue } from './components/ui/types.js';
 import { type FrameCounters, requestRedraw } from './office/engine/gameLoop.js';
 import { OfficeState } from './office/engine/officeState.js';
-import { isGhostHeadlessAgentsEnabled } from './office/engine/renderer.js';
+import { isGhostHeadlessAgentsEnabled, lastDrawnCrewLines } from './office/engine/renderer.js';
 import { carpetJunctionCase } from './office/sprites/carpetTiles.js';
 
 declare global {
@@ -93,6 +93,12 @@ declare global {
       selectAgent?: (id: number | null) => void;
       /** The office's selection and camera follow, as a click (canvas or rail) left them. */
       getSelection?: () => { selectedAgentId: number | null; cameraFollowId: number | null };
+      /** The crew lines the last drawn frame drew (canvas only, so e2e reads them here). */
+      getCrewLines?: () => ReadonlyArray<{
+        leadId: number;
+        helperId: number;
+        kind: 'crew' | 'sub';
+      }>;
       /** Render loop counters (gameLoop.ts installs them when it loads): read deltas, never absolutes. */
       frames?: FrameCounters;
     };
@@ -154,6 +160,9 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
       cameraFollowId: os?.cameraFollowId ?? null,
     };
   };
+
+  hooks.getCrewLines = () =>
+    lastDrawnCrewLines().map((l) => ({ leadId: l.leadId, helperId: l.helperId, kind: l.kind }));
 
   hooks.selectAgent = (id) => {
     const os = officeStateRef.current;

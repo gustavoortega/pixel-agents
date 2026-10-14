@@ -32,9 +32,9 @@ function floorLayout(cols = 9, rows = 7): OfficeLayout {
 
 test('tripwireLabel shows the count only past the first hit', () => {
   const cases: Array<[string, number, string]> = [
-    ['Dotenv file access', 1, '⚠ Dotenv file access'],
-    ['Dotenv file access', 2, '⚠ Dotenv file access ×2'],
-    ['AWS write operation', 12, '⚠ AWS write operation ×12'],
+    ['Dotenv file access', 1, 'Dotenv file access'],
+    ['Dotenv file access', 2, 'Dotenv file access ×2'],
+    ['AWS write operation', 12, 'AWS write operation ×12'],
   ];
   for (const [name, count, expected] of cases) {
     assert.equal(tripwireLabel(name, count), expected);

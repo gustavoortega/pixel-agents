@@ -31,6 +31,9 @@ import {
   CHARACTER_Z_SORT_OFFSET,
   COMPANION_DESK_Z_OFFSET,
   COMPANION_FEET_INSET_PX,
+  CREW_LINE_COLOR,
+  CREW_LINE_DASH,
+  CREW_LINE_EDGE_COLOR,
   DEAD_CHARACTER_ALPHA,
   DEAD_CHARACTER_FILTER,
   DELETE_BUTTON_BG,
@@ -75,6 +78,7 @@ import {
   VOID_TILE_DASH_PATTERN,
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
+import type { CrewLine } from '../crewLines.js';
 import {
   accessoryPlacement,
   accessoryZ,
@@ -1243,6 +1247,52 @@ function renderNapZz(
   ctx.restore();
 }
 
+/** The crew lines the last frame drew (the e2e hook reads them; nothing else does). */
+let drawnCrewLines: readonly CrewLine[] = [];
+
+export function lastDrawnCrewLines(): readonly CrewLine[] {
+  return drawnCrewLines;
+}
+
+/**
+ * Who depends on whom: a cable on the floor from each lead to every drawn helper through the
+ * aisles, solid to a crew helper, dashed to a sub-agent. Drawn before the furniture and the
+ * people, so whatever stands on it hides it, and with a paper edge so it reads on any floor.
+ * Static: it moves only with the characters.
+ */
+function renderCrewLines(
+  ctx: CanvasRenderingContext2D,
+  lines: readonly CrewLine[],
+  offsetX: number,
+  offsetY: number,
+  zoom: number,
+): void {
+  drawnCrewLines = lines;
+  if (lines.length === 0) return;
+  const view = { offsetX, offsetY, zoom };
+  const lw = Math.max(2, Math.round(zoom / 2) * 2);
+  ctx.save();
+  ctx.lineCap = 'square';
+  ctx.lineJoin = 'miter';
+  // Edges first, every ink line over them, so crossing lines never cut each other.
+  for (const pass of ['edge', 'ink'] as const) {
+    for (const line of lines) {
+      if (line.points.length < 2) continue;
+      ctx.beginPath();
+      line.points.forEach((p, i) => {
+        const d = worldToDevice(view, p.x, p.y);
+        if (i === 0) ctx.moveTo(d.x, d.y);
+        else ctx.lineTo(d.x, d.y);
+      });
+      ctx.setLineDash(line.kind === 'sub' ? CREW_LINE_DASH.map((d) => d * lw) : []);
+      ctx.strokeStyle = pass === 'edge' ? CREW_LINE_EDGE_COLOR : CREW_LINE_COLOR;
+      ctx.lineWidth = pass === 'edge' ? lw + Math.max(2, lw) : lw;
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 function renderBubbles(
   ctx: CanvasRenderingContext2D,
   characters: Character[],
@@ -1544,6 +1594,7 @@ export function renderFrame(
   deskProps?: readonly DeskPropDraw[],
   bubbleLifts?: ReadonlyMap<number, number>,
   health?: ReadonlyMap<number, { state: HealthState }>,
+  crewLines?: readonly CrewLine[],
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -1606,6 +1657,9 @@ export function renderFrame(
   // Build wall instances for z-sorting with furniture and characters
   const wallInstances = hasWallSprites() ? getWallInstances(tileMap, tileColors, layoutCols) : [];
   const allFurniture = wallInstances.length > 0 ? [...wallInstances, ...furniture] : furniture;
+
+  // Crew lines on the floor: under the furniture and the people, over the carpet
+  renderCrewLines(ctx, crewLines ?? [], offsetX, offsetY, zoom);
 
   // Draw walls + furniture + characters (z-sorted)
   const selectedId = selection?.selectedAgentId ?? null;

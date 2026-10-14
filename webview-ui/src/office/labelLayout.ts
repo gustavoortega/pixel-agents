@@ -43,6 +43,12 @@ export interface LabelItem {
   /** Direction a colliding plate is pushed: down for a plate under the feet (default), up for
    *  one above the head, so a displaced plate never lands on its own character's face. */
   grow?: 'down' | 'up';
+  /** The room's left and right edges: a plate that would cross one slides back inside. */
+  span?: { x0: number; x1: number };
+  /** Narrowest the plate may get (its name must stay whole). */
+  minW?: number;
+  /** Placed before higher ranks: an agent's plate keeps its spot, a helper's gives way. */
+  rank?: number;
 }
 
 export interface LabelPlacement {
@@ -56,7 +62,7 @@ function intersects(a: Rect, b: Rect): boolean {
 
 /**
  * Pushes colliding labels away from their character (down, or up for plates above the head),
- * never sideways. Items are placed by tile row,
+ * never sideways. Items are placed by rank (agents before helpers), then tile row,
  * then tile column, then id, so the result does not depend on sub-tile
  * position and labels do not swap places while someone walks. A label that
  * would move further than a few lines stays at its anchor and dims instead.
@@ -66,7 +72,9 @@ export function layoutLabels(
   obstacles: readonly Rect[],
   lineHeight = COMPACT_LABEL_LINE_HEIGHT_PX,
 ): Map<number, LabelPlacement> {
-  const order = [...items].sort((a, b) => a.row - b.row || a.col - b.col || a.id - b.id);
+  const order = [...items].sort(
+    (a, b) => (a.rank ?? 0) - (b.rank ?? 0) || a.row - b.row || a.col - b.col || a.id - b.id,
+  );
   const placed: Rect[] = [];
   const out = new Map<number, LabelPlacement>();
   const maxDisplacement = LABEL_LAYOUT_MAX_DISPLACEMENT_LINES * lineHeight;
@@ -94,6 +102,48 @@ export function layoutLabels(
     }
   }
   return out;
+}
+
+/** Centre of a plate of width `w` once slid inside its room. */
+function slidCentre(it: LabelItem, w: number): number {
+  if (!it.span) return it.x;
+  const { x0, x1 } = it.span;
+  if (x1 - x0 <= w) return (x0 + x1) / 2;
+  return Math.max(x0 + w / 2, Math.min(it.x, x1 - w / 2));
+}
+
+/**
+ * Narrows plates that would touch a neighbour on the same band, so side-by-side seats keep their
+ * plates side by side (each plate ellipsizes its state and line 2) instead of pushing one off its
+ * agent. Two plates whose boxes share some height must leave `gap` between them, measured where
+ * they end up (slid inside their rooms): the narrower keeps its width when it fits in its half,
+ * the wider takes the rest, and when neither fits both get half. Never narrower than the item's
+ * `minW` (past that the collision pass decides). Returns the new width per id.
+ */
+export function fitPlateWidths(items: readonly LabelItem[], gap: number): Map<number, number> {
+  const w = new Map(items.map((it) => [it.id, it.w] as const));
+  const floor = (it: LabelItem, v: number): number => Math.max(it.minW ?? 0, Math.min(it.w, v));
+  for (let pass = 0; pass < 4; pass++) {
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        const a = items[i];
+        const b = items[j];
+        if (a.y >= b.y + b.h || b.y >= a.y + a.h) continue;
+        const wa = w.get(a.id)!;
+        const wb = w.get(b.id)!;
+        const room = Math.abs(slidCentre(a, wa) - slidCentre(b, wb)) - gap;
+        if ((wa + wb) / 2 <= room) continue;
+        const wide = wa <= wb ? b : a;
+        const wn = Math.min(wa, wb);
+        if (wn <= room) w.set(wide.id, floor(wide, 2 * room - wn));
+        else {
+          w.set(a.id, floor(a, room));
+          w.set(b.id, floor(b, room));
+        }
+      }
+    }
+  }
+  return w;
 }
 
 /**

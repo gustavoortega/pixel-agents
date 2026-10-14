@@ -6,32 +6,53 @@
 import { ART_DENSITY } from '../../../core/src/assets/constants.js';
 import {
   CHARACTER_SPRITE_HEIGHT_PX,
-  NAMEPLATE_BADGE_GOLD,
-  NAMEPLATE_BADGE_INK,
+  MEDAL_COMPACT_PX,
+  MEDAL_FULL_PX,
   NAMEPLATE_BG,
   NAMEPLATE_BORDER_COLOR,
   NAMEPLATE_BORDER_PX,
   NAMEPLATE_COMPACT_BG,
+  NAMEPLATE_COMPACT_FONT_PX,
   NAMEPLATE_COMPACT_LINE_PX,
   NAMEPLATE_HEAD_GAP_PX,
-  NAMEPLATE_LINE1_PX,
-  NAMEPLATE_LINE2_PX,
   NAMEPLATE_PAD_Y_PX,
   NAMEPLATE_PILL_GAP_PX,
   NAMEPLATE_PILL_HEIGHT_PX,
   NAMEPLATE_SHADOW_PX,
   NAMEPLATE_SLOT_CLEARANCE_PX,
-  NAMEPLATE_SUB_BG,
   NAMEPLATE_TEXT_COLOR,
+  PIXEL_FONT_GLYPH_EM,
+  PIXEL_FONT_NARROW_EM,
+  PIXEL_FONT_WIDE_EM,
   PLATE_COMPACT_MAX_LEVEL,
+  PLATE_FULL_LINE1_PX,
+  PLATE_FULL_LINE2_PX,
+  PLATE_FULL_MAX_WIDTH_PX,
+  PLATE_FULL_MIN_WIDTH_PX,
+  PLATE_FULL_NAME_FONT_PX,
+  PLATE_FULL_PITCH_TILES,
+  PLATE_FULL_REF_CSS_ZOOM,
+  PLATE_FULL_STATE_FONT_PX,
+  PLATE_FULL_SUB_FONT_PX,
+  PLATE_HELPER_FONT_PX,
+  PLATE_HELPER_LINE_PX,
+  PLATE_ITEM_GAP_PX,
+  PLATE_PAD_X_PX,
+  PLATE_QUIET_BG,
+  PLATE_QUIET_BORDER,
   PLATE_SCALE_FIT_FLOOR,
   PLATE_SCALE_MAX,
   PLATE_SCALE_MIN,
+  PLATE_SELECTED_BG,
+  PLATE_SELECTED_STATE,
+  PLATE_SELECTED_TEXT,
+  PLATE_STATE_COLOR,
+  PLATE_STUB_EM,
+  TILE_SIZE,
 } from '../constants.js';
 import { ANCHORS } from './flair/accessories.js';
-import type { Rarity } from './flair/modelFlair.js';
-import { rarityColor } from './flair/modelFlair.js';
-import type { NameplateContent } from './toolUtils.js';
+import { alertText, stateText } from './plateState.js';
+import type { NameplateContent, PlatePart } from './toolUtils.js';
 import type { Direction } from './types.js';
 import { Direction as Dir } from './types.js';
 
@@ -52,10 +73,24 @@ export function plateScale(zoom: number, fitZoomWholeMap: number): number {
   );
 }
 
-/** Plates are one-line compact (`Lv N  Name`, no title) up to zoom level 3; from 4x the full two-line plate shows.
- *  Beside the monitor's full attention rail they keep both lines at every zoom. */
+/**
+ * Plates are one-line compact (no line 2) up to zoom level 3; from 4x the full two-line plate
+ * shows. Beside the monitor's full attention rail they keep both lines at every zoom.
+ */
 export function plateIsCompact(zoom: number): boolean {
   return !fullPlates && !monitorFullPlates && zoom / ART_DENSITY <= PLATE_COMPACT_MAX_LEVEL;
+}
+
+/** Scale of full plates beside the rail: the map's CSS px per world px against the reference,
+ *  clamped like plateScale. */
+export function monitorPlateScale(zoom: number, dpr: number): number {
+  return Math.max(PLATE_SCALE_MIN, Math.min(PLATE_SCALE_MAX, zoom / dpr / PLATE_FULL_REF_CSS_ZOOM));
+}
+
+/** Widest a full plate may be, CSS px: about two desk pitches (neighbours alternate rows), clamped. */
+export function fullPlateMaxWidth(zoom: number, dpr: number): number {
+  const pitch = (PLATE_FULL_PITCH_TILES * TILE_SIZE * zoom) / dpr;
+  return Math.max(PLATE_FULL_MIN_WIDTH_PX, Math.min(PLATE_FULL_MAX_WIDTH_PX, 2 * pitch - 16));
 }
 
 let fullPlates = false;
@@ -65,6 +100,11 @@ let monitorFullPlates = false;
  *  for two-line plates. Unlike the hero scene's switch it leaves the plates' scale alone. */
 export function setMonitorFullPlates(on: boolean): void {
   monitorFullPlates = on;
+}
+
+/** The monitor layout's full-plates rule as the shell last set it. */
+export function isMonitorFullPlates(): boolean {
+  return monitorFullPlates;
 }
 
 /** Dev-only (the README hero scene): keeps the two-line plate at any zoom, since a 1x display fits the room at a compact zoom. */
@@ -101,13 +141,152 @@ export function plateSide(dir: Direction): PlateSide {
   return dir === Dir.UP ? 'below' : 'above';
 }
 
-/** Height of the plate itself in CSS px, with its border and hard shadow. 0 when it has no lines. */
+/** The line sizes a plate is drawn with: compact, a helper's one line, or the full plate. */
+export function plateMetrics(c: Pick<NameplateContent, 'helper'>, compact: boolean) {
+  if (compact)
+    return {
+      line1: NAMEPLATE_COMPACT_LINE_PX,
+      nameFont: NAMEPLATE_COMPACT_FONT_PX,
+      stateFont: NAMEPLATE_COMPACT_FONT_PX,
+      medal: MEDAL_COMPACT_PX,
+    };
+  if (c.helper)
+    return {
+      line1: PLATE_HELPER_LINE_PX,
+      nameFont: PLATE_HELPER_FONT_PX,
+      stateFont: PLATE_HELPER_FONT_PX,
+      medal: MEDAL_COMPACT_PX,
+    };
+  return {
+    line1: PLATE_FULL_LINE1_PX,
+    nameFont: PLATE_FULL_NAME_FONT_PX,
+    stateFont: PLATE_FULL_STATE_FONT_PX,
+    medal: MEDAL_FULL_PX,
+  };
+}
+
+/** Height of the plate itself in CSS px, with its border and hard shadow. 0 when it has no lines.
+ *  A compact plate never shows line 2. */
 export function plateBoxHeight(c: NameplateContent, compact = false): number {
-  const line1 = compact ? NAMEPLATE_COMPACT_LINE_PX : NAMEPLATE_LINE1_PX;
-  const lines = (c.badge || c.name ? line1 : 0) + (c.sub ? NAMEPLATE_LINE2_PX : 0);
+  const line1 = c.name || c.state ? plateMetrics(c, compact).line1 : 0;
+  const lines = line1 + (c.sub && !compact ? PLATE_FULL_LINE2_PX : 0);
   return lines > 0
     ? lines + 2 * NAMEPLATE_PAD_Y_PX + 2 * NAMEPLATE_BORDER_PX + NAMEPLATE_SHADOW_PX
     : 0;
+}
+
+/** Width of `text` in FS Pixel Sans at `fontPx`, CSS px. An estimate on the safe side: no DOM. */
+export function pixelTextWidth(text: string, fontPx: number): number {
+  let em = 0;
+  for (const ch of text) {
+    if (ch === '\u2068' || ch === '\u2069') continue;
+    em += /[il.,:;'|!\u00B7 ]/.test(ch)
+      ? PIXEL_FONT_NARROW_EM
+      : /[mwMW\u21BB]/.test(ch)
+        ? PIXEL_FONT_WIDE_EM
+        : PIXEL_FONT_GLYPH_EM;
+  }
+  return Math.ceil(em * fontPx);
+}
+
+/** Widths of a plate's line-1 pieces at scale 1, CSS px. */
+function line1Pieces(c: NameplateContent, compact: boolean, now: number) {
+  const m = plateMetrics(c, compact);
+  const alert = c.state?.kind === 'alert' ? c.state.alert : null;
+  const words = c.state ? stateText(c.state, now) : null;
+  const cmd = c.state?.kind === 'cmd';
+  return {
+    m,
+    tab: alert ? pixelTextWidth(alertText(alert, now), m.stateFont) + 2 * PLATE_PAD_X_PX : 0,
+    medal: c.medal ? m.medal : 0,
+    name: c.name ? pixelTextWidth(c.name, m.nameFont) : 0,
+    loop: c.loop ? pixelTextWidth('\u21BB', m.nameFont) : 0,
+    // `· › words` and the command's cursor block.
+    state: words
+      ? pixelTextWidth(`\u00B7 ${cmd ? '\u203A ' : ''}${words}`, m.stateFont) +
+        (cmd ? Math.ceil(0.6 * m.stateFont) : 0) +
+        (c.state?.kind === 'done' ? 2 * 7 + 4 : 0)
+      : 0,
+  };
+}
+
+/** Sum of widths with the item gap between the non-empty ones. */
+function row(widths: readonly number[]): number {
+  const present = widths.filter((w) => w > 0);
+  return present.reduce((a, b) => a + b, 0) + Math.max(0, present.length - 1) * PLATE_ITEM_GAP_PX;
+}
+
+/** A cut text keeps at least this much, so it still reads as a word and not a stray letter. */
+function stub(fontPx: number): number {
+  return Math.ceil(PLATE_STUB_EM * fontPx);
+}
+
+/** Width of the plate in CSS px at scale 1 (before the max-width cap), for the collision pass.
+ *  `essential`: only what must stay whole (an agent's tab, medal and name; a helper's state
+ *  beside a stub of its label). */
+export function plateBoxWidth(
+  c: NameplateContent,
+  compact: boolean,
+  now: number,
+  essential = false,
+): number {
+  const p = line1Pieces(c, compact, now);
+  const line1 = essential
+    ? c.helper
+      ? row([Math.min(p.name, stub(p.m.nameFont)), p.state])
+      : row([p.tab, p.medal, p.name, p.loop])
+    : row([p.tab, p.medal, p.name, p.loop, p.state]);
+  const line2 =
+    c.sub && !compact && !essential
+      ? pixelTextWidth(c.sub.map((part) => part.text).join(' \u00B7 '), PLATE_FULL_SUB_FONT_PX)
+      : 0;
+  return Math.max(line1, line2) + 2 * PLATE_PAD_X_PX + 2 * NAMEPLATE_BORDER_PX;
+}
+
+/** What a plate of a given width shows: its state words whole, cut, or not at all, and the
+ *  parts of line 2 that fit (the branch cut to a stub before a later part is dropped). */
+export interface PlateFit {
+  state: 'full' | 'cut' | 'none';
+  sub: readonly PlatePart[] | null;
+}
+
+/** Fit a plate's words into `width` CSS px at scale 1, so nothing ends in a stray letter. */
+export function plateFit(
+  c: NameplateContent,
+  compact: boolean,
+  now: number,
+  width: number,
+): PlateFit {
+  const room = width - 2 * PLATE_PAD_X_PX - 2 * NAMEPLATE_BORDER_PX;
+  const p = line1Pieces(c, compact, now);
+  let state: PlateFit['state'] = 'full';
+  if (p.state > 0) {
+    if (c.helper) {
+      // A helper's verb is short and says what it does: its label gives way first.
+      if (room - p.state - PLATE_ITEM_GAP_PX < Math.min(p.name, stub(p.m.nameFont))) state = 'none';
+    } else {
+      const base = row([p.tab, p.medal, p.name, p.loop]);
+      const left = room - base - PLATE_ITEM_GAP_PX;
+      state = left >= p.state ? 'full' : left >= stub(p.m.stateFont) ? 'cut' : 'none';
+    }
+  }
+  let sub: PlatePart[] | null = null;
+  if (c.sub && !compact) {
+    const font = PLATE_FULL_SUB_FONT_PX;
+    const sep = pixelTextWidth(' \u00B7 ', font);
+    const widths = c.sub.map((part, i) => pixelTextWidth(part.text, font) + (i > 0 ? sep : 0));
+    // Only a leading session part (the branch) can be cut; the age and the counts are whole or gone.
+    const first = c.sub[0].pv ? Math.min(widths[0], stub(font)) : widths[0];
+    let used = first;
+    sub = [c.sub[0]];
+    for (let i = 1; i < c.sub.length; i++) {
+      if (used + widths[i] > room) break;
+      used += widths[i];
+      sub.push(c.sub[i]);
+    }
+    if (first > room) sub = null;
+  }
+  return { state, sub };
 }
 
 /** Height of the tripwire chip in CSS px, 0 when there is no alarm. */
@@ -126,22 +305,36 @@ export function nameplateHeight(c: NameplateContent): number {
 export interface NameplateStyle {
   bg: string;
   text: string;
-  subBg: string;
+  /** State words after the name. */
+  state: string;
   /** Border and hard shadow: the same for every agent. */
   border: string;
-  badgeBg: string;
-  badgeInk: string;
+  /** An idle plate: no shadow. */
+  quiet: boolean;
+  /** The selected plate is paper, every other one ink (the privacy mask differs). */
+  paper: boolean;
 }
 
-/** Plate colors for a tier. Rarity (tiers 2-4) colors only the Lv badge, never the border; tier 1
- *  and an unknown model (null) keep the gold badge. */
-export function nameplateStyle(rarity: Rarity | null, compact = false): NameplateStyle {
+/** Plate colors: the selected agent's plate is paper (the inspector holds its details), an idle
+ *  one goes quiet, a compact one is a little see-through. The tier shows on the medal. */
+export function nameplateStyle(
+  look: { compact?: boolean; quiet?: boolean; selected?: boolean } = {},
+): NameplateStyle {
+  if (look.selected)
+    return {
+      bg: PLATE_SELECTED_BG,
+      text: PLATE_SELECTED_TEXT,
+      state: PLATE_SELECTED_STATE,
+      border: NAMEPLATE_BORDER_COLOR,
+      quiet: false,
+      paper: true,
+    };
   return {
-    bg: compact ? NAMEPLATE_COMPACT_BG : NAMEPLATE_BG,
+    bg: look.quiet ? PLATE_QUIET_BG : look.compact ? NAMEPLATE_COMPACT_BG : NAMEPLATE_BG,
     text: NAMEPLATE_TEXT_COLOR,
-    subBg: NAMEPLATE_SUB_BG,
-    border: NAMEPLATE_BORDER_COLOR,
-    badgeBg: rarity ? rarityColor(rarity) : NAMEPLATE_BADGE_GOLD,
-    badgeInk: NAMEPLATE_BADGE_INK,
+    state: PLATE_STATE_COLOR,
+    border: look.quiet ? PLATE_QUIET_BORDER : NAMEPLATE_BORDER_COLOR,
+    quiet: !!look.quiet,
+    paper: false,
   };
 }

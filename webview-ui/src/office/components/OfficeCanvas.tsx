@@ -14,6 +14,7 @@ import {
 } from '../camera.js';
 import { officeNow } from '../clock.js';
 import { getColorizedSprite } from '../colorize.js';
+import { crewLines } from '../crewLines.js';
 import { canPlaceFurniture, getWallPlacementRow } from '../editor/editorActions.js';
 import type { EditorState } from '../editor/editorState.js';
 import { type ActivityLevel, busiest, requestRedraw, startGameLoop } from '../engine/gameLoop.js';
@@ -394,6 +395,7 @@ export function OfficeCanvas({
           officeState.deskProps,
           officeState.bubbleLift,
           officeState.health,
+          crewLines(officeState),
         );
         offsetRef.current = { x: offsetX, y: offsetY };
 
