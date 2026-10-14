@@ -37,6 +37,10 @@ export interface StandaloneSession {
    *  browser page's exponential-backoff retry reaches it again. With the session's
    *  `token` the page reconnects; with none, a fresh token, the host refuses it (4001). */
   startHost: (token?: string) => Promise<void>;
+  /** Close the page's socket from the page, as a network blip or a laptop waking would, with
+   *  the host still running: the transport reconnects and the handshake restates everything,
+   *  which a hook-only agent does not survive across a host restart. */
+  dropSocket: () => Promise<void>;
 }
 
 export interface LaunchStandaloneOptions {
@@ -180,7 +184,10 @@ async function killProcess(child: ChildProcessWithoutNullStreams): Promise<void>
 async function installMessageRecorder(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const recordedMessages: unknown[] = [];
-    const deliverer = window as Window & { __pixelAgentsDeliver?: (msg: unknown) => void };
+    const deliverer = window as Window & {
+      __pixelAgentsDeliver?: (msg: unknown) => void;
+      __pixelAgentsDropSocket?: () => void;
+    };
     const OriginalWebSocket = window.WebSocket;
     const RecordingWebSocket = new Proxy(OriginalWebSocket, {
       construct(target, args) {
@@ -198,6 +205,8 @@ async function installMessageRecorder(page: Page): Promise<void> {
         deliverer.__pixelAgentsDeliver = (msg) => {
           socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(msg) }));
         };
+        // Any code but 4001 (refused): the transport retries.
+        deliverer.__pixelAgentsDropSocket = () => socket.close(4000, 'e2e drop');
         return socket;
       },
     });
@@ -347,6 +356,11 @@ export async function launchStandalone(
       drainMessages: () => drainRecordedMessages(page),
       stopHost: async (opts?: { crash?: boolean }) => {
         await (opts?.crash ? killProcess(hostProcess) : stopProcess(hostProcess));
+      },
+      dropSocket: async () => {
+        await page.evaluate(() =>
+          (window as Window & { __pixelAgentsDropSocket?: () => void }).__pixelAgentsDropSocket?.(),
+        );
       },
       startHost: async (hostToken?: string) => {
         hostProcess = spawnAndAttach(hostToken ?? crypto.randomUUID());

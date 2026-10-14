@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { toMajorMinor } from './changelogData.js';
+import { cycleOrder } from './components/attention.js';
+import { attentionOf, sessionIds } from './components/attentionSource.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
@@ -18,10 +20,12 @@ import { UsagePanel } from './components/UsagePanel.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
 import { CLAUDE_HOOKS_PROVIDER_ID, CLAUDE_STATUSLINE_PROVIDER_ID } from './constants.js';
 import { isEditDirty, noteLayoutSent } from './hooks/layoutLoadedGate.js';
+import { usePrivacy } from './hooks/monitorPrivacy.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
 import { useIntroTour } from './hooks/useIntroTour.js';
+import { useMonitorKeys } from './hooks/useMonitorKeys.js';
 import { AutoFit } from './office/camera.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
@@ -320,6 +324,45 @@ function App() {
     transport.send({ type: 'focusAgent', id: focusId });
   }, []);
 
+  // The monitor's selection: what a canvas click does to an agent, without the toggle.
+  const selectAndFollow = useCallback((id: number) => {
+    const os = getOfficeState();
+    os.selectedAgentId = id;
+    os.cameraFollowId = id;
+    requestRedraw();
+  }, []);
+  const handleRailSelect = useCallback(
+    (id: number) => {
+      selectAndFollow(id);
+      handleClick(id);
+    },
+    [selectAndFollow, handleClick],
+  );
+
+  const [privacy, togglePrivacy] = usePrivacy();
+  // Read at the key press, so the order is the rail's as it stands then.
+  const toolsRef = useRef(agentTools);
+  toolsRef.current = agentTools;
+  const statusesRef = useRef(agentStatuses);
+  statusesRef.current = agentStatuses;
+  useMonitorKeys(getOfficeState(), {
+    blocked:
+      editor.isEditMode ||
+      !!intro ||
+      isSettingsOpen ||
+      isChangelogOpen ||
+      isHooksInfoOpen ||
+      showMigrationNotice,
+    order: () => {
+      const os = getOfficeState();
+      return cycleOrder(attentionOf(os, toolsRef.current, statusesRef.current), sessionIds(os));
+    },
+    select: selectAndFollow,
+    togglePrivacy,
+    // The sheet takes the Usage panel's corner.
+    onSheetOpen: () => setIsUsageOpen(false),
+  });
+
   const officeState = getOfficeState();
 
   // Merged set of folders the Areas dropdown can map: real workspace folders plus
@@ -455,7 +498,6 @@ function App() {
             onZoomChange={handleManualZoom}
             fitActive={fitActive}
             onFit={handleFit}
-            limits={statuslineInstalled ? usageLimits : null}
           />
 
           {/* Vignette overlay */}
@@ -707,7 +749,20 @@ function App() {
     </div>
   );
 
-  return <MonitorShell officeState={officeState}>{stage}</MonitorShell>;
+  return (
+    <MonitorShell
+      officeState={officeState}
+      agentTools={agentTools}
+      agentStatuses={agentStatuses}
+      limits={statuslineInstalled ? usageLimits : null}
+      statuslineInstalled={statuslineInstalled}
+      privacy={privacy}
+      onTogglePrivacy={togglePrivacy}
+      onSelect={handleRailSelect}
+    >
+      {stage}
+    </MonitorShell>
+  );
 }
 
 export default App;

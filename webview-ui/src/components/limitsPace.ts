@@ -166,3 +166,99 @@ export function hudLimits(limits: UsageLimits | null, now: number): HudLimit[] {
     return [{ key, text: `${LIMIT_LABEL[key]} ${Math.round(window.usedPercentage)}%`, tone }];
   });
 }
+
+// ── The monitor's Pace panel ────────────────────────────────────────────────────────────────────
+
+const PACE_LABEL: Record<LimitKey, string> = { fiveHour: '5 h block', sevenDay: 'Week' };
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+function clockOf(ms: number): string {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** A 5-hour reset reads as a clock, a weekly one with its day: `20:10`, `Thu 09:00`. */
+function resetLabel(key: LimitKey, resetsAt: number): string {
+  return key === 'fiveHour'
+    ? clockOf(resetsAt)
+    : `${WEEKDAYS[new Date(resetsAt).getDay()]} ${clockOf(resetsAt)}`;
+}
+
+export interface PaceRow {
+  key: LimitKey;
+  /** `5 h block`, `Week`. */
+  label: string;
+  /** The window's one phrase around its big value: `runs out` 18:33, 66% `at reset`, 37% `used`. */
+  head: { before: string; value: string; after: string };
+  /** Whole percent used, as the status line rounds it. */
+  used: number;
+  /** Bar fill, 0..100. */
+  fill: number;
+  /** The even-pace tick: how much of the window had passed at the reading, 0..100. */
+  mark: number;
+  /** When this pace reaches 100 %, epoch ms; only while it is on course to. */
+  outAt?: number;
+  tone: LimitTone;
+  /** `20:10`, `Thu 09:00`. */
+  resetAt: string;
+  /** `2h50m`. */
+  resetIn: string;
+  /** The head already says how much is used, so the note leaves it out. */
+  usedInHead: boolean;
+  /** `23m ago` once the reading is stale; absent while fresh. */
+  age?: string;
+}
+
+/** One Pace row per live window, the 5-hour window first; never a row for a window with no reading. */
+export function paceRows(limits: UsageLimits | null, now: number): PaceRow[] {
+  if (limits === null) return [];
+  return (['fiveHour', 'sevenDay'] as const).flatMap((key): PaceRow[] => {
+    const window = liveWindow(limits, key, now);
+    if (window === null) return [];
+    const pace = limitPace(window, limits.receivedAt, key);
+    const used = Math.round(window.usedPercentage);
+    const outAt = pace.runoutMs === undefined ? undefined : limits.receivedAt + pace.runoutMs;
+    let head: PaceRow['head'];
+    if (isReached(window)) {
+      head = { before: '', value: `${used}%`, after: 'used · limit reached' };
+    } else if (outAt !== undefined) {
+      head =
+        key === 'fiveHour'
+          ? { before: 'runs out', value: clockOf(outAt), after: '' }
+          : { before: 'runs out in', value: formatDuration(outAt - now), after: '' };
+    } else if (pace.projection !== undefined) {
+      head = {
+        before: '',
+        value: `${Math.min(PROJECTION_DISPLAY_CAP, Math.round(pace.projection))}%`,
+        after: 'at reset',
+      };
+    } else {
+      head = { before: '', value: `${used}%`, after: 'used' };
+    }
+    const stale = now - limits.receivedAt >= LIMITS_FRESH_MS;
+    return [
+      {
+        key,
+        label: PACE_LABEL[key],
+        head,
+        used,
+        fill: Math.min(LIMIT_FULL_PCT, Math.max(0, window.usedPercentage)),
+        mark: Math.round(pace.elapsed * 100),
+        ...(outAt !== undefined && { outAt }),
+        tone: pace.tone,
+        resetAt: resetLabel(key, window.resetsAt),
+        resetIn: formatDuration(window.resetsAt - now),
+        usedInHead: head.after.startsWith('used'),
+        ...(stale && { age: `${formatDuration(now - limits.receivedAt)} ago` }),
+      },
+    ];
+  });
+}
+
+/** The row the one nudge belongs to (limitsNudge's order: the weekly window first), if any is on course to run out. */
+export function paceTipKey(rows: readonly PaceRow[]): LimitKey | null {
+  for (const key of ['sevenDay', 'fiveHour'] as const) {
+    if (rows.some((r) => r.key === key && r.outAt !== undefined)) return key;
+  }
+  return null;
+}

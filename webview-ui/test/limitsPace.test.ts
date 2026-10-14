@@ -6,6 +6,8 @@ import {
   limitPace,
   limitsNudge,
   officialRow,
+  paceRows,
+  paceTipKey,
 } from '../src/components/limitsPace.js';
 
 const M = 60_000;
@@ -143,5 +145,71 @@ describe('limitsNudge', () => {
 
   it('stays quiet on a pace that fits the window', () => {
     expect(limitsNudge(limits({ fiveHour: window(30, FIVE_H, 0.5) }), RECEIVED)).toBeNull();
+  });
+});
+
+describe('paceRows (the monitor Pace panel)', () => {
+  // One row per live window; the head says the one thing about it, by its pace.
+  it.each([
+    [
+      'runs out before a 5-hour reset: its clock',
+      'fiveHour',
+      60,
+      0.5,
+      ['runs out', 'CLOCK', ''],
+      'red',
+    ],
+    [
+      'runs out before the weekly reset: how long',
+      'sevenDay',
+      60,
+      0.5,
+      ['runs out in', '2d8h', ''],
+      'red',
+    ],
+    ['lands under 100 %: where it lands', 'fiveHour', 30, 0.5, ['', '60%', 'at reset'], 'green'],
+    ['early in the window: only what is used', 'fiveHour', 3, 0.02, ['', '3%', 'used'], 'green'],
+    ['full: reached', 'sevenDay', 100, 0.5, ['', '100%', 'used · limit reached'], 'red'],
+  ] as const)('%s', (_case, key, used, elapsed, head, tone) => {
+    const span = key === 'fiveHour' ? FIVE_H : WEEK;
+    const [row] = paceRows(limits({ [key]: window(used, span, elapsed) }), RECEIVED);
+    const shown = head[1] === 'CLOCK' ? [head[0], row.head.value, head[2]] : head;
+    expect([row.head.before, row.head.value, row.head.after]).toEqual(shown);
+    expect(row.tone).toBe(tone);
+    expect(row.mark).toBe(Math.round(elapsed * 100));
+    expect(row.usedInHead).toBe(head[2].startsWith('used'));
+  });
+
+  it('dates the run-out from the reading and prints it as a clock', () => {
+    // 60 % in 2.5 h runs out 1 h 40 m after the reading.
+    const [row] = paceRows(limits({ fiveHour: window(60, FIVE_H, 0.5) }), RECEIVED);
+    expect(row.outAt).toBe(RECEIVED + 100 * M);
+    const at = new Date(RECEIVED + 100 * M);
+    const clock = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    expect(row.head.value).toBe(clock);
+  });
+
+  it('has no row for a window with no reading or past its reset, so nothing reads 0 %', () => {
+    expect(paceRows(null, RECEIVED)).toEqual([]);
+    const gone = { usedPercentage: 50, resetsAt: RECEIVED - M };
+    expect(paceRows(limits({ fiveHour: gone }), RECEIVED)).toEqual([]);
+    expect(
+      paceRows(limits({ sevenDay: window(10, WEEK, 0.5) }), RECEIVED).map((r) => r.key),
+    ).toEqual(['sevenDay']);
+  });
+
+  it('ages a stale reading and leaves a fresh one unaged', () => {
+    const read = limits({ fiveHour: window(30, FIVE_H, 0.5) });
+    expect(paceRows(read, RECEIVED + 5 * M)[0].age).toBeUndefined();
+    expect(paceRows(read, RECEIVED + 23 * M)[0].age).toBe('23m ago');
+  });
+
+  it('puts the one tip on the weekly window first, then the 5-hour one, and none on a safe pace', () => {
+    const both = limits({ fiveHour: window(60, FIVE_H, 0.5), sevenDay: window(60, WEEK, 0.5) });
+    expect(paceTipKey(paceRows(both, RECEIVED))).toBe('sevenDay');
+    const block = limits({ fiveHour: window(60, FIVE_H, 0.5), sevenDay: window(10, WEEK, 0.5) });
+    expect(paceTipKey(paceRows(block, RECEIVED))).toBe('fiveHour');
+    const safe = limits({ fiveHour: window(30, FIVE_H, 0.5) });
+    expect(paceTipKey(paceRows(safe, RECEIVED))).toBeNull();
   });
 });

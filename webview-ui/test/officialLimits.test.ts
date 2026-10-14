@@ -11,7 +11,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TokenUsage, UsageLimits } from '../../core/src/messages.js';
-import { HudCard } from '../src/components/HudCard.js';
+import { PacePanel } from '../src/components/PacePanel.js';
 import { UsagePanel } from '../src/components/UsagePanel.js';
 
 const M = 60_000;
@@ -55,17 +55,8 @@ function panel(
   );
 }
 
-function hud(limits: UsageLimits | null): string {
-  return renderToStaticMarkup(
-    createElement(HudCard, {
-      characters: new Map(),
-      zoom: 4,
-      onZoomChange: () => {},
-      fitActive: false,
-      onFit: () => {},
-      limits,
-    }),
-  );
+function pace(limits: UsageLimits | null, installed = true, slim = false): string {
+  return renderToStaticMarkup(createElement(PacePanel, { limits, installed, now: NOW, slim }));
 }
 
 /** Visible text: tags dropped, the entities React escapes decoded. */
@@ -132,17 +123,29 @@ describe('Usage panel: official row', () => {
   });
 });
 
-describe('HUD card: limits line', () => {
-  it('reads both live windows on one line', () => {
-    expect(text(hud(reading(NOW - 5 * M)))).toContain('5h 38% · 7d 12%');
+describe('Pace panel (the official limits beside the attention rail)', () => {
+  it('reads each live window as its own row, under the hud-limits testid', () => {
+    const html = pace(reading(NOW - 5 * M));
+    expect(html).toContain('data-testid="hud-limits"');
+    expect(text(html)).toContain('5 h block');
+    expect(text(html)).toContain('Week');
+    expect(text(html)).toContain('in 2h13m');
   });
 
-  it('omits a window past its reset, and the whole line when none is live', () => {
+  it('has no row for a window past its reset, and never prints a 0 for it', () => {
     const fiveHourGone = reading(NOW - 6 * H, NOW - M);
-    expect(text(hud(fiveHourGone))).toContain('7d 12%');
-    expect(text(hud(fiveHourGone))).not.toContain('5h ');
+    expect(text(pace(fiveHourGone))).not.toContain('5 h block');
+    expect(text(pace(fiveHourGone))).toContain('Week');
+    expect(text(pace({ ...fiveHourGone, sevenDay: null }))).not.toMatch(/(^|\D)0%/);
+    expect(pace({ ...fiveHourGone, sevenDay: null })).not.toContain('hud-limits');
+  });
 
-    expect(hud({ ...fiveHourGone, sevenDay: null })).not.toContain('hud-limits');
-    expect(hud(null)).not.toContain('hud-limits');
+  it('says how to turn the limits on when the wrapper is off, and stays empty before the server says it receives them', () => {
+    expect(text(pace(null, false))).toContain('Turn on "Claude status line" in Settings.');
+    expect(pace(null, true)).toBe('');
+  });
+
+  it('shrinks to one figure per window in the slim rail', () => {
+    expect(text(pace(reading(NOW - 5 * M), true, true))).toContain('5h 38%7d 12%');
   });
 });
