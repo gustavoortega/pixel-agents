@@ -14,6 +14,7 @@ import {
   setDismissalTracker,
   setHookProvider as setWatcherProvider,
   startExternalSessionScanning,
+  startFileWatching,
 } from '../src/fileWatcher.js';
 import { PathSet } from '../src/pathKey.js';
 import { claudeProvider } from '../src/providers/hook/claude/claude.js';
@@ -105,6 +106,15 @@ describe('session meta', () => {
   }
 
   const seed = () => seedSessionMeta(1, agents, claudeProvider);
+
+  /** Start watching the way the runtime does: the seed, then the history scan that reads the
+   *  rows before the offset. The cost is shown once the scan has been joined to the live rows. */
+  function watch(): void {
+    const timers = new Map<number, ReturnType<typeof setInterval>>();
+    startFileWatching(1, '', agents, new Map(), timers, waitingTimers, permissionTimers);
+    for (const timer of timers.values()) clearInterval(timer);
+  }
+  const costShown = () => vi.waitFor(() => expect(lastSession()).toHaveProperty('costUsd'));
 
   describe('start', () => {
     it('C1.1 is the first timestamped record: a metadata row on line 1 does not count', () => {
@@ -212,7 +222,7 @@ describe('session meta', () => {
       expect(track.at).toBe(T0 + HOUR_MS);
     });
 
-    it('an adopted agent counts the rows before its offset once, and those after it once', () => {
+    it('an adopted agent counts the rows before its offset once, and those after it once', async () => {
       // Drops make a double read visible: [9] | [5, 3] folded twice reads 22, not 17.
       const file = writeTranscript('s.jsonl', [
         onBranch('main'),
@@ -225,13 +235,70 @@ describe('session meta', () => {
       );
       adoptedAt(file, offset);
 
-      seed();
+      watch();
+      await costShown();
       expect(lastSession()?.costUsd).toBe(9);
       feed(costRow(5));
       feed(costRow(3));
 
       expect(lastSession()?.costUsd).toBe(17);
     });
+
+    it('C1.8 an earlier process whose rows sit before the tail window still counts', async () => {
+      // 10 (a process that ended) | 300 KiB of other records | 4 (the process running now).
+      const filler = Array.from({ length: 300 }, () => ({
+        type: 'user',
+        timestamp: at(0),
+        message: { content: 'x'.repeat(1024) },
+      }));
+      const file = writeTranscript('s.jsonl', [costRow(10), ...filler, costRow(4)]);
+      adoptedAt(file);
+
+      watch();
+      await costShown();
+
+      expect(lastSession()?.costUsd).toBe(14);
+    });
+
+    // History is [10, 4]: one process ended at 10, the running one is at 4.
+    it.each([
+      { live: 3, total: 17, joins: 'a lower counter is a new process: 10 + 4 + 3' },
+      { live: 6, total: 16, joins: 'a higher counter continues the running one: 10 + 6' },
+    ])(
+      'C1.9 a row read live while the scan is out joins history ($joins), never shown alone',
+      async ({ live, total }) => {
+        const file = writeTranscript('s.jsonl', [onBranch('main'), costRow(10), costRow(4)]);
+        adoptedAt(file);
+
+        watch();
+        feed(costRow(live));
+        expect(sessionMessages().filter((m) => 'costUsd' in m)).toEqual([]);
+        await costShown();
+
+        expect(sessionMessages().filter((m) => 'costUsd' in m)).toHaveLength(1);
+        expect(lastSession()?.costUsd).toBe(total);
+      },
+    );
+
+    it(
+      'C1.10 a scan the budget cut shows the cost of the window before the offset: a floor',
+      { timeout: 20_000 },
+      async () => {
+        // 10 | a 65 MiB hole the budget ends in | 4. The scan reaches only the 10; the window
+        // before the offset holds the 4 of the process running now.
+        const file = writeTranscript('s.jsonl', [costRow(10)]);
+        fs.truncateSync(file, fs.statSync(file).size + 65 * 1024 * 1024);
+        fs.appendFileSync(file, '\n' + JSON.stringify(costRow(4)) + '\n');
+        adoptedAt(file);
+
+        watch();
+        await vi.waitFor(() => expect(lastSession()).toHaveProperty('costUsd'), {
+          timeout: 15_000,
+        });
+
+        expect(lastSession()?.costUsd).toBe(4);
+      },
+    );
 
     it('a file read from the top is folded by its live replay alone', () => {
       const rows = [onBranch('main'), costRow(5), costRow(3)];
@@ -247,10 +314,11 @@ describe('session meta', () => {
   });
 
   describe('a new transcript on the same agent', () => {
-    it('is read afresh: branch, start, id and cost belong to the new file only', () => {
+    it('is read afresh: branch, start, id and cost belong to the new file only', async () => {
       const first = writeTranscript('first.jsonl', [onBranch('main', 0), costRow(5)]);
       adoptedAt(first);
-      seed();
+      watch();
+      await costShown();
       expect(lastSession()).toMatchObject({ branch: 'main', costUsd: 5, startedAt: T0 });
 
       const next = writeTranscript('7e8f9a0b-1111-2222-3333-444455556666.jsonl', [

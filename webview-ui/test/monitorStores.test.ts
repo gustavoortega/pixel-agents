@@ -138,6 +138,44 @@ describe('monitor stores', () => {
     expect(storedFor(os, 7)).toEqual(NOTHING_HELD);
   });
 
+  it('B8 a monitor message replaces its store entry: a field it leaves out is gone, not kept', () => {
+    // The server sends a fire as `{wakes}` with no `nextAt`: the wake that was pending has
+    // happened, and a store that merged would go on counting down to it.
+    const os = new OfficeState(floorLayout());
+    const store = (msg: { type: string; [key: string]: unknown }) => {
+      applyMonitorMessage(os, msg);
+      return {
+        agentLoop: os.loops,
+        agentArtifacts: os.artifacts,
+        agentTests: os.tests,
+        agentSession: os.sessionMeta,
+      }[msg.type]?.get(7);
+    };
+    for (const [first, second] of [
+      [
+        { type: 'agentLoop', id: 7, nextAt: T + 60_000 },
+        { type: 'agentLoop', id: 7, wakes: 1 },
+      ],
+      [
+        { type: 'agentArtifacts', id: 7, count: 2, complete: true, items: [{ url: 'a' }] },
+        { type: 'agentArtifacts', id: 7, count: 1, complete: false },
+      ],
+      [
+        { type: 'agentTests', id: 7, passed: 3, failed: 1, at: T },
+        { type: 'agentTests', id: 7, passed: 4 },
+      ],
+      [
+        { type: 'agentSession', id: 7, branch: 'main', costUsd: 1, costAt: T },
+        { type: 'agentSession', id: 7, branch: 'dev' },
+      ],
+    ] as const) {
+      store(first);
+      const { type, id, ...expected } = second as Record<string, unknown>;
+      expect([type, id]).toEqual([second.type, 7]);
+      expect(store(second)).toEqual(expected);
+    }
+  });
+
   it('a restated start keeps the pending prompt with its start; a turn end drops it', () => {
     const os = new OfficeState(floorLayout());
     applyMonitorMessage(os, {

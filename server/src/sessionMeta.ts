@@ -9,6 +9,7 @@ import {
   SESSION_META_HEAD_BYTES,
 } from './constants.js';
 import { readTailLines } from './contextUsage.js';
+import { type HistoryConsumer, readsHistory, registerHistoryConsumer } from './historyScan.js';
 import type { AgentState, CostTrack, MonitorView, SessionMetaTrack } from './types.js';
 import { sanitizeWorkflowText } from './workflowRuns.js';
 
@@ -45,6 +46,7 @@ export function foldCost(track: CostTrack, facts: SessionMetaFacts | null): bool
   if (value === undefined) return false;
   const before = { total: costTotal(track), at: track.at };
   if (track.last !== undefined && value < track.last) track.settled += track.last;
+  track.first ??= value;
   track.last = value;
   track.at = track.clock;
   return before.total !== costTotal(track) || before.at !== track.at;
@@ -63,6 +65,27 @@ export function costFromRecord(
   return foldCost(track, provider?.extractSessionMeta?.(record) ?? null);
 }
 
+/**
+ * Put the cost of the records before a watch offset (`history`) under the cost of the records
+ * after it (`live`, folded from nothing). The first live counter says how they join: below the
+ * history's last value it is a new process, so that value is settled; otherwise the process
+ * goes on and only the history's earlier processes are added.
+ */
+export function joinCost(history: CostTrack, live: CostTrack): void {
+  if (history.last === undefined) return;
+  if (live.last === undefined) {
+    live.settled = history.settled;
+    live.last = history.last;
+    live.first = history.first;
+    live.at = history.at;
+    return;
+  }
+  const newProcess = live.first !== undefined && live.first < history.last;
+  live.settled += history.settled + (newProcess ? history.last : 0);
+  live.first = history.first;
+  live.at ??= history.clock;
+}
+
 // ── The fold and its view ──
 
 function trackFor(agent: AgentState): SessionMetaTrack {
@@ -73,8 +96,8 @@ function trackFor(agent: AgentState): SessionMetaTrack {
 }
 
 /** Fold one record's facts in. Returns whether the shown view may have changed. */
-function foldFacts(track: SessionMetaTrack, facts: SessionMetaFacts): boolean {
-  let changed = foldCost(track.cost, facts);
+function foldFacts(track: SessionMetaTrack, facts: SessionMetaFacts, withCost = true): boolean {
+  let changed = withCost && foldCost(track.cost, facts);
   if (facts.branch !== undefined) {
     // Last record wins: a checkout mid-file moves the branch.
     const branch = sanitizeWorkflowText(facts.branch, SESSION_BRANCH_MAX_LENGTH);
@@ -97,7 +120,9 @@ function viewOf(agent: AgentState, track: SessionMetaTrack): MonitorView<AgentSe
   if (track.branch !== undefined) view.branch = track.branch;
   const sessionId8 = agent.sessionId.slice(0, 8);
   if (sessionId8) view.sessionId8 = sessionId8;
-  const cost = costTotal(track.cost);
+  // Held while the history scan has not joined the rows before the offset: a total from the
+  // rows after it alone would be contradicted the moment the scan ends.
+  const cost = track.costHold ? undefined : costTotal(track.cost);
   if (cost !== undefined) {
     view.costUsd = cost;
     if (track.cost.at !== undefined) view.costAt = track.cost.at;
@@ -226,6 +251,10 @@ export function seedSessionMeta(
   // The window ends at the offset, so a file read from the top (offset 0) has none: its live
   // replay folds everything, and folding it here too would read a repeat as a new process.
   const lines = readWindowLines(agent.jsonlFile, agent.fileOffset, CONTEXT_SEED_TAIL_BYTES);
+  // The cost is not folded from this window: the history scan reads every row before the
+  // offset (a process that ended before the window counts too), and folding both would count
+  // the window twice.
+  const costFromScan = readsHistory(agentId, agent, provider);
   for (const line of lines ?? []) {
     if (!line) continue;
     let record: unknown;
@@ -235,10 +264,58 @@ export function seedSessionMeta(
       continue;
     }
     const facts = provider.extractSessionMeta(record);
-    if (facts) foldFacts(track, facts);
+    if (facts) foldFacts(track, facts, !costFromScan);
   }
   publish(agentId, agent, agents, track);
 }
+
+// ── Cost from the history scan ──
+
+/** The cost of the window before `offset`, for a scan that could not read it all. */
+function costOfWindow(file: string, offset: number, provider: HookProvider): CostTrack {
+  const cost = newCostTrack();
+  for (const line of readWindowLines(file, offset, CONTEXT_SEED_TAIL_BYTES) ?? []) {
+    if (!line) continue;
+    try {
+      costFromRecord(cost, JSON.parse(line), provider);
+    } catch {
+      // A cut or malformed line carries no row.
+    }
+  }
+  return cost;
+}
+
+/**
+ * Every row before the watch offset goes through `costFromRecord`, in order, in the one pass
+ * the history scan makes. The total is shown once that pass is joined to the rows read live,
+ * and a scan the budget cut falls back to the window before the offset: the recent processes
+ * are in it, and an older one is missing from a floor rather than guessed.
+ */
+const costHistory: HistoryConsumer = {
+  begin(_agentId, { agent }) {
+    const track = agent.sessionMetaTrack;
+    if (!track || track.file !== agent.jsonlFile || track.costMerged) return;
+    track.costHold = newCostTrack();
+  },
+  record(_agentId, record, { agent, provider, file }) {
+    const track = agent.sessionMetaTrack;
+    if (track?.costHold && track.file === file) costFromRecord(track.costHold, record, provider);
+  },
+  done(agentId, complete, { agents, agent, provider, file, offset }) {
+    const track = agent.sessionMetaTrack;
+    const hold = track?.costHold;
+    if (!track || !hold || track.file !== file) return;
+    track.costHold = undefined;
+    track.costMerged = true;
+    joinCost(complete ? hold : costOfWindow(track.file, offset, provider), track.cost);
+    if (!agents.has(agentId)) return;
+    const next = viewOf(agent, track);
+    if (JSON.stringify(next) !== JSON.stringify(agent.sessionMeta ?? {})) {
+      publish(agentId, agent, agents, track);
+    }
+  },
+};
+registerHistoryConsumer(costHistory);
 
 /** The folder a transcript was written in: the last path segment of the newest `cwd` in its
  *  tail. The hashed project dir cannot say (`my-repo` and `my/repo` hash alike). */

@@ -25,16 +25,27 @@ import type { AgentState } from './types.js';
  * is `complete: false`: counts become floors and per-url publishes are left out.
  */
 
+/** What a consumer is told about the agent whose history is being read. `offset` is where the
+ *  live parser takes over: the scan reads 0..offset and no further. */
+export interface HistoryScanContext {
+  agents: AgentStateStore;
+  agent: AgentState;
+  provider: HookProvider;
+  /** The transcript being read: the agent may have moved to another since. */
+  file: string;
+  offset: number;
+}
+
 /** Something else that reads an agent's history in the same pass (the session cost reducer).
- *  Records arrive parsed, in file order, only those before the agent's watch offset. */
+ *  `begin` runs when the scan is queued, so a consumer can hold back what the live path would
+ *  show on its own. Records arrive parsed, in file order, only those before the offset. `done`
+ *  runs exactly once per `begin`, even when the scan was skipped (the agent left or moved to
+ *  another transcript) or failed: `complete` is false when the budget cut it or the file could
+ *  not be read. */
 export interface HistoryConsumer {
-  record(
-    agentId: number,
-    record: unknown,
-    ctx: { agent: AgentState; provider: HookProvider },
-  ): void;
-  /** The scan ended: `complete` is false when the budget cut it or the file could not be read. */
-  done?(agentId: number, complete: boolean): void;
+  begin?(agentId: number, ctx: HistoryScanContext): void;
+  record(agentId: number, record: unknown, ctx: HistoryScanContext): void;
+  done?(agentId: number, complete: boolean, ctx: HistoryScanContext): void;
 }
 
 const consumers: HistoryConsumer[] = [];
@@ -56,6 +67,9 @@ interface ScanJob {
   tracker: MonitorTracker;
   file: string;
   offset: number;
+  /** The consumers that were told `begin`: they, and only they, hear the rest. */
+  consumers: HistoryConsumer[];
+  ended: boolean;
 }
 
 const queue: ScanJob[] = [];
@@ -71,13 +85,12 @@ export function scheduleHistoryScan(
   provider: HookProvider | null | undefined,
 ): void {
   const agent = agents.get(agentId);
-  if (!agent || !provider || agentId >= SHADOW_ID_BASE) return;
-  if (!agent.jsonlFile || agent.fileOffset <= 0) return;
+  if (!agent || !readsHistory(agentId, agent, provider) || !provider) return;
   const tracker = trackerOf(agent);
   if (tracker.scanRequested) return;
   tracker.scanRequested = true;
   tracker.scanning = true;
-  queue.push({
+  const job: ScanJob = {
     agentId,
     agent,
     agents,
@@ -85,8 +98,28 @@ export function scheduleHistoryScan(
     tracker,
     file: agent.jsonlFile,
     offset: agent.fileOffset,
-  });
+    consumers: [...consumers],
+    ended: false,
+  };
+  for (const consumer of job.consumers) {
+    try {
+      consumer.begin?.(agentId, contextOf(job));
+    } catch {
+      // One consumer's bug must not stop the others.
+    }
+  }
+  queue.push(job);
   void drain();
+}
+
+function contextOf(job: ScanJob): HistoryScanContext {
+  return {
+    agents: job.agents,
+    agent: job.agent,
+    provider: job.provider,
+    file: job.file,
+    offset: job.offset,
+  };
 }
 
 async function drain(): Promise<void> {
@@ -108,7 +141,10 @@ async function drain(): Promise<void> {
 
 async function runJob(job: ScanJob): Promise<void> {
   // Removed, or moved to another transcript, while queued.
-  if (currentTracker(job.agent) !== job.tracker || !job.agents.has(job.agentId)) return;
+  if (currentTracker(job.agent) !== job.tracker || !job.agents.has(job.agentId)) {
+    endScan(job, newFacts(), false);
+    return;
+  }
   const budget = new Budget(HISTORY_SCAN_WALL_MS, HISTORY_SCAN_MAX_BYTES);
   const history = newFacts();
   const outcome = await scanLines(
@@ -122,9 +158,9 @@ async function runJob(job: ScanJob): Promise<void> {
         return;
       }
       feedFacts(history, record, job.provider);
-      for (const consumer of [...consumers]) {
+      for (const consumer of job.consumers) {
         try {
-          consumer.record(job.agentId, record, { agent: job.agent, provider: job.provider });
+          consumer.record(job.agentId, record, contextOf(job));
         } catch {
           // One consumer's bug must not end the pass for the others.
         }
@@ -136,21 +172,38 @@ async function runJob(job: ScanJob): Promise<void> {
 }
 
 function endScan(job: ScanJob, history: ReturnType<typeof newFacts>, complete: boolean): void {
+  if (job.ended) return;
+  job.ended = true;
   const { agent, agentId, agents, tracker } = job;
-  if (currentTracker(agent) !== tracker || !agents.has(agentId)) return;
-  absorbHistory(tracker.facts, history);
-  tracker.complete = complete;
-  tracker.scanning = false;
-  if (!complete) {
-    // Counts only: what the file holds never reaches the log.
-    console.log(`[Pixel Agents] Agent ${agentId}: history scan stopped early`);
-  }
-  publishMonitor(agentId, agent, agents, tracker);
-  for (const consumer of [...consumers]) {
+  if (currentTracker(agent) === tracker && agents.has(agentId)) {
+    absorbHistory(tracker.facts, history);
+    tracker.complete = complete;
+    tracker.scanning = false;
+    if (!complete) {
+      // Counts only: what the file holds never reaches the log.
+      console.log(`[Pixel Agents] Agent ${agentId}: history scan stopped early`);
+    }
     try {
-      consumer.done?.(agentId, complete);
+      publishMonitor(agentId, agent, agents, tracker);
+    } catch {
+      // The consumers below still have to hear that it ended.
+    }
+  }
+  for (const consumer of job.consumers) {
+    try {
+      consumer.done?.(agentId, complete, contextOf(job));
     } catch {
       // See above.
     }
   }
+}
+
+/** Whether `scheduleHistoryScan` will queue a scan for this agent: it starts mid-file, so the
+ *  records before its offset are not the live parser's. */
+export function readsHistory(
+  agentId: number,
+  agent: AgentState,
+  provider: HookProvider | null | undefined,
+): boolean {
+  return !!provider && agentId < SHADOW_ID_BASE && !!agent.jsonlFile && agent.fileOffset > 0;
 }
