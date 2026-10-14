@@ -11,6 +11,7 @@ import {
   healthOnToolUse,
   healthOnTurnEnd,
 } from './health.js';
+import { feedMonitorRecord } from './monitorFacts.js';
 import { applySessionMeta } from './sessionMeta.js';
 import {
   applyPermissionMode,
@@ -180,6 +181,9 @@ export function processTranscriptLine(
 
     // -- Context window usage (drives every agent's context gauge and cache clock) --
     updateContextUsage(agentId, agent, agents, record, hookProvider);
+
+    // -- Artifacts, loop, tests: the reducer the adoption-time history scan also runs --
+    feedMonitorRecord(agentId, agent, agents, record, hookProvider);
 
     // Resilient content extraction: support both record.message.content and record.content
     // Claude Code may change the JSONL structure across versions

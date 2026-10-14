@@ -50,6 +50,8 @@ server/                              Lifecycle runtime + Fastify HTTP/WS server
     health.ts                        Health detectors (stuck, stalled, looping, dead): per-agent counters and clocks, compare-and-broadcast
     healthTick.ts                    30 s health tick: provider liveness, the stall clock, removal of dead external agents
     testSummary.ts                   parseTestSummary: a test runner's pass/fail counts from shell output (the stuck detector; XP reads its green run in claude.ts)
+    monitorFacts.ts                  Artifacts, loop and test runs as one reducer (`feedFacts`): the live parser and the history scan feed the same function; a publish is keyed by its result url, history is absorbed under the live part; titles and urls are never logged
+    historyScan.ts                   History scan: one queue, one scan at a time, 0..watch offset under a 2 s / 64 MiB Budget (memory/reader.ts), lines over 1 MiB skipped; `registerHistoryConsumer` lets another reducer (the cost) read the same pass
     roster.ts                        RosterStore: persistent crew over ~/.pixel-agents/roster.json (O_EXCL lockfile, holds by pid, re-read + delta merge on write)
     rosterAgent.ts                   claimRosterMember, agentRoster message, roster-owned palette for seats
     xp.ts                            XP rules (pure): SIGNAL_XP, per-turn caps, applyXpEvent, levelForXp, moodFor
@@ -307,6 +309,7 @@ The standalone server keeps its token in `~/.pixel-agents/server-token` (0600, m
 - **Optional file fallback**: `getSessionDirs(workspace)`, `getAllSessionRoots()`, `sessionFilePattern`, `parseTranscriptLine(line)`, `buildLaunchCommand(sessionId, cwd, opts)`. Used when hooks aren't installed.
 - **Optional team extension**: `team?: TeamProvider` for Lead + Teammates support.
 - **Optional XP signals**: `toolVerdicts(name, input)` at a tool_use and `resultSignals(verdicts, record)` at its single tool_result. Only verdicts and hashed keys leave the provider. A provider without both earns no XP.
+- **Optional monitor facts**: `extractArtifact(call, result)` (a page publish; reads, lists, asset uploads, created-from-type pages and failed calls are `undefined`) and `extractLoop(record)` (`schedule` / `stop` / `fire`). Test counts come from the provider's `turnTraits.shellTools` results through `parseTestSummary`.
 - **Optional default**: `defaultEnabled` (absent = true). An off-by-default provider (the status line wrapper) is never asked about at startup; only a Settings toggle-on asks.
 - **Optional liveness**: `liveness(sessionIds)` → `Promise<Map<sessionId, 'alive' | 'dead' | 'unknown'>>`. `unknown` (no evidence) never reads dead. Without it no agent is ever dead.
 - **Turn traits** (`turnTraits`): `longRunningTools`, `userQuestionTools`, and for health `shellTools`, `editTools`, `userInputTools`. The runtime classifies tools only through these sets.

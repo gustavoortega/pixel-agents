@@ -49,6 +49,7 @@ import { seedContextUsage } from './contextUsage.js';
 import type { DismissalTracker } from './dismissalTracker.js';
 import { folderNameFromProjectDir } from './folderName.js';
 import { beginHealthCatchUp, endHealthCatchUp, resetHealth } from './health.js';
+import { scheduleHistoryScan } from './historyScan.js';
 import { assignPaletteIfNeeded } from './paletteAssigner.js';
 import { pathsMatch } from './pathKey.js';
 import { claimRosterMember } from './rosterAgent.js';
@@ -128,6 +129,8 @@ export function startFileWatching(
   seedSessionTitle(agentId, agents, getHookProvider());
   seedPermissionMode(agentId, agents, getHookProvider());
   seedSessionMeta(agentId, agents, getHookProvider());
+  // What the transcript said before the offset: artifacts, loop, tests (one queued scan, off this tick).
+  scheduleHistoryScan(agentId, agents, getHookProvider());
   // Lines already in the file replay as history: health compares wait until they are read,
   // so a loop that history shows ending never flashes on and off.
   const watched = agents.get(agentId);
