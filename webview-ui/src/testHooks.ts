@@ -6,6 +6,9 @@ import { carpetJunctionCase } from './office/sprites/carpetTiles.js';
 
 declare global {
   interface Window {
+    /** Re-renders the monitor panels asked for (useMonitorVersion): one per frame that found the
+     *  monitor stores or the selection changed, none on a quiet frame. Read deltas. */
+    __pixelAgentsMonitorRenders?: number;
     __pixelAgentsTestHooks?: {
       playedSounds?: Array<{ kind: string; at: number }>;
       getCharacters?: () => Array<{
@@ -119,6 +122,8 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
   if (!window.__pixelAgentsTestHooks) window.__pixelAgentsTestHooks = {};
   const hooks = window.__pixelAgentsTestHooks;
   if (!hooks.addAgentLog) hooks.addAgentLog = [];
+  // From 0, so a spec reading a delta never mistakes "no render yet" for a missing counter.
+  window.__pixelAgentsMonitorRenders ??= 0;
 
   hooks.getCharacters = () => {
     const os = officeStateRef.current;

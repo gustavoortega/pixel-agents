@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { resendAgentActivity } from '../src/agentActivityResend.js';
 import { AgentStateStore } from '../src/agentStateStore.js';
 import { HookEventHandler } from '../src/hookEventHandler.js';
 import { claudeProvider } from '../src/providers/hook/claude/claude.js';
 import { SessionRouter } from '../src/sessionRouter.js';
+import { ackTripwire } from '../src/tripwires.js';
 import type { AgentState } from '../src/types.js';
 
 /** Minimal AgentState for testing. */
@@ -1157,6 +1159,7 @@ describe('HookEventHandler: tripwires', () => {
         ruleName: 'Cloud credentials access',
         severity: 'high',
         count: 1,
+        since: expect.any(Number),
       },
     ]);
     // Only the tripwire message and the logs are checked: the existing tool display
@@ -1213,5 +1216,94 @@ describe('HookEventHandler: tripwires', () => {
       severity: 'high',
       count: 2,
     });
+  });
+});
+
+describe('HookEventHandler: when each state began (the monitor minutes)', () => {
+  const T0 = Date.parse('2026-10-14T10:00:00Z');
+  const SEC = 1000;
+  let agents: AgentStateStore;
+  let broadcasts: Array<Record<string, unknown>>;
+  let handler: HookEventHandler;
+
+  const event = (hook_event_name: string, extra: Record<string, unknown> = {}): void =>
+    handler.handleEvent('claude', { hook_event_name, session_id: 'sess-1', ...extra });
+  const at = (ms: number): void => {
+    vi.setSystemTime(T0 + ms);
+  };
+  const last = (type: string): Record<string, unknown> | undefined =>
+    broadcasts.filter((m) => m.type === type).at(-1);
+  const resent = (): Array<Record<string, unknown>> => {
+    const out: Array<Record<string, unknown>> = [];
+    resendAgentActivity((m) => out.push(m), agents);
+    return out;
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    agents = new AgentStateStore();
+    broadcasts = [];
+    agents.on('broadcast', (msg) => broadcasts.push(msg));
+    handler = new HookEventHandler(
+      agents,
+      new Map(),
+      new Map(),
+      claudeProvider,
+      new SessionRouter(),
+    );
+    agents.set(1, createTestAgent({ id: 1 }));
+    handler.registerAgent('sess-1', 1);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('a status and a prompt keep their start through repeats, and a reconnect restates both', () => {
+    at(0);
+    event('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/test/a.ts' } });
+    at(60 * SEC);
+    event('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+    // The second call repeats `active`: the turn did not start again.
+    expect(last('agentStatus')).toMatchObject({ status: 'active', since: T0 });
+
+    // The transcript holds the call in flight; hooks never add rows of their own.
+    const agent = agents.get(1)!;
+    agent.activeToolStatuses.set('toolu_ls', 'Running: ls');
+    agent.activeToolNames.set('toolu_ls', 'Bash');
+    at(90 * SEC);
+    event('PermissionRequest');
+    at(120 * SEC);
+    event('PermissionRequest');
+    expect(last('agentToolPermission')).toEqual({
+      type: 'agentToolPermission',
+      id: 1,
+      permissionSince: T0 + 90 * SEC,
+    });
+
+    const replay = resent();
+    expect(replay.find((m) => m.type === 'agentStatus')).toMatchObject({ since: T0 });
+    expect(replay.filter((m) => m.type === 'agentToolStart')).toEqual([
+      expect.objectContaining({ permissionActive: true, permissionSince: T0 + 90 * SEC }),
+    ]);
+
+    at(180 * SEC);
+    event('Stop');
+    expect(last('agentStatus')).toMatchObject({ status: 'waiting', since: T0 + 180 * SEC });
+  });
+
+  it('a tripwire alarm is as old as its first hit since the last ack', () => {
+    at(0);
+    event('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'source .env' } });
+    at(30 * SEC);
+    event('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'cat ~/.aws/credentials' } });
+    expect(last('agentTripwire')).toMatchObject({ severity: 'high', count: 2, since: T0 });
+
+    ackTripwire(agents.get(1)!, 2);
+    at(90 * SEC);
+    event('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'source .env' } });
+    expect(last('agentTripwire')).toMatchObject({ count: 1, since: T0 + 90 * SEC });
   });
 });

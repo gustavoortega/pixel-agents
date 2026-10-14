@@ -19,6 +19,7 @@ import {
   noteTaskDone,
 } from './sessionSignals.js';
 import { applySessionTitle } from './sessionTitle.js';
+import { stampStatus, statusBroadcast } from './statusSince.js';
 import { hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
 import {
   cancelPermissionTimer,
@@ -193,7 +194,7 @@ export function processTranscriptLine(
         cancelWaitingTimer(agentId, waitingTimers);
         agent.isWaiting = false;
         agent.hadToolsInTurn = true;
-        agents.broadcast({ type: 'agentStatus', id: agentId, status: 'active' });
+        agents.broadcast(statusBroadcast(agentId, agent, 'active', turn?.timestampMs));
         let hasNonExemptTool = false;
         for (const block of blocks) {
           if (block.type === 'tool_use' && block.id) {
@@ -316,12 +317,7 @@ export function processTranscriptLine(
       agent.awaitingInput = false;
       agent.hadToolsInTurn = false;
       healthOnTurnEnd(agent, agents, traits);
-      agents.broadcast({
-        type: 'agentStatus',
-        id: agentId,
-        status: 'waiting',
-        awaitingInput: false,
-      });
+      agents.broadcast(statusBroadcast(agentId, agent, 'waiting', turn?.timestampMs, false));
     } else if (record.type === 'user') {
       const content = record.message?.content ?? record.content;
       if (Array.isArray(content)) {
@@ -519,7 +515,7 @@ export function processTranscriptLine(
           // New user text prompt — new turn starting
           cancelWaitingTimer(agentId, waitingTimers);
           clearAgentActivity(agent, agentId, agents, permissionTimers);
-          agents.broadcast({ type: 'agentStatus', id: agentId, status: 'active' });
+          agents.broadcast(statusBroadcast(agentId, agent, 'active', turn?.timestampMs));
           agent.hadToolsInTurn = false;
           startSignalTurn(agent);
           healthOnPrompt(agent, agents, traits);
@@ -528,7 +524,7 @@ export function processTranscriptLine(
         // New user text prompt — new turn starting
         cancelWaitingTimer(agentId, waitingTimers);
         clearAgentActivity(agent, agentId, agents, permissionTimers);
-        agents.broadcast({ type: 'agentStatus', id: agentId, status: 'active' });
+        agents.broadcast(statusBroadcast(agentId, agent, 'active', turn?.timestampMs));
         agent.hadToolsInTurn = false;
         startSignalTurn(agent);
         healthOnPrompt(agent, agents, traits);
@@ -644,15 +640,13 @@ export function processTranscriptLine(
       agent.permissionSent = false;
       agent.hadToolsInTurn = false;
       healthOnTurnEnd(agent, agents, traits);
-      // Skip status post when hooks already handled it
+      // Skip status post when hooks already handled it; the agent is Done either way, so
+      // the stamp is kept for the next resend (a no-op when the Stop hook stamped first).
+      // turn_duration = the turn completed, so this is "Done".
       if (!agent.hookDelivered) {
-        agents.broadcast({
-          type: 'agentStatus',
-          id: agentId,
-          status: 'waiting',
-          // turn_duration = the turn completed, so this is "Done".
-          awaitingInput: false,
-        });
+        agents.broadcast(statusBroadcast(agentId, agent, 'waiting', turn?.timestampMs, false));
+      } else {
+        stampStatus(agent, 'waiting', false, turn?.timestampMs);
       }
     } else if (record.type && !agent.seenUnknownRecordTypes.has(record.type)) {
       // Log first occurrence of unrecognized record types to help diagnose issues

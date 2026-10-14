@@ -13,11 +13,13 @@ export interface PendingTool {
 
 /** What an adopted or restored agent should look like, read from its transcript. A turn in
  *  progress also says which calls are open and when its newest record was written, which the
- *  health detectors start from (health.ts seedHealth). */
+ *  health detectors start from (health.ts seedHealth). `sinceMs` is the timestamp of the
+ *  record that decided the state, absent when that record had none: the status's `since`
+ *  (statusSince.ts), never the file mtime `atMs` may fall back to. */
 export type DerivedTurnState =
-  | { kind: 'active'; pendingTools: PendingTool[]; atMs: number }
-  | { kind: 'waiting' }
-  | { kind: 'awaitingInput'; pendingTools: PendingTool[] }
+  | { kind: 'active'; pendingTools: PendingTool[]; atMs: number; sinceMs?: number }
+  | { kind: 'waiting'; sinceMs?: number }
+  | { kind: 'awaitingInput'; pendingTools: PendingTool[]; sinceMs?: number }
   | { kind: 'idle' };
 
 /** Last-write times of the files that prove an agent is alive. */
@@ -99,7 +101,7 @@ export function deriveTurnState(
 
   if (decision === 'waiting') {
     const age = now - (decidedAt ?? clocks.leadMtimeMs);
-    return age > TURN_WAITING_STALE_MS ? { kind: 'idle' } : { kind: 'waiting' };
+    return age > TURN_WAITING_STALE_MS ? { kind: 'idle' } : { kind: 'waiting', sinceMs: decidedAt };
   }
 
   const askedUser = pending.some((t) => traits.userQuestionTools.has(t.name));
@@ -107,12 +109,17 @@ export function deriveTurnState(
     const age = now - (decidedAt ?? clocks.leadMtimeMs);
     return age > TURN_WAITING_STALE_MS
       ? { kind: 'idle' }
-      : { kind: 'awaitingInput', pendingTools: pending };
+      : { kind: 'awaitingInput', pendingTools: pending, sinceMs: decidedAt };
   }
   const clock = Math.max(clocks.leadMtimeMs, ...(clocks.subagentMtimesMs ?? []));
   const longRunner = pending.some((t) => traits.longRunningTools.has(t.name));
   const limit = longRunner ? TURN_LONG_TOOL_STALE_MS : TURN_ACTIVE_STALE_MS;
   return now - clock > limit
     ? { kind: 'idle' }
-    : { kind: 'active', pendingTools: pending, atMs: decidedAt ?? clocks.leadMtimeMs };
+    : {
+        kind: 'active',
+        pendingTools: pending,
+        atMs: decidedAt ?? clocks.leadMtimeMs,
+        sinceMs: decidedAt,
+      };
 }

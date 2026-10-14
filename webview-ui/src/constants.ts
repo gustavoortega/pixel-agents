@@ -807,3 +807,16 @@ export const FULL_BOX_MOOD_COLORS = {
   frustrated: '#8fc6ff',
   alarmed: '#ff4d4d',
 } as const;
+
+// ── Monitor layout (attention rail, inspector sheet) ────────────
+/** Window width (CSS px) from which the rail is wide and the sheet takes layout space. */
+export const MONITOR_WIDE_MIN_WIDTH_PX = 1600;
+/** Window width from which the rail is mid; below it the rail is slim. */
+export const MONITOR_RAIL_MID_MIN_WIDTH_PX = 1100;
+/** Below this window height (a VS Code panel) the rail is slim and plates stay compact. */
+export const MONITOR_MIN_FULL_HEIGHT_PX = 420;
+export const MONITOR_RAIL_WIDE_PX = 360;
+export const MONITOR_RAIL_MID_PX = 300;
+export const MONITOR_RAIL_SLIM_PX = 76;
+export const MONITOR_SHEET_INLINE_PX = 420;
+export const MONITOR_SHEET_OVERLAY_PX = 360;

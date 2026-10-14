@@ -4,6 +4,7 @@ import * as path from 'path';
 import type { HookProvider } from '../../core/src/provider.js';
 import { CONTEXT_SEED_TAIL_BYTES } from './constants.js';
 import { seedHealth } from './health.js';
+import { restampStatus } from './statusSince.js';
 import { type DerivedTurnState, deriveTurnState } from './turnState.js';
 import type { AgentState } from './types.js';
 import { completeUtf8Length } from './utf8Boundary.js';
@@ -134,6 +135,10 @@ export function applyTurnDerivation(agent: AgentState, derivation: TurnDerivatio
   agent.isWaiting = state.kind === 'waiting' || state.kind === 'awaitingInput';
   agent.awaitingInput = state.kind === 'awaitingInput';
   agent.derivedActive = state.kind === 'active';
+  // The status this file says, dated by the record that said it (none: unknown).
+  if (state.kind === 'idle') restampStatus(agent, 'idle', false, undefined);
+  else if (state.kind === 'active') restampStatus(agent, 'active', false, state.sinceMs);
+  else restampStatus(agent, 'waiting', state.kind === 'awaitingInput', state.sinceMs);
   seedHealth(agent, {
     active: state.kind === 'active',
     atMs: state.kind === 'active' ? state.atMs : undefined,

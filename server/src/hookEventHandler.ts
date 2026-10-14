@@ -14,6 +14,7 @@ import { bindHookSubRow, releaseHookSubRow } from './hookSubRows.js';
 import { broadcastRoster } from './rosterAgent.js';
 import type { SessionRouter } from './sessionRouter.js';
 import { resetSessionSignals } from './sessionSignals.js';
+import { notePermissionPending, statusBroadcast } from './statusSince.js';
 import { getInlineTeammates, hasInlineTeammates, hasPromotedBackgroundAgent } from './teamUtils.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import { notifyBackgroundAgentCompleted } from './transcriptParser.js';
@@ -579,11 +580,7 @@ export class HookEventHandler {
         toolName,
       });
     }
-    this.agents.broadcast({
-      type: 'agentStatus',
-      id: agentId,
-      status: 'active',
-    });
+    this.agents.broadcast(statusBroadcast(agentId, agent, 'active', Date.now()));
   }
 
   /**
@@ -772,20 +769,25 @@ export class HookEventHandler {
     if (inlineTeammates.length > 0) {
       for (const [id, a] of inlineTeammates) {
         cancelPermissionTimer(id, this.permissionTimers);
-        a.permissionSent = true;
+        notePermissionPending(a);
         // The prompt is the teammate's: its transcript goes quiet until the user answers.
         healthOnPermission(a, this.agents, this.provider.turnTraits);
-        this.agents.broadcast({ type: 'agentToolPermission', id });
+        this.agents.broadcast({
+          type: 'agentToolPermission',
+          id,
+          permissionSince: a.permissionSince,
+        });
       }
       return;
     }
 
     cancelPermissionTimer(agentId, this.permissionTimers);
-    agent.permissionSent = true;
+    notePermissionPending(agent);
     healthOnPermission(agent, this.agents, this.provider.turnTraits);
     this.agents.broadcast({
       type: 'agentToolPermission',
       id: agentId,
+      permissionSince: agent.permissionSince,
     });
     // Also notify any sub-agents with active tools
     for (const parentToolId of agent.activeSubagentToolNames.keys()) {
@@ -935,12 +937,7 @@ export class HookEventHandler {
     agent.currentHookToolId = undefined;
     // Every hook path into waiting ends the turn: Stop, idle prompt, a teammate going idle.
     healthOnTurnEnd(agent, this.agents, this.provider.turnTraits);
-    this.agents.broadcast({
-      type: 'agentStatus',
-      id: agentId,
-      status: 'waiting',
-      awaitingInput,
-    });
+    this.agents.broadcast(statusBroadcast(agentId, agent, 'waiting', Date.now(), awaitingInput));
   }
 
   /** Clean up timers and maps. Called when the extension disposes. */

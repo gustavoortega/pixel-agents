@@ -25,6 +25,7 @@ type LoopMode = 'active' | 'ambient' | 'idle' | 'stopped';
 type RenderLoopWindow = Window & {
   __pixelAgentsTestHooks?: { frames?: { raf: number; render: number; mode: LoopMode } };
   __pixelAgentsRafCalls?: number;
+  __pixelAgentsMonitorRenders?: number;
   __pixelAgentsDeliver?: (msg: unknown) => void;
 };
 
@@ -34,6 +35,8 @@ interface QuietWindow {
   /** Every animation-frame request on the page: a component with a frame loop of its own too. */
   pageRaf: number;
   render: number;
+  /** Re-renders of the monitor panels: none, since no store changed. */
+  monitorRenders: number;
   mode: LoopMode;
   /** Windows opened, the clean one included. */
   windows: number;
@@ -58,10 +61,12 @@ async function quietWindow(page: Page): Promise<QuietWindow> {
     if (
       typeof frames?.raf !== 'number' ||
       typeof frames.render !== 'number' ||
-      typeof w.__pixelAgentsRafCalls !== 'number'
+      typeof w.__pixelAgentsRafCalls !== 'number' ||
+      typeof w.__pixelAgentsMonitorRenders !== 'number'
     ) {
       throw new Error('render loop counters missing');
     }
+    const monitorRenders = () => w.__pixelAgentsMonitorRenders ?? NaN;
     const pageRafs = () => w.__pixelAgentsRafCalls ?? NaN;
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     const quiet = () => frames.mode === 'ambient' || frames.mode === 'idle';
@@ -82,6 +87,7 @@ async function quietWindow(page: Page): Promise<QuietWindow> {
       const raf = frames.raf;
       const pageRaf = pageRafs();
       const render = frames.render;
+      const monitor = monitorRenders();
       const opened = performance.now();
       let clean = true;
       for (let left = WINDOW_MS; left > 0; left = WINDOW_MS - (performance.now() - opened)) {
@@ -96,6 +102,7 @@ async function quietWindow(page: Page): Promise<QuietWindow> {
           raf: frames.raf - raf,
           pageRaf: pageRafs() - pageRaf,
           render: frames.render - render,
+          monitorRenders: monitorRenders() - monitor,
           mode: frames.mode,
           windows,
         };
@@ -116,6 +123,8 @@ test.describe('Render loop', () => {
     expect(counted.pageRaf).toBe(0);
     // 2 s at the 10 Hz ambient redraw, plus one for a tick on each edge.
     expect(counted.render).toBeLessThanOrEqual(21);
+    // The frames drawn changed nothing the monitor shows.
+    expect(counted.monitorRenders).toBe(0);
   });
 
   test('an office where nothing moves redraws once a second @area:render', async ({ page }) => {
@@ -139,6 +148,44 @@ test.describe('Render loop', () => {
     } finally {
       await session.cleanup();
       fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('C0.5 a monitor store write re-renders the monitor once, and the frames after it none @area:render', async ({
+    page,
+    standalone: _standalone,
+  }) => {
+    const counted = await quietWindow(page);
+    expect(counted.monitorRenders).toBe(0);
+
+    // A loop for an id with no character: the store keeps it, and nothing else on screen moves.
+    for (const nextAt of [1_000, 2_000, 3_000]) {
+      const before = await page.evaluate((at) => {
+        const w = window as RenderLoopWindow;
+        const renders = w.__pixelAgentsMonitorRenders;
+        if (typeof renders !== 'number' || !w.__pixelAgentsDeliver) {
+          throw new Error('monitor render counter or message delivery missing');
+        }
+        w.__pixelAgentsDeliver({ type: 'agentLoop', id: 9_999, nextAt: at });
+        return renders;
+      }, nextAt);
+      await page.waitForFunction(
+        (n) => (window as RenderLoopWindow).__pixelAgentsMonitorRenders === n + 1,
+        before,
+        { polling: 20, timeout: 5_000 },
+      );
+      // Ten more drawn frames, none of them a change: none re-renders the monitor.
+      const rendered = await page.evaluate(
+        () => (window as RenderLoopWindow).__pixelAgentsTestHooks?.frames?.render ?? NaN,
+      );
+      await page.waitForFunction(
+        (r) => ((window as RenderLoopWindow).__pixelAgentsTestHooks?.frames?.render ?? 0) >= r + 10,
+        rendered,
+        { polling: 20, timeout: 5_000 },
+      );
+      expect(
+        await page.evaluate(() => (window as RenderLoopWindow).__pixelAgentsMonitorRenders),
+      ).toBe(before + 1);
     }
   });
 

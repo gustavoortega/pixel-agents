@@ -44,9 +44,13 @@ const SENT_FOR_EVERY_AGENT = new Set([
   'agentCache',
   'agentMode',
   'agentShells',
+  'agentSession',
+  'agentArtifacts',
+  'agentLoop',
+  'agentTests',
 ]);
 
-/** Resend minus the model, title, session-signal, tripwire and health messages, which every
+/** Resend minus the model, title, session-signal, monitor, tripwire and health messages, which every
  *  agent gets, so the tests below can assert the other messages without restating them each time. */
 function resendActivityWithoutTitlesOrAlarms(
   sent: Array<Record<string, unknown>>,
@@ -87,6 +91,10 @@ describe('resendAgentActivity roster', () => {
       'agentCache',
       'agentMode',
       'agentShells',
+      'agentSession',
+      'agentArtifacts',
+      'agentLoop',
+      'agentTests',
       'agentTripwireClear',
       'agentHealthClear',
       'agentRoster',
@@ -98,6 +106,10 @@ describe('resendAgentActivity roster', () => {
       'agentCache',
       'agentMode',
       'agentShells',
+      'agentSession',
+      'agentArtifacts',
+      'agentLoop',
+      'agentTests',
       'agentTripwireClear',
       'agentHealthClear',
     ]);
@@ -138,6 +150,10 @@ describe('resendAgentActivity', () => {
       'agentCache',
       'agentMode',
       'agentShells',
+      'agentSession',
+      'agentArtifacts',
+      'agentLoop',
+      'agentTests',
       'agentTripwireClear',
       'agentHealthClear',
     ]);
@@ -393,6 +409,42 @@ describe('resendAgentActivity', () => {
     ]);
   });
 
+  it('C0.2 sends the monitor messages for every agent: what it holds, or the id alone as a clear', () => {
+    const store = new AgentStateStore();
+    store.set(
+      1,
+      createTestAgent({
+        id: 1,
+        sessionMeta: { branch: 'fix/retry', startedAt: 1_000, costUsd: 0 },
+        artifacts: { count: 1, complete: true, items: [{ title: 'Plan', url: 'u', at: 2_000 }] },
+        loop: { nextAt: 3_000 },
+        tests: { passed: 4, failed: 1, at: 4_000 },
+      }),
+    );
+    // Nothing known: a client that showed another session's branch under this id must drop it.
+    store.set(2, createTestAgent({ id: 2 }));
+    const sent: Array<Record<string, unknown>> = [];
+    resendAgentActivity((m) => {
+      if (/^agent(Session|Artifacts|Loop|Tests)$/.test(String(m.type))) sent.push(m);
+    }, store);
+    expect(sent).toEqual([
+      { type: 'agentSession', id: 1, branch: 'fix/retry', startedAt: 1_000, costUsd: 0 },
+      {
+        type: 'agentArtifacts',
+        id: 1,
+        count: 1,
+        complete: true,
+        items: [{ title: 'Plan', url: 'u', at: 2_000 }],
+      },
+      { type: 'agentLoop', id: 1, nextAt: 3_000 },
+      { type: 'agentTests', id: 1, passed: 4, failed: 1, at: 4_000 },
+      { type: 'agentSession', id: 2 },
+      { type: 'agentArtifacts', id: 2 },
+      { type: 'agentLoop', id: 2 },
+      { type: 'agentTests', id: 2 },
+    ]);
+  });
+
   it('handles edge cases: empty store and multiple agents', () => {
     // Empty store
     let store = new AgentStateStore();
@@ -443,6 +495,7 @@ describe('resendAgentActivity', () => {
           ruleName: 'Dotenv file access',
           severity: 'medium',
           count: 3,
+          since: 1,
         },
         health: {
           redRuns: 0,
@@ -468,6 +521,7 @@ describe('resendAgentActivity', () => {
         ruleName: 'Dotenv file access',
         severity: 'medium',
         count: 3,
+        since: 1,
       },
       { type: 'agentHealth', id: 1, state: 'stalled', reason: 'no_progress', count: 12 },
       { type: 'agentTripwireClear', id: 2 },

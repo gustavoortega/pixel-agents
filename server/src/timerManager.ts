@@ -1,5 +1,6 @@
 import type { AgentStateStore } from './agentStateStore.js';
 import { PERMISSION_TIMER_DELAY_MS } from './constants.js';
+import { notePermissionPending, statusBroadcast } from './statusSince.js';
 import { hasPromotedBackgroundAgent } from './teamUtils.js';
 import type { AgentState } from './types.js';
 
@@ -88,14 +89,9 @@ export function startWaitingTimer(
       agent.isWaiting = true;
       agent.awaitingInput = false;
     }
-    agents.broadcast({
-      type: 'agentStatus',
-      id: agentId,
-      status: 'waiting',
-      // Heuristic text-idle timer: the turn ended without a clear idle signal,
-      // so this is "Done", not "Waiting for input".
-      awaitingInput: false,
-    });
+    // Heuristic text-idle timer: the turn ended without a clear idle signal,
+    // so this is "Done", not "Waiting for input".
+    agents.broadcast(statusBroadcast(agentId, agent, 'waiting', Date.now(), false));
   }, delayMs);
   waitingTimers.set(agentId, timer);
 }
@@ -146,11 +142,12 @@ export function startPermissionTimer(
     }
 
     if (hasNonExempt) {
-      agent.permissionSent = true;
+      notePermissionPending(agent);
       console.log(`[Pixel Agents] Timer: Agent ${agentId} - possible permission wait detected`);
       agents.broadcast({
         type: 'agentToolPermission',
         id: agentId,
+        permissionSince: agent.permissionSince,
       });
       // Also notify stuck sub-agents
       for (const parentToolId of stuckSubagentParentToolIds) {

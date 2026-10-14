@@ -47,6 +47,8 @@ export class ResyncController {
   private confirmed = new Set<string>();
   /** `agentId:toolId` of every agentToolStart handled while the window is open. */
   private noted = new Set<string>();
+  /** `leadId:runId` of every workflow run the catch-up restated. */
+  private runs = new Set<string>();
 
   isActive(): boolean {
     return this.active;
@@ -60,6 +62,7 @@ export class ResyncController {
     this.active = true;
     this.kept = new Set(msg.agents);
     this.noted = new Set();
+    this.runs = new Set();
     this.helpers = [...os.subagentMeta.values()].map(({ parentAgentId, parentToolId }) => ({
       parentAgentId,
       parentToolId,
@@ -71,6 +74,11 @@ export class ResyncController {
     if (this.active) this.noted.add(`${agentId}:${toolId}`);
   }
 
+  /** The catch-up restated this run: it is kept at handshakeDone. */
+  noteWorkflowRun(leadId: number, runId: string): void {
+    if (this.active) this.runs.add(`${leadId}:${runId}`);
+  }
+
   /** The server says this helper is live. Counts from the reconnect on, so a presence
    *  broadcast before the handshake's existingAgents counts too. */
   confirmHelper(parentToolId: string): void {
@@ -80,13 +88,19 @@ export class ResyncController {
   /**
    * Close the window on handshakeDone, removing with no effect what the catch-up did not
    * restate: unconfirmed helpers only a resend can vouch for (workflow helpers, a teamless
-   * lead's background spawns; a teammate or a teamed lead's spawn ends through its lead)
-   * and restated agents' tool rows. No-op when the window is not open.
+   * lead's background spawns; a teammate or a teamed lead's spawn ends through its lead),
+   * restated agents' tool rows and workflow runs (the handshake restates every run the
+   * server still tracks). No-op when the window is not open.
    */
   finish(os: OfficeState, sink: ResyncSink): void {
     if (!this.active) return;
-    const { helpers, confirmed, kept, noted } = this;
+    const { helpers, confirmed, kept, noted, runs } = this;
     this.abort();
+    for (const [leadId, leadRuns] of [...os.workflowRuns]) {
+      for (const runId of [...leadRuns.keys()]) {
+        if (!runs.has(`${leadId}:${runId}`)) os.setWorkflowRun(leadId, runId, undefined);
+      }
+    }
     const background = sink.background();
     for (const { parentAgentId, parentToolId } of helpers) {
       if (confirmed.has(parentToolId)) continue;
@@ -109,6 +123,7 @@ export class ResyncController {
     this.helpers = [];
     this.confirmed = new Set();
     this.noted = new Set();
+    this.runs = new Set();
   }
 }
 

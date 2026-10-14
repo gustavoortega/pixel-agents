@@ -226,8 +226,10 @@ describe('status truth: adopted and restored agents read their real state', () =
     timers.push(...pollingTimers.values());
 
     const statuses = broadcasts.filter((m) => m.type === 'agentStatus');
+    // Dated by the turn end that finished the new file, not by the reassign.
+    const turnEndAt = Date.parse(FINISHED[3].timestamp);
     expect(statuses).toEqual([
-      { type: 'agentStatus', id: 1, status: 'waiting', awaitingInput: false },
+      { type: 'agentStatus', id: 1, status: 'waiting', awaitingInput: false, since: turnEndAt },
     ]);
     expect(agent.isWaiting).toBe(true);
   });

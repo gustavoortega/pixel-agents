@@ -10,6 +10,7 @@ import { HudCard } from './components/HudCard.js';
 import { IntroBubble } from './components/IntroBubble.js';
 import { LightingTint } from './components/LightingTint.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
+import { MonitorShell } from './components/MonitorShell.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
@@ -411,8 +412,10 @@ function App() {
     return <div className="w-full h-full flex items-center justify-center ">Loading...</div>;
   }
 
-  return (
-    <div ref={containerRef} className="w-full h-full relative overflow-hidden">
+  // The stage: the middle column of the monitor's row. Every position on the office derives
+  // from this box, so the canvas and its overlays stay inside it.
+  const stage = (
+    <div ref={containerRef} className="relative flex-1 min-w-0 h-full overflow-hidden">
       <OfficeCanvas
         officeState={officeState}
         onClick={handleClick}
@@ -703,6 +706,8 @@ function App() {
       )}
     </div>
   );
+
+  return <MonitorShell officeState={officeState}>{stage}</MonitorShell>;
 }
 
 export default App;
