@@ -412,6 +412,7 @@ describe('clientMessageHandler: areas + carpet wire ordering', () => {
             watched: new Set(['wf:run1:a1']),
             runIdByToolId: new Map(),
             completedRunIds: new Set(),
+            launches: new Map(),
             ignored: new Map(),
           },
         }),

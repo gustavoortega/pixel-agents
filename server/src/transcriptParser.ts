@@ -364,6 +364,7 @@ export function processTranscriptLine(
                   completedToolId,
                   workflowRun.runId,
                   workflowRun.transcriptDir,
+                  workflowRun.name,
                 )
               ) {
                 if (workflowRun.launched) {
@@ -998,13 +999,14 @@ function linkTeammates(_agentId: number, agent: AgentState, agents: AgentStateSt
  */
 function workflowRunResult(
   record: Record<string, unknown>,
-): { runId: string; transcriptDir?: string; launched: boolean } | null {
+): { runId: string; transcriptDir?: string; name?: unknown; launched: boolean } | null {
   const result = record.toolUseResult as Record<string, unknown> | undefined;
   if (!result || typeof result !== 'object') return null;
   if (result.taskType !== 'local_workflow' || typeof result.runId !== 'string') return null;
   return {
     runId: result.runId,
     transcriptDir: typeof result.transcriptDir === 'string' ? result.transcriptDir : undefined,
+    name: result.workflowName,
     launched: result.status === 'async_launched',
   };
 }
