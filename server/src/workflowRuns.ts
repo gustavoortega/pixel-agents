@@ -17,8 +17,8 @@
  * on staleness.
  *
  * All state lives on the lead (`AgentState.workflow`) and is rebuilt from the
- * journal on every scan. Labels are user script text: never logged, never
- * persisted.
+ * journal on every scan. Labels and the run's name are user script text: never
+ * logged, never persisted.
  */
 
 import * as fs from 'fs';
@@ -56,6 +56,8 @@ const RUN_DIR_PATTERN = /^wf_[A-Za-z0-9._-]+$/;
 const ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const AGENT_TRANSCRIPT_PATTERN = /^agent-[A-Za-z0-9._-]+\.jsonl$/;
 const WORKFLOW_PATH_SEGMENT = `/${SUBAGENTS_DIR}/${WORKFLOWS_DIR}/`;
+/** Phases come from a user script: the `workflowRun` message stays bounded however many it names. */
+const WORKFLOW_RUN_MAX_PHASES = 32;
 
 interface WorkflowAgentEntry {
   /** Sanitized journal label and phase. */
@@ -80,9 +82,19 @@ interface WorkflowRunState {
   completed: boolean;
   /** Its journal is past the age window but a transcript is not: when to look again. */
   ageRecheckAtMs: number;
-  /** What clients are shown for the run (`workflowRun` minus its envelope); absent until
-   *  the run's name, phases and counts are known, and then nothing is sent for it. */
-  view?: Omit<WorkflowRun, 'type' | 'id' | 'runId'>;
+  /** What clients were last sent for the run (`workflowRun` minus its envelope); absent
+   *  until the first scan after the run is tracked. Replayed at every handshake. */
+  view?: WorkflowRunView;
+}
+
+type WorkflowRunView = Omit<WorkflowRun, 'type' | 'id' | 'runId'>;
+
+/** What this process saw of a run's launch. Never persisted: a restart shows neither. */
+interface WorkflowLaunch {
+  /** The launch result's `workflowName`, sanitized. */
+  name?: string;
+  /** When this server first saw the run launched. */
+  sinceMs: number;
 }
 
 export interface LeadWorkflowState {
@@ -96,6 +108,8 @@ export interface LeadWorkflowState {
   runIdByToolId: Map<string, string>;
   /** Runs known completed, tracked or not yet discovered. Persisted. */
   completedRunIds: Set<string>;
+  /** runId -> what the launch result in this process said. Memory only. */
+  launches: Map<string, WorkflowLaunch>;
   /** Run dirs rejected as too old -> when to look at their mtimes again. */
   ignored: Map<string, number>;
   /** Set while `subagents/workflows` is missing: no readdir before then. */
@@ -122,6 +136,7 @@ function newLeadWorkflowState(): LeadWorkflowState {
     watched: new Set(),
     runIdByToolId: new Map(),
     completedRunIds: new Set(),
+    launches: new Map(),
     ignored: new Map(),
   };
 }
@@ -187,7 +202,9 @@ export function hasWorkflowTool(lead: AgentState, toolUseId: string): boolean {
  * Map a Workflow tool_use id to the run its result reported. The runId arrives
  * as the run dir name (`wf_<id>`); the canonical id drops the prefix, and the
  * result's transcriptDir, when present, must name that same dir. Returns false
- * (nothing recorded) for anything that cannot name a run dir.
+ * (nothing recorded) for anything that cannot name a run dir. The result's
+ * `workflowName` is kept in memory for the run's view, with the time of the first
+ * launch seen; a resume's launch keeps that time and takes a newer name.
  */
 export function noteWorkflowRun(
   store: AgentStateStore,
@@ -195,6 +212,7 @@ export function noteWorkflowRun(
   toolUseId: string,
   reportedRunId: string,
   transcriptDir: string | undefined,
+  workflowName?: unknown,
 ): boolean {
   const runId = reportedRunId.startsWith(RUN_DIR_PREFIX)
     ? reportedRunId.slice(RUN_DIR_PREFIX.length)
@@ -211,6 +229,11 @@ export function noteWorkflowRun(
   // default): the runs that session knew ended with it, but the one launched.
   for (const id of ended?.runIds ?? []) if (id !== runId) state.completedRunIds.add(id);
   state.runIdByToolId.set(toolUseId, runId);
+  const prior = state.launches.get(runId);
+  state.launches.set(runId, {
+    name: sanitizeWorkflowText(workflowName, WORKFLOW_LABEL_MAX_LENGTH) ?? prior?.name,
+    sinceMs: prior?.sinceMs ?? Date.now(),
+  });
   // The first run of a session creates `workflows/`: look now, not in 5 s.
   state.dirMissingRecheckAtMs = undefined;
   store.persist();
@@ -277,6 +300,9 @@ function reconcile(leadId: number, lead: AgentState, ctx: WorkflowScanContext, n
     for (const runId of state.ignored.keys()) {
       if (!listed.has(runId)) state.ignored.delete(runId);
     }
+    for (const runId of state.launches.keys()) {
+      if (!listed.has(runId)) state.launches.delete(runId);
+    }
   }
 
   // Every journal is read before anything is decided, so an agent whose
@@ -331,6 +357,7 @@ function reconcile(leadId: number, lead: AgentState, ctx: WorkflowScanContext, n
     if (attaching) ctx.store.broadcast(presenceMessage(leadId, id, agent.label, agent.group));
   }
 
+  refreshRunViews(leadId, state, ctx);
   if (mapsChanged) ctx.store.persist();
 }
 
@@ -622,7 +649,9 @@ function dropRun(
   ctx: WorkflowScanContext,
 ): boolean {
   endRunAgents(lead, leadId, state, runId, 'runDropped', ctx);
+  if (state.runs.get(runId)?.view) ctx.store.broadcast(runClearMessage(leadId, runId));
   state.runs.delete(runId);
+  state.launches.delete(runId);
   let changed = state.completedRunIds.delete(runId);
   for (const [toolId, mapped] of state.runIdByToolId) {
     if (mapped === runId) {
@@ -656,6 +685,7 @@ export function completeWorkflowRunForTool(
     refreshJournal(lead, leadId, state, runId, ctx, Date.now());
     run.completed = true;
     endRunAgents(lead, leadId, state, runId, 'runCompleted', ctx);
+    refreshRunViews(leadId, state, ctx);
   }
   ctx.store.persist();
   return true;
@@ -687,8 +717,59 @@ export function endWorkflowSession(
 ): void {
   const state = lead.workflow;
   const runIds = new Set([...(state?.runs.keys() ?? []), ...(state?.completedRunIds ?? [])]);
+  // The lead stays (or leaves right after, with its character): its runs go from the clients first.
+  for (const [runId, run] of state?.runs ?? []) {
+    if (run.view) ctx.store.broadcast(runClearMessage(leadId, runId));
+  }
   disposeWorkflowState(lead, leadId, ctx);
   lead.workflowEnded = { sessionId: lead.sessionId, runIds };
+}
+
+function runClearMessage(leadId: number, runId: string): Record<string, unknown> {
+  return { type: 'workflowRun', id: leadId, runId };
+}
+
+/**
+ * What clients are shown for a run, from its sticky journal state: `started` and
+ * `finished` outlive the helpers and a resume's reopening, so the counts never
+ * fall when a helper is torn down. A count is sent only once an agent has
+ * started; phases are in first-seen order (journal order), each with its own
+ * counts. `name` and `since` exist only if this process saw the launch.
+ */
+function buildRunView(launch: WorkflowLaunch | undefined, run: WorkflowRunState): WorkflowRunView {
+  const phases = new Map<string, { name: string; started: number; done: number }>();
+  for (const [agentId, entry] of run.started) {
+    if (entry.group === undefined) continue;
+    let phase = phases.get(entry.group);
+    if (!phase) {
+      if (phases.size >= WORKFLOW_RUN_MAX_PHASES) continue;
+      phase = { name: entry.group, started: 0, done: 0 };
+      phases.set(entry.group, phase);
+    }
+    phase.started += 1;
+    if (run.finished.has(agentId)) phase.done += 1;
+  }
+  // An agent can have a result line and no started line: it still counts, as done.
+  let started = run.started.size;
+  for (const agentId of run.finished) if (!run.started.has(agentId)) started += 1;
+
+  return {
+    status: run.completed ? 'done' : 'running',
+    ...(launch?.name !== undefined ? { name: launch.name } : {}),
+    ...(phases.size > 0 ? { phases: [...phases.values()] } : {}),
+    ...(started > 0 ? { started, done: run.finished.size } : {}),
+    ...(launch ? { since: launch.sinceMs } : {}),
+  };
+}
+
+/** Broadcast `workflowRun` for every tracked run whose view changed. */
+function refreshRunViews(leadId: number, state: LeadWorkflowState, ctx: WorkflowScanContext): void {
+  for (const [runId, run] of state.runs) {
+    const view = buildRunView(state.launches.get(runId), run);
+    if (run.view && JSON.stringify(run.view) === JSON.stringify(view)) continue;
+    run.view = view;
+    ctx.store.broadcast({ type: 'workflowRun', id: leadId, runId, ...view });
+  }
 }
 
 function presenceMessage(

@@ -159,7 +159,12 @@ function setMtime(file: string, agoMs: number): void {
   fs.utimesSync(file, t, t);
 }
 
-function launchRecord(status = 'async_launched', toolId = WF_TOOL_ID, runId = RUN): string {
+function launchRecord(
+  status = 'async_launched',
+  toolId = WF_TOOL_ID,
+  runId = RUN,
+  workflowName: unknown = 'synthetic-crew',
+): string {
   return JSON.stringify({
     type: 'user',
     message: {
@@ -175,7 +180,7 @@ function launchRecord(status = 'async_launched', toolId = WF_TOOL_ID, runId = RU
       status,
       taskId: 'wtest01',
       taskType: 'local_workflow',
-      workflowName: 'synthetic-crew',
+      workflowName,
       runId: `wf_${runId}`,
       summary: 'synthetic summary',
       transcriptDir: runDir(runId),
@@ -228,6 +233,24 @@ const clearsFor = (parentToolId: string) =>
 /** Shadow-store watches on a transcript: the registry the helpers are streamed from. */
 const watchesOf = (file: string): number =>
   [...runtime.subagentWatch.store.values()].filter((a) => a.jsonlFile === file).length;
+
+/** A StateAdapter over memory: `saved` holds every saveAgents call. */
+function memoryAdapter(
+  initial: Array<Record<string, unknown>> = [],
+): StateAdapter & { saved: Array<Array<Record<string, unknown>>> } {
+  const saved: Array<Array<Record<string, unknown>>> = [];
+  return {
+    saved,
+    loadAgents: () => initial as never,
+    saveAgents: (agents) => {
+      saved.push(agents as unknown as Array<Record<string, unknown>>);
+    },
+    loadSeats: () => ({}),
+    saveSeats: () => {},
+    getSetting: <T>(_key: string, defaultValue: T) => defaultValue,
+    setSetting: () => {},
+  };
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -834,24 +857,6 @@ describe('workflow crews: SubagentStart/Stop hooks of workflow agents', () => {
 });
 
 describe('workflow crews: persistence', () => {
-  /** A StateAdapter over memory: `saved` holds every saveAgents call. */
-  function memoryAdapter(
-    initial: Array<Record<string, unknown>> = [],
-  ): StateAdapter & { saved: Array<Array<Record<string, unknown>>> } {
-    const saved: Array<Array<Record<string, unknown>>> = [];
-    return {
-      saved,
-      loadAgents: () => initial as never,
-      saveAgents: (agents) => {
-        saved.push(agents as unknown as Array<Record<string, unknown>>);
-      },
-      loadSeats: () => ({}),
-      saveSeats: () => {},
-      getSetting: <T>(_key: string, defaultValue: T) => defaultValue,
-      setSetting: () => {},
-    };
-  }
-
   it("C40 the lead's record carries the run of a launch, then the run as completed after its kill", () => {
     const adapter = memoryAdapter();
     store.setAdapter(adapter);
@@ -920,5 +925,255 @@ describe('workflow crews: persistence', () => {
       expect(watchesOf(a1)).toBe(0);
       expect(clearsFor(helperId('a1'))).toHaveLength(1);
     });
+  });
+});
+
+describe('workflow crews: the run view', () => {
+  const NAME = 'synthetic-crew';
+  const RUN2 = '0d9a7e31-c42';
+  const TOOL2 = 'toolu_02WorkflowSecondEEEE';
+
+  const runMessages = (runId = RUN) =>
+    messages.filter((m) => m.type === 'workflowRun' && m.runId === runId);
+  const lastRun = (runId = RUN) => runMessages(runId).at(-1);
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('C4.0 shows the launch name, phases in first-seen order with their own counts, and the status', () => {
+    const launchedAt = Date.now();
+    leadLine(launchRecord());
+    appendJournal([
+      { type: 'launched' },
+      started('a1', 'x', 'Ground'),
+      started('a2', 'y', 'Plan'),
+      started('a3', 'z', 'Ground'),
+      result('a1'),
+    ]);
+    tick(5 * MIN);
+
+    expect(lastRun()).toEqual({
+      type: 'workflowRun',
+      id: 1,
+      runId: RUN,
+      status: 'running',
+      name: NAME,
+      phases: [
+        { name: 'Ground', started: 2, done: 1 },
+        { name: 'Plan', started: 1, done: 0 },
+      ],
+      started: 3,
+      done: 1,
+      since: launchedAt,
+    });
+
+    leadLine(notificationRecord('completed'));
+    expect(lastRun()).toMatchObject({ status: 'done', started: 3, done: 1 });
+  });
+
+  it('C4.0b a run with no agent yet sends no counts, never 0', () => {
+    leadLine(launchRecord());
+    appendJournal([{ type: 'launched' }]);
+    tick();
+
+    const run = lastRun();
+    expect(run).toMatchObject({ status: 'running', name: NAME });
+    expect(run).not.toHaveProperty('started');
+    expect(run).not.toHaveProperty('done');
+    expect(run).not.toHaveProperty('phases');
+  });
+
+  it('C4.5 sends a run only when its view changed, not on a quiet tick', () => {
+    leadLine(launchRecord());
+    appendJournal([started('a1')]);
+    writeAgent('a1');
+    tick();
+    const sent = runMessages().length;
+    expect(sent).toBeGreaterThan(0);
+
+    tick();
+    tick();
+    expect(runMessages()).toHaveLength(sent);
+
+    appendJournal([result('a1')]);
+    tick();
+    expect(runMessages()).toHaveLength(sent + 1);
+  });
+
+  it('C4.6 cuts the name like a label: control and format runs become one space, 60 code points', () => {
+    leadLine(
+      launchRecord('async_launched', WF_TOOL_ID, RUN, `\u202Ereview\u200B\n${'\u00e9'.repeat(70)}`),
+    );
+    appendJournal([started('a1')]);
+    tick();
+
+    expect(lastRun()?.name).toBe(`review ${'\u00e9'.repeat(53)}`);
+  });
+
+  it('C4.6b names at most 32 phases but counts every agent', () => {
+    leadLine(launchRecord());
+    appendJournal(Array.from({ length: 40 }, (_, i) => started(`a${i}`, 'l', `phase ${i}`)));
+    tick();
+
+    const run = lastRun();
+    expect(run?.phases).toHaveLength(32);
+    expect(run?.started).toBe(40);
+  });
+
+  it('C4.1 done counts survive helper teardown, a result and a kill alike', () => {
+    leadLine(launchRecord());
+    appendJournal([started('a1'), started('a2'), started('a3')]);
+    const files = ['a1', 'a2', 'a3'].map((id) => writeAgent(id));
+    tick();
+    expect(files.map(watchesOf)).toEqual([1, 1, 1]);
+
+    appendJournal([result('a1')]);
+    tick();
+    expect(clearsFor(helperId('a1'))).toHaveLength(1);
+    expect(lastRun()).toMatchObject({ started: 3, done: 1 });
+
+    leadLine(notificationRecord('killed'));
+    expect(clearsFor(helperId('a2'))).toHaveLength(1);
+    expect(lastRun()).toMatchObject({ status: 'done', started: 3, done: 1 });
+  });
+
+  it('C4.3 a resume reopening the run with new agents keeps the earlier counts', () => {
+    leadLine(launchRecord());
+    appendJournal([started('a1', 'x', 'Ground'), started('a2', 'y', 'Ground')]);
+    writeAgent('a1');
+    writeAgent('a2');
+    tick();
+    appendJournal([result('a1'), result('a2')]);
+    leadLine(notificationRecord('completed'));
+    tick();
+    expect(lastRun()).toMatchObject({ status: 'done', started: 2, done: 2 });
+
+    appendJournal([started('b1', 'z', 'Plan')]);
+    writeAgent('b1');
+    tick();
+
+    expect(lastRun()).toMatchObject({
+      status: 'running',
+      phases: [
+        { name: 'Ground', started: 2, done: 2 },
+        { name: 'Plan', started: 1, done: 0 },
+      ],
+      started: 3,
+      done: 2,
+    });
+  });
+
+  it('C4.2 after a restart the run has neither name nor since, and the persisted record holds no name', () => {
+    const adapter = memoryAdapter();
+    store.setAdapter(adapter);
+    leadLine(launchRecord());
+    appendJournal([started('a1', 'x', 'Ground'), result('a1'), started('a2', 'y', 'Ground')]);
+    writeAgent('a1');
+    writeAgent('a2');
+    tick();
+    expect(lastRun()).toMatchObject({ name: NAME });
+    expect(lastRun()).toHaveProperty('since');
+    const record = JSON.parse(JSON.stringify(adapter.saved.at(-1)?.[0]));
+    expect(JSON.stringify(record)).not.toContain(NAME);
+
+    runtime.removeAgent(1);
+    fs.writeFileSync(lead.jsonlFile, '');
+    store.setAdapter(memoryAdapter([record]));
+    runtime.restoreExternalAgents();
+    tick();
+
+    const sent: Array<Record<string, unknown>> = [];
+    resendAgentActivity((m) => sent.push(m), store);
+    expect(sent.filter((m) => m.type === 'workflowRun')).toEqual([
+      {
+        type: 'workflowRun',
+        id: 1,
+        runId: RUN,
+        status: 'running',
+        phases: [{ name: 'Ground', started: 2, done: 1 }],
+        started: 2,
+        done: 1,
+      },
+    ]);
+  });
+
+  it('C4.4 the name never reaches the log', () => {
+    const CANARY = 'canary-crew-name-7f3a';
+    const logged: string[] = [];
+    for (const method of ['log', 'info', 'warn', 'error', 'debug'] as const) {
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        logged.push(args.map(String).join(' '));
+      });
+    }
+
+    leadLine(launchRecord('async_launched', WF_TOOL_ID, RUN, CANARY));
+    appendJournal([started('a1', 'x', 'Ground'), started('a2')]);
+    writeAgent('a1');
+    writeAgent('a2');
+    tick();
+    appendJournal([result('a1')]);
+    tick();
+    expect(lastRun()).toMatchObject({ name: CANARY });
+    leadLine(notificationRecord('completed'));
+    fs.rmSync(runDir(), { recursive: true });
+    tick();
+    runtime.removeAgent(1);
+
+    // The session logged (each helper's end), so an empty capture would prove nothing.
+    expect(logged.some((line) => line.includes('Workflow agent'))).toBe(true);
+    expect(logged.filter((line) => line.includes(CANARY))).toEqual([]);
+  });
+
+  it('C4.7 a handshake replays every tracked run, done ones included, right after the helpers', () => {
+    leadLine(launchRecord());
+    leadLine(launchRecord('async_launched', TOOL2, RUN2, 'second-crew'));
+    appendJournal([started('a1', 'scan:docs', 'Ground')]);
+    appendJournal([started('b1'), result('b1')], RUN2);
+    writeAgent('a1');
+    writeAgent('b1', { runId: RUN2 });
+    tick();
+    leadLine(notificationRecord('completed', TOOL2));
+
+    const sent: Array<Record<string, unknown>> = [];
+    resendAgentActivity((m) => sent.push(m), store);
+    const replay = sent.filter((m) => m.type === 'subagentPresent' || m.type === 'workflowRun');
+
+    expect(replay.map((m) => m.type)).toEqual(['subagentPresent', 'workflowRun', 'workflowRun']);
+    // Runs come in the order their dirs were adopted; the contract is that each is there.
+    expect(replay.slice(1)).toHaveLength(2);
+    expect(replay.slice(1)).toContainEqual(lastRun(RUN));
+    expect(replay.slice(1)).toContainEqual(lastRun(RUN2));
+    expect(lastRun(RUN2)).toMatchObject({
+      status: 'done',
+      name: 'second-crew',
+      started: 1,
+      done: 1,
+    });
+  });
+
+  it('C4.8 a run that is dropped clears from the clients with its id alone', () => {
+    leadLine(launchRecord());
+    appendJournal([started('a1')]);
+    writeAgent('a1');
+    tick();
+    expect(lastRun()).toMatchObject({ status: 'running' });
+
+    fs.rmSync(runDir(), { recursive: true });
+    tick();
+
+    expect(lastRun()).toEqual({ type: 'workflowRun', id: 1, runId: RUN });
+  });
+
+  it('C4.8b a session end on a lead that stays clears its runs', () => {
+    lead.isExternal = false;
+    runtime.registerAgent(LEAD_SESSION, 1);
+    leadLine(launchRecord());
+    appendJournal([started('a1')]);
+    writeAgent('a1');
+    tick();
+
+    hook({ hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' });
+
+    expect(store.has(1)).toBe(true);
+    expect(lastRun()).toEqual({ type: 'workflowRun', id: 1, runId: RUN });
   });
 });
