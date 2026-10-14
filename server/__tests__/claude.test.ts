@@ -267,6 +267,8 @@ describe('claudeProvider', () => {
       ['KEY=$(cat ~/.secret) deploy', 'deploy'],
       ['PASS=my\\ secret cmd', 'cmd'],
       ['curl https://h?token=abc', 'curl'],
+      ['>/tmp/out-token-abc npm test', 'command'],
+      ['2>/dev/null git status', 'command'],
       ['ssh prod-db', 'ssh'],
       ['python manage', 'python'],
       // unparsable first word keeps the generic label

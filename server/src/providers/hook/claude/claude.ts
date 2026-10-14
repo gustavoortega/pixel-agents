@@ -92,7 +92,8 @@ function programName(command: string): string {
     for (const words of stages) {
       const word = words[0] ?? '';
       if (!word) continue;
-      const program = /["'`$()=]/.test(word) ? 'command' : path.basename(word);
+      // A redirect target (`>/tmp/out cmd`) is a path, never a program name.
+      const program = /["'`$()=<>&]/.test(word) ? 'command' : path.basename(word);
       if (!SCENERY_PROGRAMS.has(program)) {
         const sub = words[1] ?? '';
         return SUBCOMMAND_PROGRAMS.has(program) && SUBCOMMAND_WORD.test(sub)
