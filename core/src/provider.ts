@@ -138,6 +138,19 @@ export type AgentEvent =
  *  The office draws a rarity look from it, so it is a ranking, not a model id. */
 export type ModelTier = 1 | 2 | 3 | 4;
 
+/** What one transcript record says about its session (HookProvider.extractSessionMeta). */
+export interface SessionMetaFacts {
+  /** Epoch ms the record claims. */
+  timestampMs?: number;
+  /** Git branch the record was written on, as the CLI wrote it. */
+  branch?: string;
+  /** Working directory the record was written in. */
+  cwd?: string;
+  /** The CLI process's running cost in USD. A counter that restarts with each process, so a
+   *  value below the previous one means a new process. */
+  totalCostUsd?: number;
+}
+
 // ── Hook-based Provider (CLIs with hooks APIs) ────────────────
 
 export interface HookProvider {
@@ -210,6 +223,12 @@ export interface HookProvider {
    *  undefined when the record states none. The runtime keeps only the modes the
    *  protocol knows (`PermissionMode`), so the value is passed through raw. */
   extractPermissionMode?(record: unknown): string | undefined;
+
+  /** Session facts one transcript record carries, or null when it carries none.
+   *  Report only what the record states (a field it lacks is absent, never a
+   *  default); the runtime folds them across records, so `branch` is user text
+   *  and must never be logged. */
+  extractSessionMeta?(record: unknown): SessionMetaFacts | null;
 
   /** Classify one parsed transcript record. Required for the adoption-time tail
    *  walk (server/src/turnState.ts); a provider without it keeps the old behavior

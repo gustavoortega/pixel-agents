@@ -179,6 +179,9 @@ export interface AgentState {
   // What clients are shown, minus the envelope. Absent means unknown and is sent as the
   // clear form. None is persisted.
   sessionMeta?: MonitorView<AgentSession>;
+  /** What `sessionMeta` is folded from, for the transcript it was read from (sessionMeta.ts).
+   *  Kept apart from the wire view: the resend spreads that into a message. */
+  sessionMetaTrack?: SessionMetaTrack;
   artifacts?: MonitorView<AgentArtifacts>;
   loop?: MonitorView<AgentLoop>;
   tests?: MonitorView<AgentTests>;
@@ -208,6 +211,32 @@ export interface AgentState {
    *  TRANSCRIPT_FRESHNESS_WINDOW_MS. A tool result stamped earlier was written before the agent
    *  was watched and pays no XP: a young file can open with copied history. Transient. */
   historyBefore?: number;
+}
+
+/**
+ * A CLI process's cost counter, folded across processes: the counter restarts when a session
+ * is resumed, so the total is what finished processes reached plus where the current one is.
+ */
+export interface CostTrack {
+  /** Sum of the last value of every process that has since been replaced. */
+  settled: number;
+  /** The current process's latest counter; undefined until a cost row was seen. */
+  last?: number;
+  /** Epoch ms of the newest cost row. */
+  at?: number;
+  /** Newest record timestamp folded so far: cost rows carry none of their own. */
+  clock?: number;
+}
+
+/** The fold behind an agent's `sessionMeta`, tied to the one transcript it was read from. */
+export interface SessionMetaTrack {
+  file: string;
+  /** First timestamp of the file; undefined while unknown. */
+  startedAt?: number;
+  /** The file's head was read, so the live stream must not guess a start from mid-file. */
+  headRead: boolean;
+  branch?: string;
+  cost: CostTrack;
 }
 
 /** A per-agent monitor message minus its envelope: what the agent state keeps. */
