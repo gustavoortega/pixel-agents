@@ -9,9 +9,11 @@ import { ConnectionIndicator } from './components/ConnectionIndicator.js';
 import { DebugView } from './components/DebugView.js';
 import { EditActionBar } from './components/EditActionBar.js';
 import { HudCard } from './components/HudCard.js';
+import { closeSheet } from './components/inspector/sheetControl.js';
 import { IntroBubble } from './components/IntroBubble.js';
 import { LightingTint } from './components/LightingTint.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
+import { monitorLayout } from './components/monitorLayout.js';
 import { MonitorShell } from './components/MonitorShell.js';
 import { SettingsModal } from './components/SettingsModal.js';
 import { Tooltip } from './components/Tooltip.js';
@@ -316,6 +318,9 @@ function App() {
     transport.send({ type: 'ackTripwire', id, count });
   }, []);
 
+  // The inspector sheet and the Usage panel share the right edge: opening the sheet closes it.
+  const handleInspectorOpen = useCallback(() => setIsUsageOpen(false), []);
+
   const handleClick = useCallback((agentId: number) => {
     // If clicked agent is a sub-agent, focus the parent's terminal instead
     const os = getOfficeState();
@@ -360,7 +365,7 @@ function App() {
     select: selectAndFollow,
     togglePrivacy,
     // The sheet takes the Usage panel's corner.
-    onSheetOpen: () => setIsUsageOpen(false),
+    onSheetOpen: handleInspectorOpen,
   });
 
   const officeState = getOfficeState();
@@ -663,7 +668,12 @@ function App() {
         isSettingsOpen={isSettingsOpen}
         onToggleSettings={() => setIsSettingsOpen((v) => !v)}
         isUsageOpen={isUsageOpen}
-        onToggleUsage={() => setIsUsageOpen((v) => !v)}
+        onToggleUsage={() => {
+          // Below 1600 px the sheet overlays the Usage panel's corner: opening Usage closes it.
+          const { sheetMode } = monitorLayout(window.innerWidth, window.innerHeight);
+          if (!isUsageOpen && sheetMode === 'overlay') closeSheet(officeState);
+          setIsUsageOpen((v) => !v);
+        }}
         workspaceFolders={workspaceFolders}
       />
 
@@ -760,6 +770,13 @@ function App() {
       privacy={privacy}
       onTogglePrivacy={togglePrivacy}
       onSelect={handleRailSelect}
+      inspector={{
+        agentTools,
+        subagentTools,
+        subagentCharacters,
+        onAckTripwire: handleAckTripwire,
+        onOpen: handleInspectorOpen,
+      }}
     >
       {stage}
     </MonitorShell>

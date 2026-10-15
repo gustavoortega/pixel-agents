@@ -125,6 +125,8 @@ webview-ui/                          React 19 + Canvas UI (depends only on core/
       limitsPace.ts                  Pure view-model for the official limits (pace, run-out, nudge, colors) behind UsagePanel and HudCard
       MonitorShell.tsx               The window's row [rail][stage][sheet]; the one reader of the monitor version (MonitorRail/MonitorSheet are its slots)
       monitorLayout.ts               Pure: rail width, inline or overlay sheet, full plates, per window size
+      MonitorSheet.tsx               The inspector sheet's slot: open while officeState.monitorSheetOpen and an agent is selected (a sub-agent shows its lead), inline from 1600 px, z 45 overlay below; a deselection closes it, opening it closes Usage
+      inspector/                     The sheet: inspectorView.ts (pure rows, absent never 0, user text marked pv), sheetInput.ts (OfficeState + App tool rows -> input), sheetControl.ts (openSheet/closeSheet over the keys' setSheetOpen: one switch), InspectorSheet.tsx (reads the rail's Medal and Face), PixelArt.tsx + pixelBitmaps.ts (tier gem and icons as crisp SVG rects: the font lacks ✓ ▪ ⌛), inspector.css
     hooks/
       useExtensionMessages.ts        Message handler — translates ServerMessage into OfficeState mutations
       useNow.ts                      Epoch ms on an interval (the Usage panel's countdowns)
