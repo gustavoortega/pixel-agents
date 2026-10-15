@@ -1,7 +1,8 @@
 /**
  * Plates scale with the zoom relative to the whole-map fit; up to zoom level 3 (the HUD's "Nx")
- * they are one compact `Lv N  Name` line, from 4x the full two-line plate. Hover or selection
- * always shows the full box. The kind is checked through the real overlay render.
+ * they are one compact line, from 4x the full two-line plate; beside the monitor's rail they are
+ * full at every zoom. Hover or selection shows the full box, except for the agent the inspector
+ * sheet shows. The kind is checked through the real overlay render.
  *
  * Run with: npm test
  */
@@ -10,16 +11,16 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { NAMEPLATE_COMPACT_BG } from '../src/constants.js';
+import { NAMEPLATE_COMPACT_BG, PLATE_SELECTED_BG } from '../src/constants.js';
 import { ToolOverlay } from '../src/office/components/ToolOverlay.js';
 import { OfficeState } from '../src/office/engine/officeState.js';
-import { plateAnchorAboveY, plateScale } from '../src/office/nameplate.js';
+import { plateAnchorAboveY, plateScale, setMonitorFullPlates } from '../src/office/nameplate.js';
 import type { OfficeLayout } from '../src/office/types.js';
 import { TileType } from '../src/office/types.js';
 
 const TITLE = 'Refactor the parser';
 
-function overlayHtml(zoom: number, focus?: 'hover' | 'select'): string {
+function overlayHtml(zoom: number, focus?: 'hover' | 'select', sheetOpen = false): string {
   const cols = 12;
   const rows = 9;
   const layout: OfficeLayout = {
@@ -42,7 +43,9 @@ function overlayHtml(zoom: number, focus?: 'hover' | 'select'): string {
     mood: 'happy',
   });
   if (focus === 'hover') os.hoveredAgentId = 1;
-  if (focus === 'select') os.selectedAgentId = 1;
+  // The sheet shows the selected agent.
+  if (focus === 'select' || sheetOpen) os.selectedAgentId = 1;
+  os.monitorSheetOpen = sheetOpen;
   const container = {
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 900 }),
   } as unknown as HTMLDivElement;
@@ -71,9 +74,8 @@ describe('plate kind by zoom level', () => {
     (globalThis as { window?: unknown }).window = saved;
   });
 
-  it.each([4, 6])('zoom %i (level <= 3): one line, badge and name, no title, 13 px', (zoom) => {
+  it.each([4, 6])('zoom %i (level <= 3): one line, the name, no title, 13 px', (zoom) => {
     const html = overlayHtml(zoom);
-    expect(html).toContain('Lv 7');
     expect(html).toContain('Ada');
     expect(html).not.toContain(TITLE);
     expect(html).toContain('font-size:13px');
@@ -82,7 +84,7 @@ describe('plate kind by zoom level', () => {
 
   it.each([8, 10])('zoom %i (level >= 4): the full plate with its title line', (zoom) => {
     const html = overlayHtml(zoom);
-    expect(html).toContain('Lv 7');
+    expect(html).toContain('Ada');
     expect(html).toContain(TITLE);
     expect(html).not.toContain('font-size:13px');
   });
@@ -95,6 +97,39 @@ describe('plate kind by zoom level', () => {
       expect(html).not.toMatch(/class="nameplate /);
     },
   );
+
+  it.each(['hover', 'select'] as const)(
+    '%s of the agent the inspector sheet shows keeps its plate, on paper',
+    (focus) => {
+      const html = overlayHtml(8, focus, true);
+      expect(html).toMatch(/class="nameplate /);
+      expect(html).toContain(TITLE);
+      expect(html).not.toContain('data-testid="context-gauge"');
+      expect(html).toContain(`--plate-bg:${PLATE_SELECTED_BG}`);
+    },
+  );
+
+  it('beside the rail, whole-map fit (zoom 2, dpr 1) shows name, state and line 2, line 1 at 14 px or more', () => {
+    // The shell sets the rule from monitorLayout: 1920 x 1080 and 1280 x 800 both have a full rail.
+    setMonitorFullPlates(true);
+    try {
+      const html = overlayHtml(2);
+      expect(html).toMatch(/class="nameplate /);
+      expect(html).toContain('Ada');
+      expect(html).toContain('data-testid="plate-state"');
+      expect(html).toContain('data-testid="plate-line2"');
+      expect(html).toContain(TITLE);
+      // What the eye gets: each line-1 font size times the plate's scale.
+      const scale = Number(/scale\(([\d.]+)\)/.exec(html)?.[1]);
+      const plate = html.slice(html.indexOf('class="nameplate '));
+      const line1 = plate.slice(0, plate.lastIndexOf('<span', plate.indexOf('plate-line2')));
+      const sizes = [...line1.matchAll(/font-size:(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
+      expect(sizes.length).toBeGreaterThanOrEqual(2);
+      for (const px of sizes) expect(px * scale).toBeGreaterThanOrEqual(14);
+    } finally {
+      setMonitorFullPlates(false);
+    }
+  });
 });
 
 describe('plateScale', () => {

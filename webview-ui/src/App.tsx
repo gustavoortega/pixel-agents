@@ -580,6 +580,7 @@ function App() {
             panRef={editor.panRef}
             onCloseAgent={handleCloseAgent}
             onAckTripwire={handleAckTripwire}
+            showAreas={showAreas || isEditingAreas}
           />
         </>
       ) : (

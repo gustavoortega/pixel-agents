@@ -12,6 +12,8 @@ import {
 import type { SubagentCharacter } from '../hooks/subagentMessages.js';
 import type { OfficeState } from './engine/officeState.js';
 import { Rarity } from './flair/modelFlair.js';
+import type { MedalSpec } from './medal.js';
+import { formatSpan, type PlateState } from './plateState.js';
 import { CharacterState, IdlePose } from './types.js';
 
 /** Map status prefixes back to tool names for animation selection */
@@ -57,9 +59,10 @@ export function tripwireColor(severity: TripwireSeverity): string {
   return TRIPWIRE_COLOR_LOW;
 }
 
-/** Overlay line for an agent's alarm; the count shows only once there is more than one hit. */
+/** Overlay line for an agent's alarm; the count shows only once there is more than one hit. The
+ *  warning sign before it is a pixel icon (PixelWarn): the font has no ⚠. */
 export function tripwireLabel(ruleName: string, count: number): string {
-  return count > 1 ? `\u26A0 ${ruleName} \u00D7${count}` : `\u26A0 ${ruleName}`;
+  return count > 1 ? `${ruleName} \u00D7${count}` : ruleName;
 }
 
 /** The alarm sound plays for the first hit since an ack or a severity escalation, never on a plain count bump. */
@@ -120,18 +123,32 @@ export function compactLabelMaxWidth(zoom: number, dpr: number): number {
   );
 }
 
-/** Gold badge before the member name. */
-export function levelBadge(level: number): string {
-  return `Lv ${level}`;
+/** One part of a plate's second line; session text (a branch, a title) is masked in privacy mode. */
+export interface PlatePart {
+  text: string;
+  pv: boolean;
 }
 
-/** What a permanent nameplate shows. Line 1 is the badge + member name, line 2 the session
- *  label; the rarity colors the Lv badge and the tripwire is a pill under it. */
+/**
+ * What a permanent nameplate shows. Line 1: the alert tab or nothing, the medal (model tier and
+ * context), the name, the loop glyph, then the state words. Line 2 (full plates only): the
+ * branch, the transcript's age and the artifacts. A helper's plate is one line: its run label (or
+ * task description) and what it does. The tripwire is a pill beside the plate.
+ */
 export interface NameplateContent {
-  badge: string | null;
+  /** Roster name; else the session label (then `namePv`); a helper: its label. */
   name: string;
-  sub: string | null;
-  /** Tiers 2-4 only: tier 1 and an unknown model keep the gold badge. */
+  /** The name is session text (title, folder, a helper's label): privacy masks it. */
+  namePv: boolean;
+  medal: MedalSpec | null;
+  state: PlateState | null;
+  /** The agent runs as a loop (`↻` after the name). */
+  loop: boolean;
+  /** Line 2; null when nothing is known. */
+  sub: readonly PlatePart[] | null;
+  /** A helper's one-line plate. */
+  helper: boolean;
+  /** Tiers 2-4 only: a legendary plate shimmers. */
   rarity: Rarity | null;
   pill: string | null;
 }
@@ -195,6 +212,11 @@ export function helpersLabel(n: number): string {
 export type OverlayContent =
   { mode: 'full' } | { mode: 'marker' } | { mode: 'compact'; plate: NameplateContent | null };
 
+/** `N artifacts`, `1 artifact`, `N+ artifacts` when the history scan was cut short. */
+export function artifactsLabel(count: number, complete: boolean): string {
+  return `${count}${complete ? '' : '+'} ${count === 1 && complete ? 'artifact' : 'artifacts'}`;
+}
+
 /**
  * What an agent's overlay shows. Hovered or selected -> the full box. Otherwise the permanent
  * nameplate (null when the agent has nothing to show yet), or just a marker when there is no room.
@@ -204,54 +226,87 @@ export function overlayContent(state: {
   /** Session title or folder. */
   label: string | null;
   subCount: number;
+  /** How many of those helpers have a character: the crew lines show them, so the count shows
+   *  only while some wait without one. */
+  drawnSubCount?: number;
   tripwire?: { ruleName: string; count: number } | null;
-  /** Roster level and member name; the badge shows even when the agent has no label. */
-  level?: number;
+  /** Roster member name. */
   name?: string;
   rarity?: Rarity;
   maxWidth: number;
-  /** Set for a helper (sub-agent): its parent's name. A helper gets one small line, no level. */
+  /** Set for a helper (sub-agent): its parent's name. */
   helperOf?: string;
-  /** A workflow helper's label: it names the helper instead of the word "helper". */
+  /** A workflow helper's run label, or a sub-agent's task description. */
   helperLabel?: string;
+  medal?: MedalSpec | null;
+  plateState?: PlateState | null;
+  loop?: boolean;
+  /** Line 2: the session's branch, the transcript's age (ms), its artifacts. */
+  branch?: string;
+  ageMs?: number;
+  artifacts?: { count: number; complete: boolean };
 }): OverlayContent {
   if (state.expanded) return { mode: 'full' };
   if (state.maxWidth < COMPACT_LABEL_MIN_WIDTH_PX) return { mode: 'marker' };
+  const pill = state.tripwire ? tripwireLabel(state.tripwire.ruleName, state.tripwire.count) : null;
   if (state.helperOf !== undefined) {
-    // The label is script text: isolated (FSI ... PDI), its right-to-left runs
-    // can never reorder the parent's name that follows it.
-    const who = state.helperLabel
+    // The label is script text: isolated (FSI ... PDI), its right-to-left runs can never reorder
+    // the words that follow it.
+    const label = state.helperLabel
       ? `\u2068${ellipsize(state.helperLabel, HELPER_PLATE_LABEL_MAX_CODE_POINTS)}\u2069`
       : 'helper';
     return {
       mode: 'compact',
       plate: {
-        badge: null,
-        name: `${who} \u00B7 ${state.helperOf}`,
+        name: label,
+        namePv: !!state.helperLabel,
+        medal: null,
+        state: state.plateState ?? null,
+        loop: false,
         sub: null,
+        helper: true,
         rarity: null,
-        pill: null,
+        pill,
       },
     };
   }
-  const badge = state.level !== undefined ? levelBadge(state.level) : null;
   let name = state.name ?? '';
-  let sub = [state.label, state.subCount > 0 ? helpersLabel(state.subCount) : '']
-    .filter(Boolean)
-    .join(' ');
-  // No roster member yet: the session label takes the name line instead of leaving it empty.
-  if (!name && !badge && sub) {
-    name = sub;
-    sub = '';
+  let namePv = false;
+  let label = state.label;
+  // No roster member yet: the session label takes the name line.
+  if (!name && label) {
+    name = label;
+    namePv = true;
+    label = null;
   }
-  const pill = state.tripwire ? tripwireLabel(state.tripwire.ruleName, state.tripwire.count) : null;
-  if (!badge && !name && !sub && !pill) return { mode: 'compact', plate: null };
+  const parts: PlatePart[] = [];
+  const where = state.branch || label;
+  if (where) parts.push({ text: where, pv: true });
+  if (state.ageMs !== undefined) parts.push({ text: formatSpan(state.ageMs), pv: false });
+  if (state.artifacts && state.artifacts.count > 0)
+    parts.push({
+      text: artifactsLabel(state.artifacts.count, state.artifacts.complete),
+      pv: false,
+    });
+  if (state.subCount > (state.drawnSubCount ?? 0))
+    parts.push({ text: helpersLabel(state.subCount), pv: false });
+  if (!name && parts.length === 0 && !pill) return { mode: 'compact', plate: null };
+  // Nothing names the agent yet: the first part of line 2 moves up.
+  if (!name && parts.length > 0) {
+    const first = parts.shift()!;
+    name = first.text;
+    namePv = first.pv;
+  }
   return {
     mode: 'compact',
     plate: {
-      badge,
       name,
-      sub: sub || null,
+      namePv,
+      medal: state.medal ?? null,
+      state: state.plateState ?? null,
+      loop: !!state.loop,
+      sub: parts.length > 0 ? parts : null,
+      helper: false,
       rarity: state.rarity && state.rarity !== Rarity.COMMON ? state.rarity : null,
       pill,
     },
@@ -268,16 +323,24 @@ export function helperPlateInput(
   officeState: OfficeState,
   helpers: readonly SubagentCharacter[],
   id: number,
-): { subCount: number; helperOf?: string; helperLabel?: string } {
-  const subCount = helpers.filter((s) => s.parentAgentId === id).length;
+): { subCount: number; drawnSubCount: number; helperOf?: string; helperLabel?: string } {
+  const mine = helpers.filter((s) => s.parentAgentId === id);
+  const subCount = mine.length;
+  const drawnSubCount = mine.filter((s) => officeState.characters.has(s.id)).length;
   const ch = officeState.characters.get(id);
   const parentId = ch?.isSubagent ? ch.parentAgentId : null;
-  if (parentId === null) return { subCount };
+  if (parentId === null) return { subCount, drawnSubCount };
   return {
     subCount,
+    drawnSubCount,
     helperOf: parentName(officeState, parentId),
-    helperLabel: helpers.find((s) => s.id === id)?.plateLabel,
+    helperLabel: helperLabelOf(helpers.find((s) => s.id === id)),
   };
+}
+
+/** A crew helper's run label, else a sub-agent's task description. */
+function helperLabelOf(s: SubagentCharacter | undefined): string | undefined {
+  return s?.plateLabel || s?.label || undefined;
 }
 
 /** A helper's parent as its plate names it: roster name, else session title or folder. */

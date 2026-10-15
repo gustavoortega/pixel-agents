@@ -330,28 +330,19 @@ export const PLATE_SCALE_MAX = 1.5;
 export const PLATE_SCALE_FIT_FLOOR = 2;
 /** Zoom level (the HUD's "Nx", zoom / ART_DENSITY) up to which plates are one-line compact. */
 export const PLATE_COMPACT_MAX_LEVEL = 3;
-/** Compact plate: one `Lv N  Name` line, fixed size (not scaled), a little see-through. */
+/** Compact plate: one line (medal, name, state), fixed size (not scaled), a little see-through. */
 export const NAMEPLATE_COMPACT_FONT_PX = 13;
 export const NAMEPLATE_COMPACT_LINE_PX = 16;
 export const NAMEPLATE_COMPACT_BG = 'rgba(59, 36, 18, 0.80)';
-/** Nameplate box, CSS px. Line 1 is the badge + member name, line 2 the session label. */
-export const NAMEPLATE_LINE1_PX = 20;
-export const NAMEPLATE_LINE2_PX = 16;
+/** Nameplate box, CSS px (the line heights are PLATE_FULL_* and NAMEPLATE_COMPACT_LINE_PX). */
 export const NAMEPLATE_PAD_Y_PX = 2;
 export const NAMEPLATE_BORDER_PX = 3;
 /** Hard shadow under the plate (`.nameplate` in index.css) and the gap before the tripwire pill. */
 export const NAMEPLATE_SHADOW_PX = 3;
-/** Plate type sizes, CSS px: the member name and the session title. */
-export const NAMEPLATE_NAME_FONT_PX = 17;
-export const NAMEPLATE_SUB_FONT_PX = 12;
-/** Plate colors. The border and shadow are the same for every tier; the tier only colors the Lv badge. */
+/** Plate colors. The border and shadow are the same for every tier; the medal shows the tier. */
 export const NAMEPLATE_BG = '#3b2412';
 export const NAMEPLATE_BORDER_COLOR = '#1e120a';
 export const NAMEPLATE_TEXT_COLOR = '#fff4dc';
-export const NAMEPLATE_SUB_BG = 'rgba(59, 36, 18, 0.7)';
-export const NAMEPLATE_BADGE_INK = '#3b2412';
-/** Lv badge background for Haiku and an unknown model. */
-export const NAMEPLATE_BADGE_GOLD = '#f6c64a';
 export const NAMEPLATE_PILL_HEIGHT_PX = 18;
 export const NAMEPLATE_PILL_GAP_PX = 2;
 /** Gap between neighbouring items of the overlay stack above a head (plate, chip, bubble), CSS px. */
@@ -826,3 +817,95 @@ export const MONITOR_CLOCK_TICK_MS = 30_000;
 export const MONITOR_PRIVACY_STORAGE_KEY = 'pixel-agents.monitor.privacy';
 /** Context share (%) at which a medal or context ring turns hot. */
 export const MONITOR_RING_HOT_PCT = 85;
+
+// ── Monitor plates, medals, crew banner and lines ───────────────
+/** Full plates (the monitor): line 1 holds the alert tab, medal, name and state; line 2 the
+ *  branch, the transcript's age and the artifacts. CSS px at plate scale 1. */
+export const PLATE_FULL_LINE1_PX = 28;
+export const PLATE_FULL_LINE2_PX = 20;
+export const PLATE_FULL_NAME_FONT_PX = 20;
+export const PLATE_FULL_STATE_FONT_PX = 16;
+export const PLATE_FULL_SUB_FONT_PX = 14;
+/** A helper's one-line plate: its run label and what it does. */
+export const PLATE_HELPER_LINE_PX = 22;
+export const PLATE_HELPER_FONT_PX = 16;
+/** Horizontal padding inside a plate and the gap between its line-1 items. */
+export const PLATE_PAD_X_PX = 6;
+export const PLATE_ITEM_GAP_PX = 5;
+/** Medal art: a 12 px grid, drawn at a whole multiple so its pixels stay square. */
+export const MEDAL_GRID = 12;
+export const MEDAL_FULL_PX = 24;
+export const MEDAL_COMPACT_PX = 12;
+/** Ring radii on the 12 px grid (outer, inner: two pixels thick) and where it turns hot. */
+export const MEDAL_RING_OUTER = 6.0;
+export const MEDAL_RING_INNER = 3.9;
+export const MEDAL_HOT_FRACTION = 0.85;
+export const MEDAL_HOLE_COLOR = '#22140a';
+export const MEDAL_RING_FILL_COLOR = '#f6e3bd';
+export const MEDAL_RING_HOT_COLOR = '#ec9277';
+export const MEDAL_RING_TRACK_COLOR = '#5a3d27';
+/** Tier glyph fill and highlight, tier 1 (dot) to 4 (cross). */
+export const MEDAL_TIER_FILL = { 1: '#9ec99b', 2: '#8fb0e0', 3: '#ab9ce6', 4: '#ec9fd2' } as const;
+export const MEDAL_TIER_HI = { 1: '#e2f3dc', 2: '#e0ebfb', 3: '#ece6ff', 4: '#ffe6f5' } as const;
+/** Plate tones: the alert tab (gold waits on you, rust is stuck), state words, line 2, done. */
+export const PLATE_WAIT_BG = '#f6c64a';
+export const PLATE_WAIT_INK = '#3b2412';
+export const PLATE_STUCK_BG = '#c0563f';
+export const PLATE_STUCK_INK = '#fff4dc';
+export const PLATE_STATE_COLOR = '#e9d2a8';
+export const PLATE_CMD_COLOR = '#f2dcae';
+export const PLATE_SUB_COLOR = '#d9c29b';
+export const PLATE_DONE_COLOR = '#8fb09a';
+/** An idle plate goes quiet: see-through, a fainter edge, no shadow. */
+export const PLATE_QUIET_BG = 'rgba(59, 36, 18, 0.56)';
+export const PLATE_QUIET_BORDER = 'rgba(30, 18, 10, 0.5)';
+/** The selected agent's plate while the inspector holds its details: paper and ink. */
+export const PLATE_SELECTED_BG = '#f6e3bd';
+export const PLATE_SELECTED_TEXT = '#3b2412';
+export const PLATE_SELECTED_STATE = '#5a3a22';
+/** Full plates may be wider than one seat: about two desk pitches, so neighbours alternate rows. */
+export const PLATE_FULL_PITCH_TILES = 4;
+export const PLATE_FULL_MIN_WIDTH_PX = 170;
+export const PLATE_FULL_MAX_WIDTH_PX = 300;
+/** The collision budget's line for full plates: one plate height moves a neighbour by one step. */
+export const PLATE_FULL_LAYOUT_LINE_PX = 30;
+/** Text width estimate for FS Pixel Sans, in em (measured: most glyphs 0.375, narrow ones less). */
+export const PIXEL_FONT_GLYPH_EM = 0.375;
+export const PIXEL_FONT_NARROW_EM = 0.16;
+export const PIXEL_FONT_WIDE_EM = 0.5625;
+/** The crew banner over a running workflow's helpers. */
+export const CREW_BANNER_LABEL_FONT_PX = 12;
+export const CREW_BANNER_NAME_FONT_PX = 20;
+export const CREW_BANNER_CHIP_FONT_PX = 16;
+export const CREW_BANNER_COUNT_FONT_PX = 16;
+export const CREW_BANNER_ROW1_PX = 27;
+export const CREW_BANNER_ROW2_PX = 25;
+export const CREW_BANNER_ROW3_PX = 20;
+export const CREW_BANNER_PAD_X_PX = 8;
+export const CREW_BANNER_PAD_Y_PX = 4;
+export const CREW_BANNER_BORDER_PX = 3;
+export const CREW_BANNER_SHADOW_PX = 4;
+export const CREW_BANNER_PIP_PX = 7;
+export const CREW_BANNER_MAX_PIPS = 6;
+/** Clear space between the banner's bottom and the helpers' heads, CSS px. */
+export const CREW_BANNER_GAP_PX = 6;
+/** Under every plate (40, helpers 39, plates with no room 37-38). */
+export const CREW_BANNER_Z_INDEX = 36;
+/** Crew lines on the office floor: ink with a paper edge, solid to crew helpers, dashed to sub-agents. */
+export const CREW_LINE_COLOR = 'rgba(59, 36, 18, 0.9)';
+export const CREW_LINE_EDGE_COLOR = 'rgba(246, 227, 189, 0.55)';
+export const CREW_LINE_DASH = [4, 3] as const;
+/** Secondary and tertiary ink on the banner's paper. */
+export const CREW_BANNER_INK_2 = '#5a3a22';
+export const CREW_BANNER_INK_3 = '#7a5a3c';
+/** Full plates beside the rail scale with the map's CSS size (zoom / dpr): 1 at this many CSS px
+ *  per world px, so a plate keeps its share of the map on a 1x and a 2x screen alike. */
+export const PLATE_FULL_REF_CSS_ZOOM = 2.5;
+/** Smallest line-1 text a full plate beside the rail may draw, CSS px: read from two metres on a
+ *  1080p screen. It floors the plates' scale at the smallest line-1 font. */
+export const PLATE_FULL_MIN_TEXT_PX = 14;
+/** Side-by-side plates keep this much air between them. */
+export const PLATE_SIDE_GAP_PX = 6;
+/** A cut text on a plate (a branch, the state words) keeps at least this much (em), so it still
+ *  reads as a word and not a stray letter; with less room it is left out. */
+export const PLATE_STUB_EM = 3;

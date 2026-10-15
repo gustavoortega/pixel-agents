@@ -320,6 +320,46 @@
   box-shadow: 0 3px 0 var(--plate-border);
 }
 
+/* An idle plate goes quiet: no shadow (its fainter colors come from nameplateStyle). */
+.nameplate.nameplate-quiet {
+  box-shadow: none;
+}
+
+/* A plate that needs you bobs, so the eye finds it. */
+.plate-alert {
+  animation: plate-bob 2.6s ease-in-out infinite;
+}
+@keyframes plate-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+/* The live command's block cursor (the font has the glyph, but a box keeps its size exact). */
+.plate-cursor {
+  display: inline-block;
+  width: 0.42em;
+  height: 0.74em;
+  background: currentColor;
+  animation: plate-cursor 1.4s steps(1) infinite;
+}
+@keyframes plate-cursor {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plate-alert,
+  .plate-cursor {
+    animation: none;
+  }
+}
+
 /* Legendary label plate: a bright band sweeping across the plate. The label is
    already absolutely positioned and clips its overflow, so the band needs only
    the pseudo-element. No blur, so it keeps the hard-edged pixel look. */
