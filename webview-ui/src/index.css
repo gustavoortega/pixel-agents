@@ -1137,3 +1137,12 @@
     display: none;
   }
 }
+
+/* Monitor tag (beside the rail): the plate at one line, a thinner border and shadow. */
+.nameplate.nameplate-tag {
+  border-width: 2px;
+  box-shadow: 0 2px 0 var(--plate-border);
+}
+.nameplate.nameplate-tag.nameplate-quiet {
+  box-shadow: none;
+}

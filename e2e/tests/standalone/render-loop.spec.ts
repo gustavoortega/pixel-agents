@@ -258,4 +258,82 @@ test.describe('Render loop', () => {
     expect(wake.mode).toBe('active');
     expect(wake.raf).toBeGreaterThan(0);
   });
+
+  test('Q3.4 a lit desk blinks on the timer, and an office with nothing lit idles @area:render', async ({
+    page,
+  }) => {
+    // One desk and its chair: an agent sits still at it, and nothing else in the room animates.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-render-e2e-home-'));
+    fs.mkdirSync(path.join(home, '.pixel-agents'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.pixel-agents', 'layout.json'),
+      JSON.stringify({
+        ...buildSeedLayout(),
+        furniture: [
+          { uid: 'desk', type: 'DESK_FRONT', col: 4, row: 4 },
+          { uid: 'chair', type: 'CUSHIONED_CHAIR_FRONT', col: 5, row: 4 },
+        ],
+      }),
+    );
+    const session = await launchStandalone(page, { homeDir: home });
+    const lit = () =>
+      page.evaluate(
+        () =>
+          (
+            window as RenderLoopWindow & {
+              __pixelAgentsTestHooks?: { getDeskHighlights?: () => Array<{ id: number }> };
+            }
+          ).__pixelAgentsTestHooks?.getDeskHighlights?.() ?? null,
+      );
+    try {
+      // Nobody in, nothing lit: idle.
+      const empty = await quietWindow(page);
+      expect(empty.mode).toBe('idle');
+      expect(await lit()).toEqual([]);
+
+      // A seated agent with a question: its desk lights and blinks, the loop stays off frames.
+      const id = 9_301;
+      await page.evaluate((agentId) => {
+        const send = (window as RenderLoopWindow).__pixelAgentsDeliver;
+        if (!send) throw new Error('message delivery missing');
+        send({ type: 'agentCreated', id: agentId, folderName: 'repo' });
+        send({ type: 'agentStatus', id: agentId, status: 'waiting', awaitingInput: true });
+      }, id);
+      await expect.poll(async () => (await lit())?.map((h) => h.id)).toEqual([id]);
+      const blink = await page.evaluate(async () => {
+        const w = window as RenderLoopWindow & {
+          __pixelAgentsTestHooks?: { getDeskHighlights?: () => Array<{ frame: 0 | 1 }> };
+        };
+        const frames = w.__pixelAgentsTestHooks?.frames;
+        const read = w.__pixelAgentsTestHooks?.getDeskHighlights;
+        if (!frames || !read) throw new Error('render loop counters or highlight hook missing');
+        const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+        // Settle off animation frames (the spawn effect), then watch two seconds.
+        for (let t = 0; frames.mode === 'active' && t < 10_000; t += 50) await sleep(50);
+        const raf = frames.raf;
+        const modes = new Set<string>();
+        const seen = new Set<number>();
+        for (let t = 0; t < 2_000; t += 50) {
+          await sleep(50);
+          modes.add(frames.mode);
+          for (const h of read()) seen.add(h.frame);
+        }
+        return { raf: frames.raf - raf, modes: [...modes], seen: [...seen].sort() };
+      });
+      expect(blink.raf).toBe(0);
+      expect(blink.modes).toEqual(['ambient']);
+      expect(blink.seen).toEqual([0, 1]);
+
+      // The agent leaves: nothing lit, the office idles again.
+      await page.evaluate((agentId) => {
+        (window as RenderLoopWindow).__pixelAgentsDeliver?.({ type: 'agentClosed', id: agentId });
+      }, id);
+      const after = await quietWindow(page);
+      expect(after.mode).toBe('idle');
+      expect(await lit()).toEqual([]);
+    } finally {
+      await session.cleanup();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

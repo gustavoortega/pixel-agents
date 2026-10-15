@@ -19,6 +19,7 @@ import {
   CREW_BANNER_ROW1_PX,
   CREW_BANNER_ROW2_PX,
   CREW_BANNER_ROW3_PX,
+  CREW_BANNER_WALL_INSET_PX,
 } from '../constants.js';
 import type { WorkflowRunView } from './engine/officeState.js';
 import type { Rect } from './labelLayout.js';
@@ -89,8 +90,9 @@ export function crewChipWidth(p: CrewBannerPhase): number {
   );
 }
 
-/** The banner's box at scale 1, CSS px (the hard shadow below it excluded). */
-export function crewBannerSize(v: CrewBannerView): { w: number; h: number } {
+/** The banner's box at scale 1, CSS px (the hard shadow below it excluded). On a wall (`wall`) the
+ *  counts share the chips' row, so the banner fits the wall band in two rows. */
+export function crewBannerSize(v: CrewBannerView, wall = false): { w: number; h: number } {
   const label = v.named
     ? Math.ceil(
         pixelTextWidth(CREW_BANNER_LABEL, CREW_BANNER_LABEL_FONT_PX) +
@@ -105,14 +107,19 @@ export function crewBannerSize(v: CrewBannerView): { w: number; h: number } {
   const sep = pixelTextWidth('›', CREW_BANNER_CHIP_FONT_PX) + 2 * ITEM_GAP;
   const row2 = v.phases.reduce((a, p, i) => a + crewChipWidth(p) + (i > 0 ? sep : 0), 0);
   const row3 = v.counts ? pixelTextWidth(v.counts, CREW_BANNER_COUNT_FONT_PX) : 0;
+  const frame = (w: number, h: number) => ({
+    w: w + 2 * (CREW_BANNER_PAD_X_PX + CREW_BANNER_BORDER_PX),
+    h: h + 2 * (CREW_BANNER_PAD_Y_PX + CREW_BANNER_BORDER_PX),
+  });
+  if (wall) {
+    const both = row2 > 0 && row3 > 0 ? row2 + 2 * ITEM_GAP + row3 : row2 + row3;
+    return frame(Math.max(row1, both), CREW_BANNER_ROW1_PX + (both > 0 ? CREW_BANNER_ROW2_PX : 0));
+  }
   const h =
     CREW_BANNER_ROW1_PX +
     (v.phases.length > 0 ? CREW_BANNER_ROW2_PX : 0) +
     (v.counts ? CREW_BANNER_ROW3_PX : 0);
-  return {
-    w: Math.max(row1, row2, row3) + 2 * (CREW_BANNER_PAD_X_PX + CREW_BANNER_BORDER_PX),
-    h: h + 2 * (CREW_BANNER_PAD_Y_PX + CREW_BANNER_BORDER_PX),
-  };
+  return frame(Math.max(row1, row2, row3), h);
 }
 
 function intersects(a: Rect, b: Rect): boolean {
@@ -193,6 +200,66 @@ function searchBannerRect(
     w: size.w,
     h: size.h,
   };
+}
+
+/** Sideways step of the search along a wall band, CSS px. */
+const WALL_STEP_PX = 6;
+
+/**
+ * The banner on its room's top wall band, CSS px: centred over the helpers' mean x, vertically in
+ * the band, sliding along it off whatever it must not cover (`avoid`: plaques, other banners).
+ * Null when it does not fit the band or no spot along it is free.
+ */
+export function wallBannerRect(
+  size: { w: number; h: number },
+  heads: ReadonlyArray<{ x: number; y: number }>,
+  band: Rect,
+  avoid: readonly Rect[] = [],
+): Rect | null {
+  const inset = CREW_BANNER_WALL_INSET_PX;
+  if (heads.length === 0 || size.w > band.w - 2 * inset || size.h > band.h - 2 * inset) return null;
+  const mx = heads.reduce((a, p) => a + p.x, 0) / heads.length;
+  const x0 = band.x + inset;
+  const x1 = band.x + band.w - inset - size.w;
+  const start = Math.max(x0, Math.min(Math.round(mx - size.w / 2), x1));
+  // Centred in the band, else hung from its top (tags may rise into the band's lower part).
+  const ys = [Math.round(band.y + (band.h - size.h) / 2), Math.round(band.y + inset)];
+  for (const y of ys) {
+    for (let k = 0; k <= Math.ceil((x1 - x0) / WALL_STEP_PX); k++) {
+      for (const dx of k === 0 ? [0] : [-k * WALL_STEP_PX, k * WALL_STEP_PX]) {
+        const x = start + dx;
+        if (x < x0 || x > x1) continue;
+        const r = { x, y, w: size.w, h: size.h };
+        if (!avoid.some((a) => intersects(r, a))) return r;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Where a running workflow's banner hangs: on its room's top wall band when one of the wall sizes
+ * (largest first) fits there, else the nearest free spot over its helpers (crewBannerRect, the
+ * free size). `size` is the index of the wall size used.
+ */
+export function placeCrewBanner(input: {
+  wall: { sizes: ReadonlyArray<{ w: number; h: number }>; band: Rect } | null;
+  free: { w: number; h: number };
+  heads: ReadonlyArray<{ x: number; y: number }>;
+  room: Rect | null;
+  map: Rect | null;
+  /** What the banner never covers on a wall. */
+  wallAvoid: readonly Rect[];
+  /** What it never covers anywhere else (plates, faces too). */
+  avoid: readonly Rect[];
+}): { rect: Rect; onWall: boolean; size: number } | null {
+  const wall = input.wall;
+  for (let i = 0; wall && i < wall.sizes.length; i++) {
+    const r = wallBannerRect(wall.sizes[i], input.heads, wall.band, input.wallAvoid);
+    if (r) return { rect: r, onWall: true, size: i };
+  }
+  const free = crewBannerRect(input.free, input.heads, input.room, input.map, input.avoid);
+  return free ? { rect: free, onWall: false, size: -1 } : null;
 }
 
 /** The run id of a crew helper's synthetic parent tool id `wf:<runId>:<agentId>`. */

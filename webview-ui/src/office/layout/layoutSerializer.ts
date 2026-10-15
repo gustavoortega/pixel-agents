@@ -248,6 +248,28 @@ export function getDeskTiles(furniture: PlacedFurniture[]): Map<string, number> 
   return tiles;
 }
 
+/** Every desk tile, mapped to its desk's footprint in world px: the desk a seat faces, whole. */
+export function getDeskRects(
+  furniture: PlacedFurniture[],
+): Map<string, { x: number; y: number; w: number; h: number }> {
+  const out = new Map<string, { x: number; y: number; w: number; h: number }>();
+  for (const item of furniture) {
+    const entry = getCatalogEntry(item.type);
+    if (!entry || !entry.isDesk) continue;
+    const rect = {
+      x: item.col * TILE_SIZE,
+      y: item.row * TILE_SIZE,
+      w: entry.footprintW * TILE_SIZE,
+      h: entry.footprintH * TILE_SIZE,
+    };
+    for (let dr = 0; dr < entry.footprintH; dr++) {
+      for (let dc = 0; dc < entry.footprintW; dc++)
+        out.set(`${item.col + dc},${item.row + dr}`, rect);
+    }
+  }
+  return out;
+}
+
 /** Get tiles blocked for placement purposes — skips top backgroundTiles rows per item */
 export function getPlacementBlockedTiles(
   furniture: PlacedFurniture[],

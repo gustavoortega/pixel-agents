@@ -37,6 +37,12 @@ import {
   DEAD_CHARACTER_ALPHA,
   DEAD_CHARACTER_FILTER,
   DELETE_BUTTON_BG,
+  DESK_HIGHLIGHT_HALO_PX,
+  DESK_HIGHLIGHT_OUTLINE_PX,
+  DESK_HIGHLIGHT_STUCK_COLOR,
+  DESK_HIGHLIGHT_STUCK_HALO,
+  DESK_HIGHLIGHT_WAIT_COLOR,
+  DESK_HIGHLIGHT_WAIT_HALO,
   DESK_PROP_FEET_INSET_PX,
   DESK_PROP_Z_OFFSET,
   FALLBACK_FLOOR_COLOR,
@@ -79,6 +85,7 @@ import {
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
 import type { CrewLine } from '../crewLines.js';
+import { type DeskHighlight, highlightFrame } from '../deskHighlight.js';
 import {
   accessoryPlacement,
   accessoryZ,
@@ -1247,6 +1254,56 @@ function renderNapZz(
   ctx.restore();
 }
 
+/** The desk highlights the last frame drew, with the frame of the blink (the e2e hook reads them). */
+let drawnDeskHighlights: ReadonlyArray<DeskHighlight & { frame: 0 | 1 }> = [];
+
+export function lastDrawnDeskHighlights(): ReadonlyArray<DeskHighlight & { frame: 0 | 1 }> {
+  return drawnDeskHighlights;
+}
+
+/**
+ * A lit desk: an outline around the desk, its seat and the agent at it, and a hard halo outside
+ * the outline on every other half second. Thickness in CSS px, whole device px at any zoom.
+ *
+ * @internal
+ */
+export function renderDeskHighlights(
+  ctx: CanvasRenderingContext2D,
+  highlights: readonly DeskHighlight[],
+  offsetX: number,
+  offsetY: number,
+  zoom: number,
+  nowMs = Date.now(),
+): void {
+  const frame = highlightFrame(nowMs);
+  drawnDeskHighlights = highlights.map((h) => ({ ...h, frame }));
+  if (highlights.length === 0) return;
+  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+  const line = Math.max(1, Math.round(DESK_HIGHLIGHT_OUTLINE_PX * dpr));
+  const halo = Math.max(1, Math.round(DESK_HIGHLIGHT_HALO_PX * dpr));
+  const ring = (x: number, y: number, w: number, h: number, t: number): void => {
+    ctx.fillRect(x - t, y - t, w + 2 * t, t);
+    ctx.fillRect(x - t, y + h, w + 2 * t, t);
+    ctx.fillRect(x - t, y, t, h);
+    ctx.fillRect(x + w, y, t, h);
+  };
+  ctx.save();
+  for (const h of highlights) {
+    const x = Math.round(offsetX + h.rect.x * zoom);
+    const y = Math.round(offsetY + h.rect.y * zoom);
+    const w = Math.round(h.rect.w * zoom);
+    const hh = Math.round(h.rect.h * zoom);
+    const stuck = h.tone === 'stuck';
+    ctx.fillStyle = stuck ? DESK_HIGHLIGHT_STUCK_COLOR : DESK_HIGHLIGHT_WAIT_COLOR;
+    ring(x, y, w, hh, line);
+    if (frame === 0) {
+      ctx.fillStyle = stuck ? DESK_HIGHLIGHT_STUCK_HALO : DESK_HIGHLIGHT_WAIT_HALO;
+      ring(x - line, y - line, w + 2 * line, hh + 2 * line, halo);
+    }
+  }
+  ctx.restore();
+}
+
 /** The crew lines the last frame drew (the e2e hook reads them; nothing else does). */
 let drawnCrewLines: readonly CrewLine[] = [];
 
@@ -1595,6 +1652,7 @@ export function renderFrame(
   bubbleLifts?: ReadonlyMap<number, number>,
   health?: ReadonlyMap<number, { state: HealthState }>,
   crewLines?: readonly CrewLine[],
+  deskHighlights?: readonly DeskHighlight[],
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -1690,6 +1748,9 @@ export function renderFrame(
   if (lightingState) {
     renderGlows(ctx, lightingState, night.fairy, zoom, offsetX, offsetY, cols, rows);
   }
+
+  // The desks that need you: over the night and the glows, so they stay the brightest thing.
+  renderDeskHighlights(ctx, deskHighlights ?? [], offsetX, offsetY, zoom, lightingState?.nowMs);
 
   // Speech bubbles (always on top of characters)
   renderBubbles(

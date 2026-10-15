@@ -21,12 +21,21 @@ import {
   CONTEXT_GAUGE_WIDTH_PX,
   CONTEXT_WARN_THRESHOLD,
   CREW_BANNER_SHADOW_PX,
+  CREW_BANNER_WALL_INSET_PX,
+  CREW_BANNER_WALL_MIN_SCALE,
+  CREW_BANNER_WALL_SCALE_STEP,
   LABEL_LAYOUT_DIM_OPACITY,
-  NAMEPLATE_BORDER_PX,
-  NAMEPLATE_PAD_Y_PX,
   NAMEPLATE_PILL_GAP_PX,
   NAMEPLATE_PILL_HEIGHT_PX,
   OVERLAY_STACK_GAP_PX,
+  PLAQUE_BORDER_PX,
+  PLAQUE_FOLDER_FONT_PX,
+  PLAQUE_FOLDER_LINE_PX,
+  PLAQUE_PAD_X_PX,
+  PLAQUE_PAD_Y_PX,
+  PLAQUE_TITLE_FONT_PX,
+  PLAQUE_TITLE_LINE_PX,
+  PLAQUE_Z_INDEX,
   PLATE_CMD_COLOR,
   PLATE_DONE_COLOR,
   PLATE_FULL_LAYOUT_LINE_PX,
@@ -41,6 +50,9 @@ import {
   PLATE_WAIT_BG,
   PLATE_WAIT_INK,
   RARITY_SHIMMER_SEC,
+  STAGE_CHROME_SELECTORS,
+  TAG_HEAD_GAP_PX,
+  TAG_MAX_WIDTH_PX,
   TEAM_LEAD_COLOR,
   TEAM_ROLE_COLOR,
   TILE_SIZE,
@@ -50,36 +62,43 @@ import type { SubagentCharacter } from '../../hooks/subagentMessages.js';
 import { useFrame } from '../../hooks/useFrame.js';
 import { fitZoomWholeMap } from '../camera.js';
 import { officeNow } from '../clock.js';
-import {
-  crewBannerRect,
-  crewBannerSize,
-  type CrewBannerView,
-  crewBannerView,
-  crewRunId,
-} from '../crewBanner.js';
-import { sheetFrameIndex } from '../engine/characters.js';
+import { crewBannerSize, crewBannerView, crewRunId, placeCrewBanner } from '../crewBanner.js';
 import type { OfficeState } from '../engine/officeState.js';
 import { isShowModelFlairEnabled } from '../engine/renderer.js';
-import { ANCHORS } from '../flair/accessories.js';
 import { characterFlair, Rarity } from '../flair/modelFlair.js';
 import { fullBoxRows, fullBoxTopOffsetPx } from '../fullBox.js';
 import { fxTextBox } from '../fx/fxTextBox.js';
-import { type AgentHealthView, healthLabel, healthMark } from '../health.js';
+import { healthLabel } from '../health.js';
 import {
   areaSignRect,
   clampPlate,
   fitPlateWidths,
   type LabelItem,
+  type LabelPlacement,
   layoutLabels,
   type Rect,
   roomFloorRect,
+  type TagPlacement,
   withTopWallFace,
 } from '../labelLayout.js';
 import { contextFraction, type MedalSpec } from '../medal.js';
 import {
+  FACE_WORLD_PX,
+  headSlotTaken,
+  HELPER_RANK,
+  layoutMonitorTags,
+  napHeadBobPx,
+  type PlacedBanner,
+  type PlacedPlaque,
+  roomPlaques,
+  screenRect,
+  wallBand,
+} from '../monitorTags.js';
+import {
   chipBoxHeight,
   fullPlateMaxWidth,
   isMonitorFullPlates,
+  isMonitorTag,
   monitorPlateScale,
   type NameplateStyle,
   nameplateStyle,
@@ -109,13 +128,12 @@ import {
   type OverlayContent,
   overlayContent,
   showOverlay,
-  statusGlyph,
   tripwireColor,
   tripwireLabel,
   type TripwireSeverity,
 } from '../toolUtils.js';
 import type { Character, ToolActivity } from '../types.js';
-import { CharacterState, Direction, IdlePose } from '../types.js';
+import { CharacterState, Direction } from '../types.js';
 import { CrewBanner } from './CrewBanner.js';
 import { FullBoxRoster } from './FullBoxRoster.js';
 import { FxText } from './FxText.js';
@@ -189,9 +207,6 @@ function getFuelColor(ratio: number): string {
   return CONTEXT_GAUGE_COLOR_OK;
 }
 
-/** A face, for the plates and the banner to keep clear of: about the head's size, world px. */
-const FACE_WORLD_PX = 12;
-
 // Above the compact labels (40) and the character-anchored sub-panels.
 const FULL_BOX_Z_INDEX = 43;
 const COMPACT_LABEL_Z_INDEX = 40;
@@ -227,6 +242,7 @@ function PlateBox({
     plate.rarity === Rarity.LEGENDARY ? 'rarity-shimmer' : '',
     style.quiet ? 'nameplate-quiet' : '',
     alert ? 'plate-alert' : '',
+    isMonitorTag(compact) ? 'nameplate-tag' : '',
   ];
   return (
     <div
@@ -238,7 +254,7 @@ function PlateBox({
           '--plate-border': style.border,
           // Privacy mode masks `.pv` text; a plate is ink (paper when selected).
           ...(style.paper ? {} : { '--pv-mask': 'var(--mon-mask-on-ink)' }),
-          padding: `${NAMEPLATE_PAD_Y_PX}px 0`,
+          padding: `${m.padY}px 0`,
           ...(plate.rarity === Rarity.LEGENDARY
             ? { '--rarity-shimmer-sec': `${RARITY_SHIMMER_SEC}s` }
             : {}),
@@ -259,12 +275,12 @@ function PlateBox({
           <span
             className="shrink-0 flex items-center"
             style={{
-              height: m.line1 + 2 * NAMEPLATE_PAD_Y_PX,
-              margin: `-${NAMEPLATE_PAD_Y_PX}px 0`,
+              height: m.line1 + 2 * m.padY,
+              margin: `-${m.padY}px 0`,
               padding: `0 ${PLATE_PAD_X_PX}px`,
               background: alert.tone === 'stuck' ? PLATE_STUCK_BG : PLATE_WAIT_BG,
               color: alert.tone === 'stuck' ? PLATE_STUCK_INK : PLATE_WAIT_INK,
-              borderRight: `${NAMEPLATE_BORDER_PX}px solid var(--plate-border)`,
+              borderRight: `${m.border}px solid var(--plate-border)`,
               fontSize: m.stateFont,
             }}
             data-testid="plate-alert"
@@ -478,37 +494,12 @@ function CompactLabel({
   );
 }
 
-/** Something is drawn on the canvas right above the head (bubble, idle glyph, Zz, beacon,
- *  health mark). A dead agent draws nothing there. */
-function headSlotTaken(
-  ch: Character,
-  hasTripwire: boolean,
-  health: AgentHealthView | undefined,
-): boolean {
-  const bubble = ch.bubbleType && !(ch.bubbleType === 'waiting' && ch.waitingAwaitingInput);
-  return (
-    !!bubble ||
-    hasTripwire ||
-    healthMark(health?.state) !== null ||
-    statusGlyph(ch, hasTripwire || health !== undefined) !== null
-  );
-}
-
-/** A napping agent's head is lowered onto the desk: the plate follows it down. Walkers and typists do not bob it. */
-function napHeadBobPx(ch: Character): number {
-  const napping =
-    ch.pose === IdlePose.NAPPING && ch.state === CharacterState.TYPE && ch.dir === Direction.DOWN;
-  return napping ? (ANCHORS.down.bob[sheetFrameIndex(ch)] ?? 0) : 0;
-}
-
 /** An agent's medal: its tier and context. None while neither is known. */
 function medalOf(officeState: OfficeState, ch: Character): MedalSpec | null {
   const tier = officeState.models.get(ch.id)?.tier ?? null;
   const fraction = contextFraction(ch.contextTokens, ch.maxContextTokens);
   return tier === null && fraction === null ? null : { tier, fraction };
 }
-
-const STUCK_HEALTH = new Set(['stuck', 'looping', 'stalled']);
 
 /** The live (latest not done) row of a tool list. */
 function liveRow(rows: readonly ToolActivity[] | undefined): ToolActivity | undefined {
@@ -544,14 +535,14 @@ function plateFacts(
     };
   }
   const tools = agentTools[id];
-  const health = officeState.health.get(id);
+  // The desk highlight reads the same facts, so the plate and the lit desk always agree.
+  const attention = officeState.attentionFacts(ch);
   return {
-    permission: ch.bubbleType === 'permission' || !!tools?.some((t) => t.permissionWait && !t.done),
+    permission: attention.permission || !!tools?.some((t) => t.permissionWait && !t.done),
     permissionSince: officeState.permissionSince.get(id),
-    question: ch.bubbleType === 'waiting' && !!ch.waitingAwaitingInput,
+    question: attention.question,
     statusSince: officeState.statusSince.get(id),
-    stuck:
-      (health !== undefined && STUCK_HEALTH.has(health.state)) || officeState.tripwires.has(id),
+    stuck: attention.stuck,
     stuckSince: officeState.healthSince.get(id) ?? officeState.tripwireSince.get(id),
     done: false,
     active: ch.isActive,
@@ -561,34 +552,40 @@ function plateFacts(
   };
 }
 
-interface PlacedBanner {
-  leadId: number;
-  runId: string;
-  view: CrewBannerView;
-  rect: Rect;
-}
-
-/** One banner per running workflow run with drawn helpers, hung over them inside their room. */
+/**
+ * One banner per running workflow run with drawn helpers. Beside the rail it hangs on the top wall
+ * of the helpers' room when it fits there; otherwise (and always in a compact office) over the
+ * helpers, inside their room. While the inspector shows the lead (or one of its helpers, whose
+ * sheet is the lead's) the sheet says it all: no banner.
+ */
 function crewBanners(
   officeState: OfficeState,
   helpers: readonly SubagentCharacter[],
   project: OverlayProjection,
   scale: number,
   now: number,
-  /** Plates at their anchors and every face: a banner never hides one. */
-  avoid: readonly Rect[],
+  opts: {
+    /** Beside the rail: try the wall band first. */
+    wall: boolean;
+    /** The lead whose sheet is open, if any. */
+    sheetLeadId: number | null;
+    /** Plates at their anchors and every face: a banner never hides one. */
+    avoid: readonly Rect[];
+    /** What a banner on a wall never covers (the plaques). */
+    wallAvoid: readonly Rect[];
+  },
 ): PlacedBanner[] {
   const out: PlacedBanner[] = [];
   const layout = officeState.getLayout();
-  const mapRect: Rect = {
-    x: project.toScreenX(0),
-    y: project.toScreenY(0),
-    w: project.toScreenX(layout.cols * TILE_SIZE) - project.toScreenX(0),
-    h: project.toScreenY(layout.rows * TILE_SIZE) - project.toScreenY(0),
-  };
+  const mapRect = screenRect(project, {
+    x: 0,
+    y: 0,
+    w: layout.cols * TILE_SIZE,
+    h: layout.rows * TILE_SIZE,
+  });
   for (const [leadId, runs] of officeState.workflowRuns) {
     const lead = officeState.characters.get(leadId);
-    if (!lead) continue;
+    if (!lead || leadId === opts.sheetLeadId) continue;
     for (const [runId, run] of runs) {
       if (run.status === 'done') continue;
       const drawn = helpers
@@ -609,29 +606,115 @@ function crewBanners(
         agentLabel(officeState.sessionTitles.get(leadId), lead.folderName) ||
         'agent';
       const view = crewBannerView(run, leadName, now);
+      const floor = roomFloorRect(
+        layout.areaTiles,
+        layout.cols,
+        layout.rows,
+        officeState.roomOf(drawn[0]),
+      );
+      const bounds = screenRect(project, withTopWallFace(floor));
+      const bandWorld = opts.wall ? wallBand(floor) : null;
+      // On a wall the banner takes the largest scale that fits the band, never under the minimum.
+      const band = bandWorld ? screenRect(project, bandWorld) : null;
+      const wallScales: number[] = [];
+      let wall: { sizes: Array<{ w: number; h: number }>; band: Rect } | null = null;
+      if (band) {
+        const size = crewBannerSize(view, true);
+        const fit = Math.min(
+          scale,
+          (band.h - 2 * CREW_BANNER_WALL_INSET_PX) / (size.h + CREW_BANNER_SHADOW_PX),
+        );
+        for (let k = fit; k >= CREW_BANNER_WALL_MIN_SCALE; k -= CREW_BANNER_WALL_SCALE_STEP) {
+          wallScales.push(k);
+        }
+        wall = {
+          band,
+          sizes: wallScales.map((k) => ({
+            w: size.w * k,
+            h: (size.h + CREW_BANNER_SHADOW_PX) * k,
+          })),
+        };
+      }
       const size = crewBannerSize(view);
-      const room = withTopWallFace(
-        roomFloorRect(layout.areaTiles, layout.cols, layout.rows, officeState.roomOf(drawn[0])),
-      );
-      const x0 = project.toScreenX(room.x);
-      const y0 = project.toScreenY(room.y);
-      const bounds: Rect = {
-        x: x0,
-        y: y0,
-        w: project.toScreenX(room.x + room.w) - x0,
-        h: project.toScreenY(room.y + room.h) - y0,
-      };
-      const rect = crewBannerRect(
-        { w: size.w * scale, h: (size.h + CREW_BANNER_SHADOW_PX) * scale },
+      const placed = placeCrewBanner({
+        wall,
+        free: { w: size.w * scale, h: (size.h + CREW_BANNER_SHADOW_PX) * scale },
         heads,
-        bounds,
-        mapRect,
-        [...avoid, ...out.map((b) => b.rect)],
-      );
-      if (rect) out.push({ leadId, runId, view, rect });
+        room: bounds,
+        map: mapRect,
+        wallAvoid: [...opts.wallAvoid, ...out.map((b) => b.rect)],
+        avoid: [...opts.avoid, ...out.map((b) => b.rect)],
+      });
+      if (placed) {
+        out.push({
+          leadId,
+          runId,
+          view,
+          rect: placed.rect,
+          onWall: placed.onWall,
+          scale: placed.onWall ? wallScales[placed.size] : scale,
+          band,
+        });
+      }
     }
   }
   return out;
+}
+
+function RoomPlaque({ plaque }: { plaque: PlacedPlaque }) {
+  return (
+    <div
+      className="absolute flex flex-col justify-center whitespace-nowrap leading-none"
+      style={{
+        left: plaque.rect.x,
+        top: plaque.rect.y,
+        width: plaque.rect.w,
+        height: plaque.rect.h,
+        padding: `${PLAQUE_PAD_Y_PX}px ${PLAQUE_PAD_X_PX}px`,
+        background: 'var(--brand-ink)',
+        border: `${PLAQUE_BORDER_PX}px solid var(--mon-night)`,
+        boxShadow: '2px 2px 0px var(--mon-night)',
+        pointerEvents: 'none',
+        zIndex: PLAQUE_Z_INDEX,
+      }}
+      data-testid="room-plaque"
+      data-area={plaque.label}
+    >
+      <span
+        style={{
+          fontSize: PLAQUE_TITLE_FONT_PX,
+          lineHeight: `${PLAQUE_TITLE_LINE_PX}px`,
+          color: 'var(--brand-gold)',
+        }}
+      >
+        {plaque.label}
+      </span>
+      {plaque.folder && (
+        <span
+          className="pv"
+          style={{
+            fontSize: PLAQUE_FOLDER_FONT_PX,
+            lineHeight: `${PLAQUE_FOLDER_LINE_PX}px`,
+            color: 'var(--brand-paper-2)',
+            ['--pv-mask' as string]: 'var(--mon-mask-on-ink)',
+          }}
+        >
+          {plaque.folder}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** The stage chrome drawn over the map (the clock), in the overlay's CSS px. */
+function stageChromeRects(stage: HTMLElement, container: DOMRect): Rect[] {
+  return STAGE_CHROME_SELECTORS.flatMap((sel) => {
+    const el = stage.ownerDocument?.querySelector(sel);
+    if (!el) return [];
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return [];
+    return [{ x: r.left - container.left, y: r.top - container.top, w: r.width, h: r.height }];
+  });
 }
 
 export function ToolOverlay({
@@ -669,6 +752,8 @@ export function ToolOverlay({
   // The shell sets the rule from monitorLayout (setMonitorFullPlates).
   const monitorFull = isMonitorFullPlates();
   const compact = plateIsCompact(zoom);
+  // Beside the rail every character carries a one-line tag at a fixed size.
+  const tags = isMonitorTag(compact);
   const fitScale = plateScale(
     zoom,
     fitZoomWholeMap(
@@ -677,7 +762,7 @@ export function ToolOverlay({
       dpr,
     ),
   );
-  const scale = compact ? 1 : monitorFull ? monitorPlateScale(zoom, dpr) : fitScale;
+  const scale = compact || tags ? 1 : monitorFull ? monitorPlateScale(zoom, dpr) : fitScale;
   const nowMs = officeNow().getTime();
 
   const selectedId = officeState.selectedAgentId;
@@ -696,7 +781,11 @@ export function ToolOverlay({
   // Pass 1: decide what each character gets. Compact labels are then laid out
   // together so they can avoid each other and the room signs; full boxes are
   // not part of that pass.
-  const maxWidth = monitorFull ? fullPlateMaxWidth(zoom, dpr) : compactLabelMaxWidth(zoom, dpr);
+  const maxWidth = tags
+    ? TAG_MAX_WIDTH_PX
+    : monitorFull
+      ? fullPlateMaxWidth(zoom, dpr)
+      : compactLabelMaxWidth(zoom, dpr);
   const plans = new Map<
     number,
     | { kind: 'full' }
@@ -726,7 +815,17 @@ export function ToolOverlay({
       parentSelected: parentId !== null && boxSelectedId === parentId,
       parentHovered: parentId !== null && boxHoveredId === parentId,
     });
-    if (shown === 'full') {
+    // A helper's tag shows only while its lead is selected or hovered, or it is hovered itself:
+    // the crew lines and the banner say who works for whom.
+    const helperQuiet =
+      tags &&
+      ch.isSubagent &&
+      parentId !== selectedId &&
+      parentId !== hoveredId &&
+      id !== hoveredId;
+    if (shown === 'compact' && helperQuiet) {
+      plans.set(id, { kind: 'compact', content: { mode: 'compact', plate: null } });
+    } else if (shown === 'full') {
       plans.set(id, { kind: 'full' });
     } else if (shown === 'compact') {
       const meta = officeState.sessionMeta.get(id);
@@ -753,7 +852,29 @@ export function ToolOverlay({
       });
       if (content.mode === 'full') continue;
       plans.set(id, { kind: 'compact', content });
-      if (content.mode === 'compact' && content.plate) {
+      if (content.mode === 'compact' && content.plate && tags) {
+        // A tag hangs a gap above the head where the sprite is drawn now; the solver moves it.
+        const plateH = plateBoxHeight(content.plate, compact);
+        labelItems.push({
+          id,
+          col: ch.tileCol,
+          row: ch.tileRow,
+          x: project.toScreenX(ch.x),
+          y:
+            project.toScreenY(spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch), napHeadBobPx(ch))) -
+            TAG_HEAD_GAP_PX -
+            plateH,
+          w: Math.min(maxWidth, plateBoxWidth(content.plate, compact, nowMs)),
+          minW: Math.min(maxWidth, plateBoxWidth(content.plate, compact, nowMs, true)),
+          span: roomSpan(ch),
+          // Who needs you is placed first, then the agents, then the helpers.
+          rank: content.plate.state?.kind === 'alert' ? 0 : ch.isSubagent ? HELPER_RANK : 1,
+          h: plateH,
+          plateH,
+          chipH: 0,
+          grow: 'up',
+        });
+      } else if (content.mode === 'compact' && content.plate) {
         // Anchor on the tile centre, not the sprite, so plates do not reshuffle while agents walk.
         const sit = seatedDrawOffsetPx(ch);
         const plateH = plateBoxHeight(content.plate, compact) * scale;
@@ -786,7 +907,13 @@ export function ToolOverlay({
 
   const layout = officeState.getLayout();
   const obstacles: Rect[] = [];
-  for (const area of showAreas ? (layout.areas ?? []) : []) {
+  // Beside the rail every room has its plaque on the wall; elsewhere the canvas signs show when on.
+  const plaques = tags ? roomPlaques(officeState, project) : [];
+  for (const p of plaques) obstacles.push(p.rect);
+  // The stage's own chrome over the map (the clock at its top right): no tag or banner under it.
+  const chrome = tags ? stageChromeRects(el, containerRect) : [];
+  obstacles.push(...chrome);
+  for (const area of showAreas && !tags ? (layout.areas ?? []) : []) {
     const r = areaSignRect(layout.areaTiles, layout.cols, area.label, zoom);
     if (!r) continue;
     const x = project.toScreenX(r.x);
@@ -815,166 +942,211 @@ export function ToolOverlay({
   const plateRects = labelItems.map((it) => ({ x: it.x - it.w / 2, y: it.y, w: it.w, h: it.h }));
   // A compact office (a short VS Code panel) gets a smaller banner, and none where even the plates
   // are only markers.
-  const bannerScale = compact ? Math.min(1, monitorPlateScale(zoom, dpr)) : scale;
-  const banners =
+  const bannerScale = compact
+    ? Math.min(1, monitorPlateScale(zoom, dpr))
+    : tags
+      ? monitorPlateScale(zoom, dpr)
+      : scale;
+  const selectedCh = selectedId !== null ? officeState.characters.get(selectedId) : undefined;
+  const placeBanners = (avoid: readonly Rect[], wallAvoid: readonly Rect[]): PlacedBanner[] =>
     maxWidth < COMPACT_LABEL_MIN_WIDTH_PX
       ? []
-      : crewBanners(officeState, subagentCharacters, project, bannerScale, nowMs, [
-          ...plateRects,
-          ...faces,
-          ...obstacles,
-        ]);
-  for (const b of banners) obstacles.push(b.rect);
-  // No plate hides a face: each one, where the label pass anchors it (its tile), is in the way of
-  // every plate but its own, which hangs above it or sits under the feet.
-  const faceObstacles: Rect[] = [...officeState.characters.values()].map((c) => {
-    const sit = seatedDrawOffsetPx(c);
-    const w = FACE_WORLD_PX * zoomCss;
-    return {
-      x: project.toScreenX((c.tileCol + 0.5) * TILE_SIZE) - w / 2,
-      y: project.toScreenY(spriteHeadTopY((c.tileRow + 0.5) * TILE_SIZE, sit, napHeadBobPx(c))),
-      w,
-      h: w,
-    };
-  });
-  const placements = layoutLabels(
-    labelItems,
-    [...obstacles, ...faceObstacles],
-    compact ? undefined : PLATE_FULL_LAYOUT_LINE_PX * scale,
-  );
-  // Last step: the stack above each head (plate, chip, bubble) never leaves the floor of its
-  // room, so it cannot cross a wall or the top edge. Applied after the collision pass because the
-  // wall wins over the nicest spot, and as a group so the order survives the clamp.
-  const clamps = new Map<number, { dx: number; dy: number }>();
-  officeState.bubbleLift.clear();
-  // Weather defaults to just above the head; the stack loop below raises it to the stack's top.
-  officeState.weatherAnchor.clear();
-  for (const ch of officeState.characters.values()) {
-    officeState.weatherAnchor.set(ch.id, spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch)));
-  }
-  const fxSlots = new Map<number, Rect>();
-  const fxBoxes = new Map<number, { w: number; h: number }>();
-  for (const e of officeState.fx.active) {
-    const box = fxTextBox(e, fitScale);
-    const prev = fxBoxes.get(e.agentId);
-    if (!prev || box.h > prev.h) fxBoxes.set(e.agentId, box);
-  }
-  const zoomPx = 1 / project.toWorldLength(1);
-  const bubbleBox = {
-    w: spriteWorldWidth(BUBBLE_WAITING_SPRITE) * (1 / project.toWorldLength(1)),
-    h: spriteWorldHeight(BUBBLE_WAITING_SPRITE) * (1 / project.toWorldLength(1)),
-  };
-  for (const it of labelItems) {
-    const ch = officeState.characters.get(it.id);
-    if (!ch) continue;
-    const world = withTopWallFace(
-      roomFloorRect(layout.areaTiles, layout.cols, layout.rows, officeState.roomOf(ch)),
+      : crewBanners(officeState, subagentCharacters, project, bannerScale, nowMs, {
+          wall: tags,
+          // The sheet shows a helper's lead, so either one selected hides the lead's banner.
+          sheetLeadId:
+            sheetOpen && selectedCh
+              ? selectedCh.isSubagent
+                ? selectedCh.parentAgentId
+                : selectedCh.id
+              : null,
+          avoid: [...avoid, ...obstacles],
+          wallAvoid: [...wallAvoid, ...plaques.map((p) => p.rect), ...chrome],
+        });
+  // Beside the rail the banner is placed between the agents' tags and the helpers' (the tag pass
+  // calls placeBanners); elsewhere before every plate, clear of the plates at their anchors.
+  const classicBanners = tags ? [] : placeBanners([...plateRects, ...faces], []);
+  for (const b of classicBanners) obstacles.push(b.rect);
+  // The classic pass (a VS Code panel, a window without the rail): plates pushed off each other,
+  // then clamped into their rooms, and whatever still meets goes faint.
+  const classic = () => {
+    // No plate hides a face: each one, where the label pass anchors it (its tile), is in the way of
+    // every plate but its own, which hangs above it or sits under the feet.
+    const faceObstacles: Rect[] = [...officeState.characters.values()].map((c) => {
+      const sit = seatedDrawOffsetPx(c);
+      const w = FACE_WORLD_PX * zoomCss;
+      return {
+        x: project.toScreenX((c.tileCol + 0.5) * TILE_SIZE) - w / 2,
+        y: project.toScreenY(spriteHeadTopY((c.tileRow + 0.5) * TILE_SIZE, sit, napHeadBobPx(c))),
+        w,
+        h: w,
+      };
+    });
+    const placements = layoutLabels(
+      labelItems,
+      [...obstacles, ...faceObstacles],
+      compact ? undefined : PLATE_FULL_LAYOUT_LINE_PX * scale,
     );
-    const x0 = project.toScreenX(world.x);
-    const y0 = project.toScreenY(world.y);
-    const floor: Rect = {
-      x: x0,
-      y: y0,
-      w: project.toScreenX(world.x + world.w) - x0,
-      h: project.toScreenY(world.y + world.h) - y0,
+    // Last step: the stack above each head (plate, chip, bubble) never leaves the floor of its
+    // room, so it cannot cross a wall or the top edge. Applied after the collision pass because the
+    // wall wins over the nicest spot, and as a group so the order survives the clamp.
+    const clamps = new Map<number, { dx: number; dy: number }>();
+    officeState.bubbleLift.clear();
+    // Weather defaults to just above the head; the stack loop below raises it to the stack's top.
+    officeState.weatherAnchor.clear();
+    for (const ch of officeState.characters.values()) {
+      officeState.weatherAnchor.set(ch.id, spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch)));
+    }
+    const fxSlots = new Map<number, Rect>();
+    const fxBoxes = new Map<number, { w: number; h: number }>();
+    for (const e of officeState.fx.active) {
+      const box = fxTextBox(e, fitScale);
+      const prev = fxBoxes.get(e.agentId);
+      if (!prev || box.h > prev.h) fxBoxes.set(e.agentId, box);
+    }
+    const zoomPx = 1 / project.toWorldLength(1);
+    const bubbleBox = {
+      w: spriteWorldWidth(BUBBLE_WAITING_SPRITE) * (1 / project.toWorldLength(1)),
+      h: spriteWorldHeight(BUBBLE_WAITING_SPRITE) * (1 / project.toWorldLength(1)),
     };
-    const pdy = placements.get(it.id)?.dy ?? 0;
-    if (it.grow === 'up') {
-      const hasCanvasItem = headSlotTaken(
-        ch,
-        officeState.tripwires.has(it.id),
-        officeState.health.get(it.id),
+    for (const it of labelItems) {
+      const ch = officeState.characters.get(it.id);
+      if (!ch) continue;
+      const world = withTopWallFace(
+        roomFloorRect(layout.areaTiles, layout.cols, layout.rows, officeState.roomOf(ch)),
       );
-      const stack = stackAbove({
-        x: it.x,
-        headTop: it.y + it.h,
-        plate: (it.plateH ?? 0) > 0 ? { w: it.w, h: it.plateH ?? 0 } : null,
-        chip: (it.chipH ?? 0) > 0 ? { w: it.w, h: it.chipH ?? 0 } : null,
-        fx: fxBoxes.get(it.id) ?? null,
-        bubble: hasCanvasItem ? bubbleBox : null,
-        dy: pdy,
-        floor,
-        head: {
-          x: it.x - (CHARACTER_HEAD_WIDTH_PX * zoomPx) / 2,
-          y: it.y + it.h,
-          w: CHARACTER_HEAD_WIDTH_PX * zoomPx,
-          h: CHARACTER_HEAD_HEIGHT_PX * zoomPx,
-        },
-        feetY: it.y + it.h + CHARACTER_SPRITE_HEIGHT_PX * zoomPx,
-        noFlip: ch.seatId !== null && ch.state === CharacterState.TYPE && ch.dir === Direction.DOWN,
-      });
-      clamps.set(it.id, { dx: stack.shift.dx, dy: stack.shift.dy - pdy });
-      if (stack.fx) fxSlots.set(it.id, stack.fx);
-      const stackTop = Math.min(
-        ...[stack.plate, stack.chip, stack.fx, stack.bubble]
-          .filter((r): r is Rect => r !== null)
-          .map((r) => r.y),
-      );
-      officeState.weatherAnchor.set(
-        it.id,
-        weatherAnchorY(
-          Number.isFinite(stackTop) ? project.toWorldLength(stackTop - project.toScreenY(0)) : null,
-          spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch)),
-        ),
-      );
-      if (stack.bubble) {
-        // World y of the bubble's bottom edge, against where the renderer draws it by default.
-        const bottomWorld = project.toWorldLength(
-          stack.bubble.y + stack.bubble.h - project.toScreenY(0),
+      const x0 = project.toScreenX(world.x);
+      const y0 = project.toScreenY(world.y);
+      const floor: Rect = {
+        x: x0,
+        y: y0,
+        w: project.toScreenX(world.x + world.w) - x0,
+        h: project.toScreenY(world.y + world.h) - y0,
+      };
+      const pdy = placements.get(it.id)?.dy ?? 0;
+      if (it.grow === 'up') {
+        const hasCanvasItem = headSlotTaken(
+          ch,
+          officeState.tripwires.has(it.id),
+          officeState.health.get(it.id),
         );
-        const defaultBottom = ch.y + seatedBubbleOffsetPx(ch) - BUBBLE_VERTICAL_OFFSET_PX - 1;
-        // Negative when the stack flipped below the feet: the bubble is drawn lower, not lifted.
-        officeState.bubbleLift.set(it.id, defaultBottom - bottomWorld);
+        const stack = stackAbove({
+          x: it.x,
+          headTop: it.y + it.h,
+          plate: (it.plateH ?? 0) > 0 ? { w: it.w, h: it.plateH ?? 0 } : null,
+          chip: (it.chipH ?? 0) > 0 ? { w: it.w, h: it.chipH ?? 0 } : null,
+          fx: fxBoxes.get(it.id) ?? null,
+          bubble: hasCanvasItem ? bubbleBox : null,
+          dy: pdy,
+          floor,
+          head: {
+            x: it.x - (CHARACTER_HEAD_WIDTH_PX * zoomPx) / 2,
+            y: it.y + it.h,
+            w: CHARACTER_HEAD_WIDTH_PX * zoomPx,
+            h: CHARACTER_HEAD_HEIGHT_PX * zoomPx,
+          },
+          feetY: it.y + it.h + CHARACTER_SPRITE_HEIGHT_PX * zoomPx,
+          noFlip:
+            ch.seatId !== null && ch.state === CharacterState.TYPE && ch.dir === Direction.DOWN,
+        });
+        clamps.set(it.id, { dx: stack.shift.dx, dy: stack.shift.dy - pdy });
+        if (stack.fx) fxSlots.set(it.id, stack.fx);
+        const stackTop = Math.min(
+          ...[stack.plate, stack.chip, stack.fx, stack.bubble]
+            .filter((r): r is Rect => r !== null)
+            .map((r) => r.y),
+        );
+        officeState.weatherAnchor.set(
+          it.id,
+          weatherAnchorY(
+            Number.isFinite(stackTop)
+              ? project.toWorldLength(stackTop - project.toScreenY(0))
+              : null,
+            spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch)),
+          ),
+        );
+        if (stack.bubble) {
+          // World y of the bubble's bottom edge, against where the renderer draws it by default.
+          const bottomWorld = project.toWorldLength(
+            stack.bubble.y + stack.bubble.h - project.toScreenY(0),
+          );
+          const defaultBottom = ch.y + seatedBubbleOffsetPx(ch) - BUBBLE_VERTICAL_OFFSET_PX - 1;
+          // Negative when the stack flipped below the feet: the bubble is drawn lower, not lifted.
+          officeState.bubbleLift.set(it.id, defaultBottom - bottomWorld);
+        }
+        continue;
       }
-      continue;
+      // Plate below the feet (back view): the FX text stands just above the head, the weather
+      // already hangs from there.
+      const fxBox = fxBoxes.get(it.id);
+      if (fxBox) {
+        const headTopY = project.toScreenY(spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch)));
+        fxSlots.set(it.id, {
+          x: project.toScreenX(ch.x) - fxBox.w / 2,
+          y: headTopY - OVERLAY_STACK_GAP_PX - fxBox.h,
+          w: fxBox.w,
+          h: fxBox.h,
+        });
+      }
+      const plate: Rect = { x: it.x - it.w / 2, y: it.y + pdy, w: it.w, h: it.h };
+      const fitted = clampPlate(plate, floor);
+      clamps.set(it.id, { dx: fitted.x - plate.x, dy: fitted.y - plate.y });
     }
-    // Plate below the feet (back view): the FX text stands just above the head, the weather
-    // already hangs from there.
-    const fxBox = fxBoxes.get(it.id);
-    if (fxBox) {
-      const headTopY = project.toScreenY(spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch)));
-      fxSlots.set(it.id, {
-        x: project.toScreenX(ch.x) - fxBox.w / 2,
-        y: headTopY - OVERLAY_STACK_GAP_PX - fxBox.h,
-        w: fxBox.w,
-        h: fxBox.h,
-      });
-    }
-    const plate: Rect = { x: it.x - it.w / 2, y: it.y + pdy, w: it.w, h: it.h };
-    const fitted = clampPlate(plate, floor);
-    clamps.set(it.id, { dx: fitted.x - plate.x, dy: fitted.y - plate.y });
-  }
 
-  // The walls had the last word (the clamp above), so two plates may meet again. Two opaque
-  // plates never cover each other: the later one in the label order (helpers after agents) goes
-  // faint and under, like a plate with no room.
-  const faint = new Set<number>();
-  const hidden = new Set<number>();
-  const faceRects = [...officeState.characters.values()].map((c) => ({
-    id: c.id,
-    x: project.toScreenX(c.x) - (FACE_WORLD_PX * zoomCss) / 2,
-    y: project.toScreenY(spriteHeadTopY(c.y, seatedDrawOffsetPx(c))),
-    w: FACE_WORLD_PX * zoomCss,
-    h: FACE_WORLD_PX * zoomCss,
-  }));
-  const intersects = (a: Rect, b: Rect): boolean =>
-    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-  // The banners were placed in free space first; a plate pushed onto one gives way too.
-  const settled: Rect[] = banners.map((b) => b.rect);
-  for (const it of [...labelItems].sort(
-    (a, b) => (a.rank ?? 0) - (b.rank ?? 0) || a.row - b.row || a.col - b.col || a.id - b.id,
-  )) {
-    const dx = clamps.get(it.id)?.dx ?? 0;
-    const dy = (placements.get(it.id)?.dy ?? 0) + (clamps.get(it.id)?.dy ?? 0);
-    const r = { x: it.x - it.w / 2 + dx, y: it.y + dy, w: it.w, h: it.h };
-    const hit = settled.some((o) => intersects(r, o));
-    if (placements.get(it.id)?.dim || hit) {
-      faint.add(it.id);
-      // A faint plate over someone else's face would still hide it: that plate goes. Its crew
-      // line and the banner still show the helper.
-      if (faceRects.some((f) => f.id !== it.id && intersects(r, f))) hidden.add(it.id);
-    } else settled.push(r);
-  }
+    // The walls had the last word (the clamp above), so two plates may meet again. Two opaque
+    // plates never cover each other: the later one in the label order (helpers after agents) goes
+    // faint and under, like a plate with no room.
+    const faint = new Set<number>();
+    const hidden = new Set<number>();
+    const faceRects = [...officeState.characters.values()].map((c) => ({
+      id: c.id,
+      x: project.toScreenX(c.x) - (FACE_WORLD_PX * zoomCss) / 2,
+      y: project.toScreenY(spriteHeadTopY(c.y, seatedDrawOffsetPx(c))),
+      w: FACE_WORLD_PX * zoomCss,
+      h: FACE_WORLD_PX * zoomCss,
+    }));
+    const intersects = (a: Rect, b: Rect): boolean =>
+      a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    // The banners were placed in free space first; a plate pushed onto one gives way too.
+    const settled: Rect[] = classicBanners.map((b) => b.rect);
+    for (const it of [...labelItems].sort(
+      (a, b) => (a.rank ?? 0) - (b.rank ?? 0) || a.row - b.row || a.col - b.col || a.id - b.id,
+    )) {
+      const dx = clamps.get(it.id)?.dx ?? 0;
+      const dy = (placements.get(it.id)?.dy ?? 0) + (clamps.get(it.id)?.dy ?? 0);
+      const r = { x: it.x - it.w / 2 + dx, y: it.y + dy, w: it.w, h: it.h };
+      const hit = settled.some((o) => intersects(r, o));
+      if (placements.get(it.id)?.dim || hit) {
+        faint.add(it.id);
+        // A faint plate over someone else's face would still hide it: that plate goes. Its crew
+        // line and the banner still show the helper.
+        if (faceRects.some((f) => f.id !== it.id && intersects(r, f))) hidden.add(it.id);
+      } else settled.push(r);
+    }
+    return { placements, clamps, faint, hidden, fxSlots };
+  };
+  const { placements, clamps, faint, hidden, fxSlots, tagPlacements, banners } = tags
+    ? {
+        placements: new Map<number, LabelPlacement>(),
+        clamps: new Map<number, { dx: number; dy: number }>(),
+        faint: new Set<number>(),
+        hidden: new Set<number>(),
+        ...layoutMonitorTags({
+          officeState,
+          project,
+          container: containerRect,
+          items: labelItems,
+          obstacles,
+          placeBanners,
+          plaques,
+          fxScale: fitScale,
+        }),
+      }
+    : {
+        ...classic(),
+        tagPlacements: new Map<number, TagPlacement | null>(),
+        banners: classicBanners,
+      };
 
   return (
     <>
@@ -990,9 +1162,13 @@ export function ToolOverlay({
           key={`${b.leadId}:${b.runId}`}
           view={b.view}
           rect={b.rect}
-          scale={bannerScale}
+          scale={b.scale}
           leadId={b.leadId}
+          wall={b.onWall}
         />
+      ))}
+      {plaques.map((p) => (
+        <RoomPlaque key={p.label} plaque={p} />
       ))}
       {allIds.map((id) => {
         const ch = officeState.characters.get(id);
@@ -1002,6 +1178,33 @@ export function ToolOverlay({
         const isSelected = selectedId === id;
         const isSub = ch.isSubagent;
         const status = agentStatus(ch);
+
+        if (plan.kind === 'compact' && tags) {
+          const tag = tagPlacements.get(id)?.tag;
+          const plate = plan.content.mode === 'compact' ? plan.content.plate : null;
+          return (
+            <CompactLabel
+              key={id}
+              id={id}
+              status={status}
+              // One tag per character: the tripwire shows as its × tab, acknowledged in the sheet.
+              plate={tag && plate ? { ...plate, pill: null } : null}
+              maxWidth={tag?.w ?? maxWidth}
+              left={tag ? tag.x + tag.w / 2 : project.toScreenX(ch.x)}
+              top={tag ? tag.y : project.toScreenY(ch.y)}
+              side="below"
+              scale={1}
+              compact={compact}
+              dx={0}
+              dy={0}
+              dim={false}
+              tripwire={officeState.tripwires.get(id)}
+              onAckTripwire={onAckTripwire}
+              now={nowMs}
+              selected={sheetOpen && selectedId === id}
+            />
+          );
+        }
 
         if (plan.kind === 'compact') {
           const sit = seatedDrawOffsetPx(ch);
