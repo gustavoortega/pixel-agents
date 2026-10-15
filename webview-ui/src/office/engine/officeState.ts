@@ -35,6 +35,14 @@ import {
 } from '../../constants.js';
 import { type FitAgent, LOBBY_ROOM } from '../camera.js';
 import { officeNow } from '../clock.js';
+import {
+  type AttentionFacts,
+  attentionTone,
+  type DeskHighlight,
+  deskHighlights,
+  type HighlightAgent,
+  type HighlightSeat,
+} from '../deskHighlight.js';
 import type { Companion, Tile } from '../flair/companion.js';
 import {
   advanceTrail,
@@ -51,11 +59,13 @@ import { modelFlair } from '../flair/modelFlair.js';
 import { FxEngine } from '../fx/fxEngine.js';
 import { MoodWeather } from '../fx/moodWeather.js';
 import { type AgentHealthView, healthMark } from '../health.js';
+import type { Rect } from '../labelLayout.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
 import {
   createDefaultLayout,
   type FurnitureLook,
   getBlockedTiles,
+  getDeskRects,
   getDeskTiles,
   getFurnitureTiles,
   layoutToFurnitureInstances,
@@ -65,6 +75,7 @@ import {
 import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
 import { lightFixtures, nightDarkness } from '../lighting.js';
 import { darkScreenSprite, monitorLook, monitorTick } from '../monitor.js';
+import { spriteHeadTopY } from '../nameplate.js';
 import { seatedDrawOffsetPx } from '../seatDraw.js';
 import { brightestShaftCell, shaftsAt, shaftsOff } from '../shafts.js';
 import { getPetCount, getPetName } from '../sprites/petSpriteData.js';
@@ -185,6 +196,8 @@ export class OfficeState {
   furnitureTiles: Set<string>;
   /** Desk tiles with their desk's sort depth, and the electronics tiles: where a hero's companion sits. */
   private deskTiles: Map<string, number>;
+  /** Desk tile -> its desk's footprint, world px: what a lit seat's frame goes around. */
+  private deskRects: Map<string, Rect> = new Map();
   private electronicsTiles: Set<string>;
   /** Seat uid -> uid of the PC it owns, and each electronics item's footprint; set per layout load. */
   private pcBySeat: Map<string, string> = new Map();
@@ -256,6 +269,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(this.layout.furniture);
     this.furnitureTiles = getFurnitureTiles(this.layout.furniture);
     this.deskTiles = getDeskTiles(this.layout.furniture);
+    this.deskRects = getDeskRects(this.layout.furniture);
     this.electronicsTiles = this.buildElectronicsTileSet();
     this.buildPcBySeat();
     this.tableTiles = this.buildTableTiles(this.layout);
@@ -275,6 +289,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(layout.furniture);
     this.furnitureTiles = getFurnitureTiles(layout.furniture);
     this.deskTiles = getDeskTiles(layout.furniture);
+    this.deskRects = getDeskRects(layout.furniture);
     this.electronicsTiles = this.buildElectronicsTileSet();
     this.buildPcBySeat();
     this.tableTiles = this.buildTableTiles(layout);
@@ -2005,6 +2020,8 @@ export class OfficeState {
       if (c.visible && c.set === CompanionSet.MOVE) return 'active';
     }
 
+    // A lit desk blinks on the timer: ambient, never animation frames.
+    if (this.litDeskCount() > 0) return 'ambient';
     if (this.characters.size > 0 || this.companions.size > 0) return 'ambient';
     if (this.pets.some((pet) => pet.state !== PetState.SLEEP || pet.bubbleType)) return 'ambient';
     if (isCozyLightingEnabled()) {
@@ -2264,6 +2281,71 @@ export class OfficeState {
     if (!pc) return null;
     const { dCol } = seatFacingOffset(seat.facingDir);
     return { pc, across: dCol === 0 ? { col: 1, row: 0 } : { col: 0, row: 1 }, seat: seatTile };
+  }
+
+  /** What the office knows about a session needing the user (the plate's alert and the desk
+   *  highlight read the same facts): a pending prompt, a question, a spin. */
+  attentionFacts(ch: Character): AttentionFacts {
+    const health = this.health.get(ch.id)?.state;
+    return {
+      permission: ch.bubbleType === 'permission' || this.permissionSince.has(ch.id),
+      // The waiting bubble fades after two seconds; the status it came with stays.
+      question: ch.agentStatus === WorkStatus.WAITING && ch.waitingAwaitingInput === true,
+      stuck:
+        health === 'stuck' ||
+        health === 'looping' ||
+        health === 'stalled' ||
+        this.tripwires.has(ch.id),
+    };
+  }
+
+  /** The top-level sessions whose desk is lit, with the tone. */
+  private litAgents(): Array<{ ch: Character; tone: 'wait' | 'stuck' }> {
+    const out: Array<{ ch: Character; tone: 'wait' | 'stuck' }> = [];
+    for (const ch of this.characters.values()) {
+      if (ch.id <= 0 || ch.isSubagent || ch.isGreeter || ch.matrixEffect === 'despawn') continue;
+      const tone = attentionTone(this.attentionFacts(ch));
+      if (tone) out.push({ ch, tone });
+    }
+    return out;
+  }
+
+  litDeskCount(): number {
+    return this.litAgents().length;
+  }
+
+  /** The lit desks, world px, for the renderer. */
+  deskHighlights(): DeskHighlight[] {
+    const agents: HighlightAgent[] = [];
+    const seats = new Map<string, HighlightSeat>();
+    for (const { ch, tone } of this.litAgents()) {
+      const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
+      if (seat && ch.seatId) {
+        seats.set(ch.seatId, {
+          seatCol: seat.seatCol,
+          seatRow: seat.seatRow,
+          facing: seatFacingOffset(seat.facingDir),
+        });
+      }
+      const seated =
+        !!seat &&
+        ch.state !== CharacterState.WALK &&
+        seat.seatCol === ch.tileCol &&
+        seat.seatRow === ch.tileRow;
+      const sit = seatedDrawOffsetPx(ch);
+      const top = spriteHeadTopY(ch.y, sit);
+      agents.push({
+        id: ch.id,
+        tone,
+        col: ch.tileCol,
+        row: ch.tileRow,
+        seatId: ch.seatId,
+        sprite: seated
+          ? { x: ch.x - TILE_SIZE / 2, y: top, w: TILE_SIZE, h: ch.y + sit - top }
+          : null,
+      });
+    }
+    return deskHighlights(agents, seats, (col, row) => this.deskRects.get(`${col},${row}`) ?? null);
   }
 
   /** Area label of the room an agent sits in (its seat, else the tile it stands on); null outside every area. */

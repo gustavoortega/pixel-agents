@@ -28,6 +28,7 @@ import type {
 import { isCozyLightingEnabled, renderFrame } from '../engine/renderer.js';
 import { getCatalogEntry, isRotatable } from '../layout/furnitureCatalog.js';
 import { lightFixtures, lightingFor, monitorSources, nightDarkness } from '../lighting.js';
+import { isMonitorFullPlates } from '../nameplate.js';
 import { furnitureForHour, shaftsAt } from '../shafts.js';
 import { EditTool, TILE_SIZE } from '../types.js';
 import { computeNormalModeCursor } from './officeCanvasCursor.js';
@@ -366,7 +367,8 @@ export function OfficeCanvas({
           layout.carpetTiles,
           layout.areas,
           layout.areaTiles,
-          showAreas,
+          // Beside the rail the rooms carry DOM plaques (ToolOverlay); the canvas signs would repeat them.
+          showAreas && !isMonitorFullPlates(),
           activeAreaLabel,
           officeState.pets,
           officeState.tripwires,
@@ -396,6 +398,7 @@ export function OfficeCanvas({
           officeState.bubbleLift,
           officeState.health,
           crewLines(officeState),
+          officeState.deskHighlights(),
         );
         offsetRef.current = { x: offsetX, y: offsetY };
 

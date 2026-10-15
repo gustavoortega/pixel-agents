@@ -109,23 +109,23 @@ describe('plate kind by zoom level', () => {
     },
   );
 
-  it('beside the rail, whole-map fit (zoom 2, dpr 1) shows name, state and line 2, line 1 at 14 px or more', () => {
+  it('beside the rail, whole-map fit (zoom 2, dpr 1) shows a one-line tag: name and state at 14 px, no line 2', () => {
     // The shell sets the rule from monitorLayout: 1920 x 1080 and 1280 x 800 both have a full rail.
     setMonitorFullPlates(true);
     try {
       const html = overlayHtml(2);
       expect(html).toMatch(/class="nameplate /);
+      expect(html).toContain('nameplate-tag');
       expect(html).toContain('Ada');
       expect(html).toContain('data-testid="plate-state"');
-      expect(html).toContain('data-testid="plate-line2"');
-      expect(html).toContain(TITLE);
-      // What the eye gets: each line-1 font size times the plate's scale.
-      const scale = Number(/scale\(([\d.]+)\)/.exec(html)?.[1]);
+      expect(html).not.toContain('data-testid="plate-line2"');
+      expect(html).not.toContain(TITLE);
+      // A tag is drawn at its size: no scale, every line-1 font at 14 px.
+      expect(html).toContain('scale(1)');
       const plate = html.slice(html.indexOf('class="nameplate '));
-      const line1 = plate.slice(0, plate.lastIndexOf('<span', plate.indexOf('plate-line2')));
-      const sizes = [...line1.matchAll(/font-size:(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
+      const sizes = [...plate.matchAll(/font-size:(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
       expect(sizes.length).toBeGreaterThanOrEqual(2);
-      for (const px of sizes) expect(px * scale).toBeGreaterThanOrEqual(14);
+      for (const px of sizes) expect(px).toBe(14);
     } finally {
       setMonitorFullPlates(false);
     }

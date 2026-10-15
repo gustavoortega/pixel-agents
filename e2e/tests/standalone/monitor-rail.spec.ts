@@ -547,10 +547,10 @@ async function zoomTo(page: Page, level: string): Promise<void> {
   await expect(badge).toHaveText(level);
 }
 
-// C5.5 (A6, B3): at zoom 4 (level 2x) a plate is one line by the compact rule; beside a full rail
-// it keeps its second line (the folder), and in a short window (a VS Code panel) it does not.
+// C5.5 (A6, B3; Q3 tags): beside a full rail every plate is a one-line monitor tag at any zoom
+// (no second line, so no folder); in a short window (a VS Code panel) it is the compact plate.
 test.describe('Standalone / monitor plates', () => {
-  test('plates keep their second line beside a full rail and stay compact in a short window @area:standalone', async ({
+  test('plates are one-line tags beside a full rail and compact plates in a short window @area:standalone', async ({
     page,
     standalone,
   }) => {
@@ -563,12 +563,14 @@ test.describe('Standalone / monitor plates', () => {
     const folder = path.basename(standalone.workspaceDir);
     const plate = page.locator(`[data-testid="agent-overlay"][data-agent-id="${id}"]`);
     await zoomTo(page, '2x');
-    await expect(plate).toContainText(folder);
+    await expect(plate.locator('.nameplate-tag')).toHaveCount(1);
+    await expect(plate.getByTestId('plate-line2')).toHaveCount(0);
+    await expect(plate).not.toContainText(folder);
 
     await page.setViewportSize({ width: 1100, height: 300 });
     await expect(page.getByTestId('monitor-rail')).toHaveAttribute('data-rail', 'slim');
     await zoomTo(page, '2x');
     await expect(plate).not.toHaveText('');
-    await expect(plate).not.toContainText(folder);
+    await expect(plate.locator('.nameplate-tag')).toHaveCount(0);
   });
 });

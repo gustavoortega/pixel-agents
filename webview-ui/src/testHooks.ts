@@ -2,7 +2,12 @@ import { closeSheet, openSheet } from './components/inspector/sheetControl.js';
 import type { ColorValue } from './components/ui/types.js';
 import { type FrameCounters, requestRedraw } from './office/engine/gameLoop.js';
 import { OfficeState } from './office/engine/officeState.js';
-import { isGhostHeadlessAgentsEnabled, lastDrawnCrewLines } from './office/engine/renderer.js';
+import {
+  isGhostHeadlessAgentsEnabled,
+  lastDrawnCrewLines,
+  lastDrawnDeskHighlights,
+} from './office/engine/renderer.js';
+import { lastMonitorTagLayout, type TagLayoutSnapshot } from './office/monitorTags.js';
 import { carpetJunctionCase } from './office/sprites/carpetTiles.js';
 
 declare global {
@@ -100,6 +105,16 @@ declare global {
         helperId: number;
         kind: 'crew' | 'sub';
       }>;
+      /** The lit desks the last drawn frame drew (canvas only): world px, tone, blink frame. */
+      getDeskHighlights?: () => ReadonlyArray<{
+        id: number;
+        tone: 'wait' | 'stuck';
+        rect: { x: number; y: number; w: number; h: number };
+        frame: 0 | 1;
+      }>;
+      /** Beside the rail, what the last overlay render placed (page CSS px): the tags, every face
+       *  (canvas, so no DOM), the crew banners with their wall band, the room plaques. */
+      getTagLayout?: () => TagLayoutSnapshot;
       /** Open or close the inspector sheet the way the keys do (sheetControl.ts). */
       openSheet?: () => void;
       closeSheet?: () => void;
@@ -167,6 +182,16 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
 
   hooks.getCrewLines = () =>
     lastDrawnCrewLines().map((l) => ({ leadId: l.leadId, helperId: l.helperId, kind: l.kind }));
+
+  hooks.getDeskHighlights = () =>
+    lastDrawnDeskHighlights().map((h) => ({
+      id: h.id,
+      tone: h.tone,
+      rect: h.rect,
+      frame: h.frame,
+    }));
+
+  hooks.getTagLayout = () => lastMonitorTagLayout();
 
   hooks.selectAgent = (id) => {
     const os = officeStateRef.current;

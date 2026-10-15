@@ -49,6 +49,12 @@ import {
   PLATE_SELECTED_TEXT,
   PLATE_STATE_COLOR,
   PLATE_STUB_EM,
+  TAG_BORDER_PX,
+  TAG_FONT_PX,
+  TAG_LINE_PX,
+  TAG_MEDAL_PX,
+  TAG_PAD_Y_PX,
+  TAG_SHADOW_PX,
   TILE_SIZE,
 } from '../constants.js';
 import { ANCHORS } from './flair/accessories.js';
@@ -147,23 +153,46 @@ export function plateSide(dir: Direction): PlateSide {
   return dir === Dir.UP ? 'below' : 'above';
 }
 
-/** The line sizes a plate is drawn with: compact, a helper's one line, or the full plate. */
+/** Beside the rail a plate is a tag: one line at a fixed size, for agents and helpers alike. */
+export function isMonitorTag(compact: boolean): boolean {
+  return monitorFullPlates && !fullPlates && !compact;
+}
+
+/** The sizes a plate is drawn with: compact, a monitor tag, a helper's one line, or the full plate. */
 export function plateMetrics(c: Pick<NameplateContent, 'helper'>, compact: boolean) {
+  const box = {
+    border: NAMEPLATE_BORDER_PX,
+    padY: NAMEPLATE_PAD_Y_PX,
+    shadow: NAMEPLATE_SHADOW_PX,
+  };
   if (compact)
     return {
+      ...box,
       line1: NAMEPLATE_COMPACT_LINE_PX,
       nameFont: NAMEPLATE_COMPACT_FONT_PX,
       stateFont: NAMEPLATE_COMPACT_FONT_PX,
       medal: MEDAL_COMPACT_PX,
     };
+  if (isMonitorTag(compact))
+    return {
+      border: TAG_BORDER_PX,
+      padY: TAG_PAD_Y_PX,
+      shadow: TAG_SHADOW_PX,
+      line1: TAG_LINE_PX,
+      nameFont: TAG_FONT_PX,
+      stateFont: TAG_FONT_PX,
+      medal: TAG_MEDAL_PX,
+    };
   if (c.helper)
     return {
+      ...box,
       line1: PLATE_HELPER_LINE_PX,
       nameFont: PLATE_HELPER_FONT_PX,
       stateFont: PLATE_HELPER_FONT_PX,
       medal: MEDAL_COMPACT_PX,
     };
   return {
+    ...box,
     line1: PLATE_FULL_LINE1_PX,
     nameFont: PLATE_FULL_NAME_FONT_PX,
     stateFont: PLATE_FULL_STATE_FONT_PX,
@@ -171,14 +200,18 @@ export function plateMetrics(c: Pick<NameplateContent, 'helper'>, compact: boole
   };
 }
 
+/** A plate shows line 2 only in its full form: never compact, never as a monitor tag. */
+function hasLine2(c: NameplateContent, compact: boolean): boolean {
+  return !!c.sub && !compact && !isMonitorTag(compact);
+}
+
 /** Height of the plate itself in CSS px, with its border and hard shadow. 0 when it has no lines.
- *  A compact plate never shows line 2. */
+ *  A compact plate and a monitor tag never show line 2. */
 export function plateBoxHeight(c: NameplateContent, compact = false): number {
-  const line1 = c.name || c.state ? plateMetrics(c, compact).line1 : 0;
-  const lines = line1 + (c.sub && !compact ? PLATE_FULL_LINE2_PX : 0);
-  return lines > 0
-    ? lines + 2 * NAMEPLATE_PAD_Y_PX + 2 * NAMEPLATE_BORDER_PX + NAMEPLATE_SHADOW_PX
-    : 0;
+  const m = plateMetrics(c, compact);
+  const line1 = c.name || c.state ? m.line1 : 0;
+  const lines = line1 + (hasLine2(c, compact) ? PLATE_FULL_LINE2_PX : 0);
+  return lines > 0 ? lines + 2 * m.padY + 2 * m.border + m.shadow : 0;
 }
 
 /** Width of `text` in FS Pixel Sans at `fontPx`, CSS px. An estimate on the safe side: no DOM. */
@@ -243,10 +276,10 @@ export function plateBoxWidth(
       : row([p.tab, p.medal, p.name, p.loop])
     : row([p.tab, p.medal, p.name, p.loop, p.state]);
   const line2 =
-    c.sub && !compact && !essential
+    c.sub && hasLine2(c, compact) && !essential
       ? pixelTextWidth(c.sub.map((part) => part.text).join(' \u00B7 '), PLATE_FULL_SUB_FONT_PX)
       : 0;
-  return Math.max(line1, line2) + 2 * PLATE_PAD_X_PX + 2 * NAMEPLATE_BORDER_PX;
+  return Math.max(line1, line2) + 2 * PLATE_PAD_X_PX + 2 * p.m.border;
 }
 
 /** What a plate of a given width shows: its state words whole, cut, or not at all, and the
@@ -263,8 +296,8 @@ export function plateFit(
   now: number,
   width: number,
 ): PlateFit {
-  const room = width - 2 * PLATE_PAD_X_PX - 2 * NAMEPLATE_BORDER_PX;
   const p = line1Pieces(c, compact, now);
+  const room = width - 2 * PLATE_PAD_X_PX - 2 * p.m.border;
   let state: PlateFit['state'] = 'full';
   if (p.state > 0) {
     if (c.helper) {
@@ -277,7 +310,7 @@ export function plateFit(
     }
   }
   let sub: PlatePart[] | null = null;
-  if (c.sub && !compact) {
+  if (c.sub && hasLine2(c, compact)) {
     const font = PLATE_FULL_SUB_FONT_PX;
     const sep = pixelTextWidth(' \u00B7 ', font);
     const widths = c.sub.map((part, i) => pixelTextWidth(part.text, font) + (i > 0 ? sep : 0));

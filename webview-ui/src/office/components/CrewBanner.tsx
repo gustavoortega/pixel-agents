@@ -63,6 +63,7 @@ export function CrewBanner({
   rect,
   scale,
   leadId,
+  wall = false,
 }: {
   view: CrewBannerView;
   /** The reserved box, its hard shadow included. */
@@ -70,6 +71,8 @@ export function CrewBanner({
   /** The plates' scale: the banner is authored at 1 and scaled about its top centre. */
   scale: number;
   leadId: number;
+  /** Hung on the room's top wall: the counts share the chips' row (crewBannerSize's wall form). */
+  wall?: boolean;
 }) {
   const w = rect.w / scale;
   const h = rect.h / scale - CREW_BANNER_SHADOW_PX;
@@ -93,6 +96,7 @@ export function CrewBanner({
       }}
       data-testid="crew-banner"
       data-lead-id={leadId}
+      data-wall={wall ? 'true' : 'false'}
     >
       <div
         className="flex items-baseline whitespace-nowrap leading-none"
@@ -120,8 +124,11 @@ export function CrewBanner({
           {'·'} {view.lead}
         </span>
       </div>
-      {view.phases.length > 0 && (
-        <div className="flex items-center" style={{ height: CREW_BANNER_ROW2_PX, gap: 6 }}>
+      {(view.phases.length > 0 || (wall && view.counts)) && (
+        <div
+          className="flex items-center whitespace-nowrap"
+          style={{ height: CREW_BANNER_ROW2_PX, gap: 6 }}
+        >
           {view.phases.map((p, i) => (
             <span key={`${i}:${p.name}`} className="flex items-center" style={{ gap: 6 }}>
               {i > 0 && (
@@ -132,9 +139,22 @@ export function CrewBanner({
               <PhaseChip phase={p} />
             </span>
           ))}
+          {wall && view.counts && (
+            <span
+              className="leading-none"
+              style={{
+                fontSize: CREW_BANNER_COUNT_FONT_PX,
+                color: CREW_BANNER_INK_2,
+                marginLeft: view.phases.length > 0 ? 6 : 0,
+              }}
+              data-testid="crew-banner-counts"
+            >
+              {view.counts}
+            </span>
+          )}
         </div>
       )}
-      {view.counts && (
+      {!wall && view.counts && (
         <div
           className="whitespace-nowrap leading-none flex items-center"
           style={{

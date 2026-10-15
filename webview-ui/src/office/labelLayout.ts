@@ -255,3 +255,110 @@ export function roomFloorRect(
     h: (maxRow - minRow + 1) * TILE_SIZE,
   };
 }
+
+/** One character's tag for the monitor's solver, CSS px. */
+export interface TagItem {
+  id: number;
+  /** Placed by rank (an alert before a plain agent before a helper), then tile row, column, id. */
+  rank: number;
+  col: number;
+  row: number;
+  /** Centre x of the tag. */
+  x: number;
+  /** Bottom of the group at its natural spot: a gap above the head. */
+  bottom: number;
+  /** The group: the tag at its bottom and what rides on it (the bubble), `tagH` of it the tag. */
+  w: number;
+  h: number;
+  tagH: number;
+  /** Top of the room under the feet, where the tag alone goes when nothing above is free. */
+  feetY: number;
+  /** Where the tag may go: its room's floor and top wall. */
+  bounds: Rect;
+}
+
+export interface TagPlacement {
+  /** The tag itself. */
+  tag: Rect;
+  /** The tag and what rides on it (the tag alone below the feet). */
+  group: Rect;
+  below: boolean;
+}
+
+export interface TagSolverOptions {
+  step: number;
+  maxSteps: number;
+  /** Air kept from obstacles and from other tags. */
+  pad: number;
+  /** A tag slid sideways keeps at least this much of itself on each side of its centre x, so
+   *  it still hangs over its own character. */
+  attach: number;
+  /** A sideways step costs this many vertical ones. */
+  sideCost: number;
+}
+
+/**
+ * The monitor's tags: each one goes to its natural spot above the head, else the nearest free spot
+ * above it, moving up in `step` px (and sideways, at a higher cost, while the tag still covers
+ * its own x), else under the feet going down the same way. Free means clear of every obstacle
+ * (sprite bodies, windows, plaques, banners) and of the tags placed before it, by `pad`, and
+ * inside its room. A tag with no free spot gets null: it is not drawn, so no tag ever covers
+ * another or a face.
+ */
+export function placeTags(
+  items: readonly TagItem[],
+  obstacles: readonly Rect[],
+  opts: TagSolverOptions,
+): Map<number, TagPlacement | null> {
+  const order = [...items].sort(
+    (a, b) => a.rank - b.rank || a.row - b.row || a.col - b.col || a.id - b.id,
+  );
+  const placed: Rect[] = [];
+  const out = new Map<number, TagPlacement | null>();
+  const pad = opts.pad;
+  const free = (r: Rect): boolean => {
+    const grown = { x: r.x - pad, y: r.y - pad, w: r.w + 2 * pad, h: r.h + 2 * pad };
+    return (
+      !obstacles.some((o) => intersects(grown, o)) && !placed.some((p) => intersects(grown, p))
+    );
+  };
+  for (const it of order) {
+    const b = it.bounds;
+    const slide = (cx: number): number =>
+      it.w >= b.w ? b.x + b.w / 2 : Math.max(b.x + it.w / 2, Math.min(cx, b.x + b.w - it.w / 2));
+    const sides = Math.max(0, Math.floor((it.w / 2 - opts.attach) / opts.step));
+    // Every (vertical, sideways) step pair, cheapest first.
+    const moves: Array<[number, number]> = [];
+    for (let k = 0; k <= opts.maxSteps; k++) {
+      for (let s = -sides; s <= sides; s++) moves.push([k, s]);
+    }
+    moves.sort(
+      (m, n) => m[0] + opts.sideCost * Math.abs(m[1]) - (n[0] + opts.sideCost * Math.abs(n[1])),
+    );
+    let hit: TagPlacement | null = null;
+    for (const [k, s] of moves) {
+      const top = it.bottom - it.h - k * opts.step;
+      const x = slide(it.x + s * opts.step) - it.w / 2;
+      const group = { x, y: top, w: it.w, h: it.h };
+      if (top >= b.y && free(group)) {
+        hit = { group, tag: { x, y: top + it.h - it.tagH, w: it.w, h: it.tagH }, below: false };
+        break;
+      }
+    }
+    for (const [k, s] of hit ? [] : moves) {
+      const tag = {
+        x: slide(it.x + s * opts.step) - it.w / 2,
+        y: it.feetY + k * opts.step,
+        w: it.w,
+        h: it.tagH,
+      };
+      if (tag.y + tag.h <= b.y + b.h && free(tag)) {
+        hit = { group: tag, tag, below: true };
+        break;
+      }
+    }
+    out.set(it.id, hit);
+    if (hit) placed.push(hit.group);
+  }
+  return out;
+}

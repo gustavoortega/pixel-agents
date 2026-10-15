@@ -917,3 +917,53 @@ export const PLATE_STUB_EM = 3;
 export const INSPECTOR_FACE_PX = 64;
 /** z-index of the sheet over the stage: above the full box (43), under modals (50). */
 export const INSPECTOR_OVERLAY_Z_INDEX = 45;
+
+// ── Monitor office: desk highlight, tags, plaques, wall banner ───
+/** The desk of an agent that needs you: an outline and a hard halo outside it, CSS px (times the
+ *  device pixel ratio, whole device px). Gold waits on you, red is stuck. */
+export const DESK_HIGHLIGHT_OUTLINE_PX = 2;
+export const DESK_HIGHLIGHT_HALO_PX = 4;
+export const DESK_HIGHLIGHT_WAIT_COLOR = '#f6c64a';
+export const DESK_HIGHLIGHT_WAIT_HALO = 'rgba(246, 198, 74, 0.45)';
+export const DESK_HIGHLIGHT_STUCK_COLOR = '#ef5a3c';
+export const DESK_HIGHLIGHT_STUCK_HALO = 'rgba(239, 90, 60, 0.45)';
+/** Two frames a second apart from each other: the halo shows on one, the outline alone on the other. */
+export const DESK_HIGHLIGHT_BLINK_MS = 500;
+/** Beside the rail every character carries one tag: one line, fixed CSS size. */
+export const TAG_FONT_PX = 14;
+export const TAG_LINE_PX = 18;
+export const TAG_MEDAL_PX = 12;
+export const TAG_MAX_WIDTH_PX = 160;
+/** Clear space between the head (or the bubble over it) and the tag's bottom edge, CSS px. */
+export const TAG_HEAD_GAP_PX = 6;
+/** The tag solver moves a tag this far per step, up, then below the feet. */
+export const TAG_STEP_PX = 8;
+export const TAG_MAX_STEPS = 12;
+/** Air a tag keeps from what it avoids: covers the alert tab's 2 px bob. */
+export const TAG_PAD_PX = 3;
+/** A room plaque on the top wall: ink box, gold title, the mapped folder under it. */
+export const PLAQUE_TITLE_FONT_PX = 14;
+export const PLAQUE_FOLDER_FONT_PX = 11;
+export const PLAQUE_TITLE_LINE_PX = 16;
+export const PLAQUE_FOLDER_LINE_PX = 13;
+export const PLAQUE_PAD_X_PX = 8;
+export const PLAQUE_PAD_Y_PX = 4;
+export const PLAQUE_BORDER_PX = 2;
+export const PLAQUE_Z_INDEX = 35;
+/** The crew banner on a wall keeps this inset from the band's edges, CSS px, and is never drawn
+ *  smaller than this scale there (below it goes to the free-spot search). */
+export const CREW_BANNER_WALL_INSET_PX = 2;
+export const CREW_BANNER_WALL_MIN_SCALE = 0.75;
+export const TAG_BORDER_PX = 2;
+export const TAG_PAD_Y_PX = 1;
+export const TAG_SHADOW_PX = 2;
+/** A tag slid sideways keeps this much of itself past its character's centre on either side. */
+export const TAG_ATTACH_PX = 14;
+/** The solver's price of one sideways step, in vertical steps: a tag rises before it slides. */
+export const TAG_SIDE_COST = 1.5;
+/** Stage chrome drawn over the map (the clock) that no tag or banner goes under. */
+export const STAGE_CHROME_SELECTORS: readonly string[] = ['[data-testid="stage-clock"]'];
+/** Wall furniture a tag never covers. */
+export const WINDOW_TYPE_PREFIX = 'WINDOW';
+/** A wall banner that does not fit the band at its scale tries again this much smaller. */
+export const CREW_BANNER_WALL_SCALE_STEP = 0.05;
