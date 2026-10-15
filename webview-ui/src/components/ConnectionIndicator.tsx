@@ -35,7 +35,10 @@ export function ConnectionIndicator() {
   return (
     <div
       data-testid="connection-indicator"
-      className="absolute top-8 left-1/2 -translate-x-1/2 z-20 pixel-panel py-6 px-12 flex items-center gap-8 text-sm"
+      // Top left of the stage: the clock holds the top right, and a centered badge would land on it
+      // when the overlay sheet narrows the uncovered stage. The width cap wraps the long rejected
+      // notice short of the clock down to a 1100 px window with the sheet open.
+      className="absolute top-8 left-16 max-w-280 z-20 pixel-panel py-6 px-12 flex items-center gap-8 text-sm"
     >
       <span className={`w-8 h-8 rounded-full inline-block shrink-0 ${dotClass} pixel-pulse`} />
       {label}

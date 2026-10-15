@@ -407,3 +407,39 @@ for (const dpr of [1, 2] as const) {
     });
   });
 }
+
+/**
+ * R2: the clock belongs to the office column. At 1280 the overlay sheet covers the stage's right
+ * part, so the clock keeps to what is left of it, and the badge a dropped host raises sits clear
+ * of both.
+ */
+test.describe('Standalone / inspector and the stage clock', () => {
+  test('at 1280x800 with the sheet open and the host gone the clock stays inside the uncovered stage, clear of the sheet and the connection badge @area:standalone', async ({
+    page,
+    standalone,
+  }) => {
+    const id = await oneAgentAt(page, standalone, 1280, 800);
+    await openByKeys(page, id);
+    await expect(page.locator('[data-testid="monitor-sheet"][data-open="true"]')).toHaveAttribute(
+      'data-sheet',
+      'overlay',
+    );
+    // A crash, so the page keeps retrying and the badge stays up.
+    await standalone.stopHost({ crash: true });
+    await expect(page.getByTestId('connection-indicator')).toBeVisible({ timeout: 15_000 });
+
+    const [clock, badge, sheet, rail] = (await Promise.all(
+      ['stage-clock', 'connection-indicator', 'monitor-sheet', 'monitor-rail'].map((t) =>
+        page.getByTestId(t).boundingBox(),
+      ),
+    )) as Array<Box | null>;
+    expect(clock && badge && sheet && rail, 'clock, badge, sheet and rail on screen').toBeTruthy();
+    const overlap = (a: Box, b: Box) =>
+      a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+    expect(clock!.x).toBeGreaterThanOrEqual(rail!.x + rail!.width);
+    expect(clock!.x + clock!.width).toBeLessThanOrEqual(sheet!.x - 16 + 0.5);
+    expect(clock!.y).toBeGreaterThanOrEqual(0);
+    expect(overlap(clock!, sheet!), 'clock under the sheet').toBe(false);
+    expect(overlap(clock!, badge!), 'clock under the connection badge').toBe(false);
+  });
+});

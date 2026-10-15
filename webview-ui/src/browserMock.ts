@@ -28,6 +28,7 @@ import {
   type HeroOffice,
   type HeroSceneOptions,
   heroZoomFor,
+  monitorHelperStart,
   monitorMessages,
   parseHeroScene,
   parseMonitorScene,
@@ -313,8 +314,15 @@ export function dispatchMockMessages(host?: {
 
   if (monitor && host && !monitorStaged) {
     monitorStaged = true;
-    const { baseMs } = startMonitorStage();
-    for (const msg of monitorMessages(baseMs)) dispatch(msg);
+    const { baseMs, at } = startMonitorStage();
+    // Caught up first, as after a real handshake: from here a helper the page sees spawn gets a
+    // start, so the inspector's rows count minutes from each helper's own start time.
+    dispatch({ type: 'handshakeDone' });
+    for (const msg of monitorMessages(baseMs)) {
+      const startedAt = monitorHelperStart(msg, baseMs);
+      if (startedAt === undefined) dispatch(msg);
+      else at(startedAt, () => dispatch(msg));
+    }
     // The last agentCreated selects its agent; the scene opens on the whole office.
     host.office.selectedAgentId = null;
     if (!monitor.hud) hideHud();
@@ -331,7 +339,7 @@ function hideHud(): void {
     [
       '[data-testid="stage-clock"]',
       '[data-testid="bottom-toolbar"]',
-      '.absolute.top-8.pixel-panel',
+      '[data-testid="connection-indicator"]',
       '[data-testid="monitor-rail"]',
       '[data-testid="monitor-sheet"]',
     ].join(', ') + ' { display: none !important; }';

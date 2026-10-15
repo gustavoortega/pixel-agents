@@ -395,7 +395,8 @@
    a whole px so the pixel font and the borders stay crisp.
    Type: FS Pixel Sans draws caps 7/16 em and digits 5/16 em tall, about 0.6 of what a common
    font shows at the same size, so a type size is picked by how tall it reads. Nothing in the
-   rail reads under 12 px: caps of 0.7 x 12 px need 20 px here (19.2). */
+   rail reads under 12 px: caps of 0.7 x 12 px need 20 px here (19.2). The 360 px rail's name
+   reads 16 px (28 here) and its reason 20 px (34), the sizes a glance across the room needs. */
 .mon-rail {
   --bw: 3px;
   --sh: 4px;
@@ -439,8 +440,8 @@
   --tk-face: 53px;
   --tk-tw: 90px;
   --tk-rg: 7px;
-  --tk-why: 32px;
-  --tk-name: 26px;
+  --tk-why: 34px;
+  --tk-name: 28px;
   --tk-time: 96px;
   --tk-time-long: 56px;
   --clear-fs: 26px;
@@ -688,6 +689,15 @@
   font-size: var(--tk-unit);
   letter-spacing: 0.06em;
   text-box: trim-both cap alphabetic;
+}
+/* Below 1600 wide the rail is 300 px, where the stub's branch and model only fit cut to noise:
+   the ticket ends at its reason instead. */
+.mon-rail:not([data-rail='wide']) .tk {
+  grid-template-areas: 'face name time' 'why why time';
+  padding-bottom: var(--tk-pad);
+}
+.mon-rail:not([data-rail='wide']) .tk-stub {
+  display: none;
 }
 .tk-stub {
   grid-area: stub;
@@ -1007,11 +1017,12 @@
 }
 
 /* ── The stage's chrome: the clock at its top right, the bar along its bottom ──────────────── */
-/* The time reads like the rail: 32 px digits are 72 px of this font, 14 px words 24 px. */
+/* The time reads like the rail: 32 px digits are 72 px of this font, 14 px words 24 px. It keeps
+   16 px from the uncovered stage's right edge; the connection badge sits top left, out of its way. */
 .stage-clock {
   position: absolute;
   top: 20px;
-  right: 24px;
+  right: 16px;
   z-index: 10;
   display: flex;
   flex-direction: column;
@@ -1030,6 +1041,13 @@
   font-size: 24px;
   color: var(--mon-cream-3);
   text-box: trim-both cap alphabetic;
+}
+/* Up to 1440 wide (the narrow sheet's breakpoint) the stage left beside an open sheet is about
+   600 px: the time drops to 28 px digits, a whole 4 CSS px per font px. */
+@media (max-width: 1440px) {
+  .stage-clock .time {
+    font-size: 64px;
+  }
 }
 
 /* The bar: zoom on the left, the keys and the panels' buttons on the right, all 32 px tall. It
@@ -1059,7 +1077,7 @@
   right: calc(12px + var(--mon-sheet-px));
 }
 .mon-row:has(.insp-overlay[data-open='true']) .stage-clock {
-  right: calc(24px + var(--mon-sheet-px));
+  right: calc(16px + var(--mon-sheet-px));
 }
 .mon-row:has(.insp-overlay[data-open='true']) .bar-keys {
   display: none;
