@@ -9,7 +9,7 @@ import type { ToolActivity } from '../office/types.js';
 import { attentionOf } from './attentionSource.js';
 import { monitorLayout } from './monitorLayout.js';
 import { MonitorRail } from './MonitorRail.js';
-import { MonitorSheet } from './MonitorSheet.js';
+import { type InspectorWiring, MonitorSheet } from './MonitorSheet.js';
 
 function windowLayout() {
   return monitorLayout(window.innerWidth, window.innerHeight);
@@ -25,6 +25,8 @@ export interface MonitorShellProps {
   privacy: boolean;
   onTogglePrivacy: () => void;
   onSelect: (id: number) => void;
+  /** The App's tool rows and actions the inspector sheet reads. */
+  inspector: InspectorWiring;
   children: ReactNode;
 }
 
@@ -46,6 +48,7 @@ export function MonitorShell({
   privacy,
   onTogglePrivacy,
   onSelect,
+  inspector,
   children,
 }: MonitorShellProps) {
   const monitor = useMonitorVersion(officeState);
@@ -64,7 +67,8 @@ export function MonitorShell({
   const attention = attentionOf(officeState, agentTools, agentStatuses);
   return (
     <div
-      className={`w-full h-full flex overflow-hidden${privacy ? ' mon-privacy' : ''}`}
+      // Relative: below 1600 px the sheet overlays the stage, positioned on this row.
+      className={`relative w-full h-full flex overflow-hidden${privacy ? ' mon-privacy' : ''}`}
       data-privacy={privacy ? 'on' : 'off'}
     >
       <MonitorRail
@@ -79,7 +83,12 @@ export function MonitorShell({
         onSelect={onSelect}
       />
       {children}
-      <MonitorSheet officeState={officeState} monitor={monitor} layout={layout} />
+      <MonitorSheet
+        officeState={officeState}
+        monitor={monitor}
+        layout={layout}
+        inspector={inspector}
+      />
     </div>
   );
 }

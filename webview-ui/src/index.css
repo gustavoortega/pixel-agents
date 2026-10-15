@@ -94,6 +94,12 @@
      set --pv-mask to the second on their own element. */
   --mon-mask: rgba(59, 36, 18, 0.18);
   --mon-mask-on-ink: rgba(255, 244, 220, 0.25);
+  /* The inspector's clipboard: the wood board, the terminal slip, the deepest edge, paper dots */
+  --mon-wood: #a36a3b;
+  --mon-wood-dark: #8a5530;
+  --mon-term: #23170e;
+  --mon-ink-deep: #1e120a;
+  --mon-dot: rgba(59, 36, 18, 0.1);
   --pv-mask: var(--mon-mask);
   /* Medal: hole, ring, ring when 85 % full, track; then each tier's glyph fill and highlight. */
   --medal-hole: #22140a;

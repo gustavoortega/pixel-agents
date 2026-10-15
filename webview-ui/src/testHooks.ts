@@ -1,3 +1,4 @@
+import { closeSheet, openSheet } from './components/inspector/sheetControl.js';
 import type { ColorValue } from './components/ui/types.js';
 import { type FrameCounters, requestRedraw } from './office/engine/gameLoop.js';
 import { OfficeState } from './office/engine/officeState.js';
@@ -99,6 +100,9 @@ declare global {
         helperId: number;
         kind: 'crew' | 'sub';
       }>;
+      /** Open or close the inspector sheet the way the keys do (sheetControl.ts). */
+      openSheet?: () => void;
+      closeSheet?: () => void;
       /** Render loop counters (gameLoop.ts installs them when it loads): read deltas, never absolutes. */
       frames?: FrameCounters;
     };
@@ -168,6 +172,15 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
     const os = officeStateRef.current;
     if (os) os.selectedAgentId = id;
     requestRedraw();
+  };
+
+  hooks.openSheet = () => {
+    const os = officeStateRef.current;
+    if (os) openSheet(os);
+  };
+  hooks.closeSheet = () => {
+    const os = officeStateRef.current;
+    if (os) closeSheet(os);
   };
 
   // Point-in-time snapshot of every live pet. Pets render only on the canvas

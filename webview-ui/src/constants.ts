@@ -909,3 +909,9 @@ export const PLATE_SIDE_GAP_PX = 6;
 /** A cut text on a plate (a branch, the state words) keeps at least this much (em), so it still
  *  reads as a word and not a stray letter; with less room it is left out. */
 export const PLATE_STUB_EM = 3;
+
+// ── Inspector sheet ──────────────────────────────────────────────
+/** The hero portrait's face box, CSS px: 32 art px at 2x on a 1x screen. */
+export const INSPECTOR_FACE_PX = 64;
+/** z-index of the sheet over the stage: above the full box (43), under modals (50). */
+export const INSPECTOR_OVERLAY_Z_INDEX = 45;
