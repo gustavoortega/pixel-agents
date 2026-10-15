@@ -1,8 +1,9 @@
 /**
  * The inspector sheet as rendered markup, from a real OfficeState fed wire-shaped messages:
  * artifact links open in a new tab without a referrer or an opener and mask in privacy mode
- * (C7.2), an agent with no artifacts has no Artifacts section at all (C7.3), and every glyph the
- * sheet prints is one the pixel font has (A13).
+ * (C7.2), an agent with no artifacts has no Artifacts section at all (C7.3), the context ring's
+ * color follows the threshold table (Q4.2), and every glyph the sheet prints is one the pixel font
+ * has (A13).
  *
  * Run with: npm test
  */
@@ -54,6 +55,7 @@ function sheet(
         subagentCharacters: [],
         onAckTripwire: () => {},
         onOpen: () => {},
+        onSheetLayout: () => {},
       },
     }),
   );
@@ -88,6 +90,25 @@ describe('C7.2 artifact links', () => {
     // The url as shown is session text: privacy mode masks every `.pv`.
     expect(link![1]).toMatch(/<span class="[^"]*\bpv\b[^"]*">claude\.ai\/a\/5c1e7b42<\/span>/);
     expect(html).toMatch(/<span class="[^"]*\bpv\b[^"]*">Refund flow<\/span>/);
+  });
+});
+
+describe('Q4.2 the context ring', () => {
+  it.each([
+    // [context tokens of 200k] -> percent shown, ring tone
+    [36_000, '18', 'gold'],
+    [138_000, '69', 'gold'],
+    [140_000, '70', 'warm'],
+    [168_000, '84', 'warm'],
+    [170_000, '85', 'hot'],
+    [182_000, '91', 'hot'],
+  ] as const)('%i tokens read %s percent on a %s ring', (tokens, pct, tone) => {
+    const os = inspected();
+    os.setAgentContext(1, tokens, 200_000);
+    const html = sheet(os);
+    const ring = /<svg class="[^"]*\binsp-ring-(\w+)\b[^"]*"/.exec(html);
+    expect(ring?.[1]).toBe(tone);
+    expect(html).toContain(`${pct}<small>%</small>`);
   });
 });
 

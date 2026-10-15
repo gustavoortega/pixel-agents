@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   type AgentStateInput,
+  type HelperInput,
   type InspectorInput,
   inspectorView,
   stateChip,
@@ -120,11 +121,10 @@ describe('vitals', () => {
     });
   });
 
-  it('context turns hot at 85%, and shows tokens against the window', () => {
+  it('context shows its share and tokens against the window', () => {
     const at = (tokens: number) =>
       inspectorView(input({ contextTokens: tokens, maxContextTokens: 200_000 })).vitals[0];
-    expect(at(168_000)).toMatchObject({ pct: 84, hot: false, caption: '168k of 200k' });
-    expect(at(170_000)).toMatchObject({ pct: 85, hot: true });
+    expect(at(168_000)).toMatchObject({ pct: 84, caption: '168k of 200k' });
     expect(
       inspectorView(input({ contextTokens: 910_000, maxContextTokens: 1_000_000 })).vitals[0],
     ).toMatchObject({ caption: '910k of 1M' });
@@ -270,6 +270,7 @@ describe('depends on whom', () => {
             group: 'review',
             tools: [],
             bubbleType: null,
+            done: false,
           },
           {
             id: -2,
@@ -277,6 +278,7 @@ describe('depends on whom', () => {
             label: 'Map the call sites',
             tools: [{ toolId: 's', status: 'Reading events.ts', done: false }],
             bubbleType: null,
+            done: false,
           },
         ],
         lead: { id: 9, name: { text: 'Linus' }, isActive: true, bubbleType: null, tools: [] },
@@ -291,6 +293,32 @@ describe('depends on whom', () => {
     // Announced, no tool call yet: thinking (as its plate says), not idle.
     expect(v.tree[1].rows[0].chip.parts[0].text).toBe('thinking');
     expect(v.tree[2].rows[0].chip.parts[0].text).toBe('reading · Read');
+  });
+
+  it('Q4.3 a working helper shows its minutes from its start; with no known start or once done, none', () => {
+    const helper = (id: number, over: Partial<HelperInput>): HelperInput => ({
+      id,
+      parentToolId: `toolu_${-id}`,
+      label: `task ${-id}`,
+      tools: [],
+      bubbleType: null,
+      done: false,
+      ...over,
+    });
+    const rows = inspectorView(
+      input({
+        helpers: [
+          helper(-1, { startedAt: NOW - 12 * MIN }),
+          helper(-2, {}),
+          helper(-3, { startedAt: NOW - 30 * MIN, done: true }),
+        ],
+      }),
+    ).tree[0].rows;
+    expect(rows.map((r) => [r.minutes, r.chip.tone, r.chip.parts[0].text])).toEqual([
+      ['12m', 'paper', 'thinking'],
+      [undefined, 'paper', 'thinking'],
+      [undefined, 'sage', 'done'],
+    ]);
   });
 
   it('a lone agent has no tree', () => {

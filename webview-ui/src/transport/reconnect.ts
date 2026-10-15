@@ -2,9 +2,10 @@ import { TRANSPORT_STATE_CONNECTED } from '../../../core/src/constants.js';
 import { resync } from '../office/engine/resync.js';
 import type { MessageTransport } from './types.js';
 
-/** Set when a reconnect re-sends webviewReady. The existingAgents that answers it reads
- *  and clears it: that handshake is a resync (useExtensionMessages). */
-export const reconnectState = { resyncPending: false };
+/** `resyncPending` is set when a reconnect re-sends webviewReady. The existingAgents that answers
+ *  it reads and clears it: that handshake is a resync (useExtensionMessages). `caughtUp` is set by
+ *  the page's first handshakeDone: before it, every message restates something already running. */
+export const reconnectState = { resyncPending: false, caughtUp: false };
 
 /**
  * Re-run the handshake on every reconnect. The server sent this page nothing while the

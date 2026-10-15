@@ -1,6 +1,6 @@
 import './inspector/inspector.css';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 
 import {
   INSPECTOR_FACE_PX,
@@ -24,6 +24,9 @@ export interface InspectorWiring extends SheetToolState {
   onAckTripwire: (id: number, count: number) => void;
   /** Called when the sheet opens: the App closes the Usage panel, which shares its corner. */
   onOpen: () => void;
+  /** The sheet opened or closed, covering `insetPx` CSS px of the stage's right edge (0 when
+   *  closed or in the row): the office re-fits into what is left. */
+  onSheetLayout: (open: boolean, insetPx: number) => void;
 }
 
 export interface MonitorSheetProps {
@@ -86,6 +89,15 @@ export function MonitorSheet({ officeState, layout, inspector }: MonitorSheetPro
     if (open && !wasOpen.current) onOpen();
     wasOpen.current = open;
   }, [open, onOpen]);
+
+  // The office re-fits beside the sheet; over the stage (below 1600 px) the sheet hides its
+  // right edge, so the fit leaves that inset out.
+  const onSheetLayout = inspector.onSheetLayout;
+  const inset = open && layout.sheetMode === 'overlay' ? layout.sheetPx : 0;
+  // Layout effects: the fit must know before the next frame, or a frame on the resized stage
+  // would fit it as if the sheet were closed.
+  useLayoutEffect(() => onSheetLayout(open, inset), [open, inset, onSheetLayout]);
+  useLayoutEffect(() => () => onSheetLayout(false, 0), [onSheetLayout]);
 
   if (!open || id === null) {
     return (

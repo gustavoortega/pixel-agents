@@ -13,6 +13,7 @@ import type { HealthState, PermissionMode } from '../../../../core/src/messages.
 import type { ModelTier } from '../../../../core/src/provider.js';
 import {
   CACHE_ROW_MIN_CONTEXT_TOKENS,
+  INSPECTOR_RING_WARM_FRACTION,
   MEDAL_HOT_FRACTION,
   PERMISSION_MODE_ROW_TEXT,
 } from '../../constants.js';
@@ -47,13 +48,22 @@ export interface Chip {
   parts: Text[];
 }
 
+/** The context ring's fill: gold under 70%, coral from 70%, rust from 85% (the medals' hot). */
+export type RingTone = 'gold' | 'warm' | 'hot';
+
+export function contextTone(fraction: number): RingTone {
+  if (fraction >= MEDAL_HOT_FRACTION) return 'hot';
+  if (fraction >= INSPECTOR_RING_WARM_FRACTION) return 'warm';
+  return 'gold';
+}
+
 export type VitalCell =
   | {
       kind: 'context';
       tier?: ModelTier;
       pct: number;
       fraction: number;
-      hot: boolean;
+      tone: RingTone;
       caption: string;
     }
   | { kind: 'model'; tier?: ModelTier; text: string; caption?: string }
@@ -72,6 +82,8 @@ export interface TreeRow {
   name: Text;
   /** Phase, sub-agent type or role, under the name. */
   sub?: string;
+  /** A working helper's minutes since its start (`12m`); absent when the start is unknown. */
+  minutes?: string;
   chip: Chip;
 }
 
@@ -150,6 +162,10 @@ export interface HelperInput {
   /** Its live tool rows. */
   tools: readonly ToolActivity[];
   bubbleType: 'permission' | 'waiting' | null;
+  /** Its task is over: a sub-agent whose spawn row on the lead is done. */
+  done: boolean;
+  /** Epoch ms it started, when this page saw the spawn. */
+  startedAt?: number;
 }
 
 /** The parts of an agent the chip reads, for the agent itself and for teammates. */
@@ -346,7 +362,7 @@ function vitals(i: InspectorInput): { cells: VitalCell[]; coldNote?: string } {
       tier: i.model?.tier,
       pct: Math.round(fraction * 100),
       fraction,
-      hot: fraction >= MEDAL_HOT_FRACTION,
+      tone: contextTone(fraction),
       caption: `${tokensText(i.contextTokens)} of ${tokensText(i.maxContextTokens)}`,
     });
   }
@@ -458,8 +474,16 @@ function runOf(parentToolId: string): string | undefined {
 }
 
 function helperChip(h: HelperInput, now: number): Chip {
+  if (h.done && h.bubbleType !== 'permission') {
+    return { tone: 'sage', mark: 'check', parts: [{ text: 'done' }] };
+  }
   // No tool call yet reads `thinking`, as on the helper's plate.
   return stateChip({ isActive: true, bubbleType: h.bubbleType, tools: h.tools }, now);
+}
+
+/** A working helper's age; none once done (the wire has no end time) or with no known start. */
+function helperMinutes(h: HelperInput, now: number): string | undefined {
+  return h.done || h.startedAt === undefined ? undefined : minutesText(now - h.startedAt);
 }
 
 function tree(i: InspectorInput): TreeGroup[] {
@@ -507,6 +531,7 @@ function tree(i: InspectorInput): TreeGroup[] {
         key: `helper-${h.id}`,
         name: { text: h.label || 'helper', pv: Boolean(h.label) },
         sub: h.group,
+        minutes: helperMinutes(h, i.now),
         chip: helperChip(h, i.now),
       })),
     });
@@ -518,6 +543,7 @@ function tree(i: InspectorInput): TreeGroup[] {
       rows: subs.map((h) => ({
         key: `sub-${h.id}`,
         name: { text: h.label || 'sub-agent', pv: Boolean(h.label) },
+        minutes: helperMinutes(h, i.now),
         chip: helperChip(h, i.now),
       })),
     });

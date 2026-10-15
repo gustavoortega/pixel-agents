@@ -7,7 +7,7 @@
  * Messages go through the modules the hook delegates to (agentListMessages, agentMessages,
  * subagentMessages); the hook's React state and refs are plain values here.
  */
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WORKFLOW_MAX_VISIBLE_HELPERS } from '../src/constants.js';
 import {
@@ -28,6 +28,7 @@ import {
   type SubagentCharacter,
   type SubagentTools,
 } from '../src/hooks/subagentMessages.js';
+import { overrideOfficeClock } from '../src/office/clock.js';
 import { OfficeState } from '../src/office/engine/officeState.js';
 import { type AgentToolRows, resync } from '../src/office/engine/resync.js';
 import { setProviderCapabilities } from '../src/office/toolUtils.js';
@@ -43,8 +44,11 @@ beforeAll(() => {
 
 beforeEach(() => {
   reconnectState.resyncPending = false;
+  reconnectState.caughtUp = false;
   resync.abort();
 });
+
+afterEach(() => overrideOfficeClock(null));
 
 const COLS = 12;
 const ROWS = 4;
@@ -227,6 +231,36 @@ describe('resync after a reconnect', () => {
     expect(os.characters.has(ended)).toBe(false);
     expect(state.characters.map((s) => s.id)).toEqual([live]);
     expect([...state.background[1]]).toEqual([`${CREW}live`]);
+  });
+
+  it("a helper's start is known only for a spawn seen live: none for one a catch-up restates (the page's first or a reconnect's), and a re-announce never moves it", () => {
+    const T0 = new Date(2026, 9, 12, 15, 0, 0).getTime();
+    overrideOfficeClock(() => new Date(T0));
+    const os = office();
+    const { state, sink } = hub(os);
+    os.addAgent(1, 0, 0, undefined, true);
+    const startOf = (parentToolId: string) =>
+      state.characters.find((s) => s.parentToolId === parentToolId)?.startedAt;
+
+    // The page's first handshake restates a helper that was already running.
+    applyExistingAgents(sink, existingAgents([1]));
+    applySubagentMessage(sink, presence(1, `${CREW}running`));
+    applyHandshakeDone(sink);
+    // Live spawns.
+    applySubagentMessage(sink, presence(1, `${CREW}live`));
+    applyToolStartHelper(sink, foregroundSpawn(1, 'toolu_live'));
+
+    overrideOfficeClock(() => new Date(T0 + 5 * 60_000));
+    reconnect();
+    applyExistingAgents(sink, existingAgents([1]));
+    applySubagentMessage(sink, presence(1, `${CREW}live`));
+    applySubagentMessage(sink, presence(1, `${CREW}missed`));
+    applyHandshakeDone(sink);
+
+    expect(startOf(`${CREW}running`)).toBeUndefined();
+    expect(startOf(`${CREW}live`)).toBe(T0);
+    expect(startOf('toolu_live')).toBe(T0);
+    expect(startOf(`${CREW}missed`)).toBeUndefined();
   });
 
   it('a workflow run the catch-up restates stays with its new counts; one it does not goes at handshakeDone; an ordinary handshake drops none', () => {

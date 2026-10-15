@@ -811,8 +811,11 @@ export const MONITOR_MIN_FULL_HEIGHT_PX = 420;
 export const MONITOR_RAIL_WIDE_PX = 360;
 export const MONITOR_RAIL_MID_PX = 300;
 export const MONITOR_RAIL_SLIM_PX = 76;
-export const MONITOR_SHEET_INLINE_PX = 420;
-export const MONITOR_SHEET_OVERLAY_PX = 360;
+/** The inspector sheet's width: 420 px, or 380 px in a window up to 1440 wide, where it overlays a
+ *  stage that is already narrow (the office re-fits into what it leaves uncovered). */
+export const MONITOR_SHEET_PX = 420;
+export const MONITOR_SHEET_NARROW_PX = 380;
+export const MONITOR_SHEET_NARROW_MAX_WIDTH_PX = 1440;
 /** The rail and sheet re-read their clocks this often: their ages are whole minutes. */
 export const MONITOR_CLOCK_TICK_MS = 30_000;
 /** localStorage key of privacy mode (P), a per-browser preference: '1' on, anything else off. */
@@ -917,6 +920,15 @@ export const PLATE_STUB_EM = 3;
 export const INSPECTOR_FACE_PX = 64;
 /** z-index of the sheet over the stage: above the full box (43), under modals (50). */
 export const INSPECTOR_OVERLAY_Z_INDEX = 45;
+/** With the inspector sheet open the office keeps its size over showing every wall pixel: a zoom
+ *  level still counts as fitting when the map overflows the view by at most this share of its
+ *  width per side (only the outer wall is cut). */
+export const SHEET_FIT_EDGE_CUT = 0.05;
+/** Opening the sheet never leaves the office under this zoom level (1x on the badge). */
+export const SHEET_MIN_ZOOM = 2;
+/** Context share from which the inspector's context ring is warm (coral); hot (rust) from
+ *  MEDAL_HOT_FRACTION, as the medals. */
+export const INSPECTOR_RING_WARM_FRACTION = 0.7;
 
 // ── Monitor office: desk highlight, tags, plaques, wall banner ───
 /** The desk of an agent that needs you: an outline and a hard halo outside it, CSS px (times the

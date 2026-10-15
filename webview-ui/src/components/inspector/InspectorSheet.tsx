@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 
-import { Medal } from '../railArt.js';
 import type {
   ArtifactRow,
   Chip,
@@ -10,7 +9,7 @@ import type {
   VitalCell,
   WorkflowView,
 } from './inspectorView.js';
-import { Gem, PixelIcon } from './PixelArt.js';
+import { ContextRing, Gem, PixelIcon } from './PixelArt.js';
 import type { IconName } from './pixelBitmaps.js';
 
 /** A run of text; session text carries `pv`, which privacy mode masks. */
@@ -127,18 +126,16 @@ function Vital({ cell }: { cell: VitalCell }) {
   switch (cell.kind) {
     case 'context':
       return (
-        <div className="insp-vital insp-vital-side" data-testid="inspector-context">
-          <Medal tier={cell.tier} pct={cell.pct} scale={3} />
-          <div className="insp-vital-tx">
-            <span className="insp-k">Context</span>
-            <span className={`insp-v${cell.hot ? ' insp-hot' : ''}`}>
-              <span className="insp-num">
-                {cell.pct}
-                <small>%</small>
-              </span>
+        <div className="insp-vital" data-testid="inspector-context">
+          <span className="insp-k">Context</span>
+          <span className={`insp-v${cell.tone === 'hot' ? ' insp-hot' : ''}`}>
+            <ContextRing fraction={cell.fraction} tone={cell.tone} tier={cell.tier} />
+            <span className="insp-num">
+              {cell.pct}
+              <small>%</small>
             </span>
-            <span className="insp-cap">{cell.caption}</span>
-          </div>
+          </span>
+          <span className="insp-cap">{cell.caption}</span>
         </div>
       );
     case 'model':
@@ -242,7 +239,9 @@ function Tree({ name, groups }: { name: Text; groups: TreeGroup[] }) {
               <li key={r.key}>
                 <span className="insp-tree-lbl">
                   <T t={r.name} />
-                  {r.sub && <small>{r.sub}</small>}
+                  {(r.sub || r.minutes) && (
+                    <small>{[r.sub, r.minutes].filter(Boolean).join(' · ')}</small>
+                  )}
                 </span>
                 <StateChip chip={r.chip} />
               </li>
@@ -301,19 +300,21 @@ export function InspectorSheet({ view, portrait, onClose, onAckTripwire }: Inspe
   const { hero, vitals, now, workflows, loop, tree, artifacts, tests, health, tripwire } = view;
   return (
     <div className="insp-paper pixel-scrollbar" data-agent-id={view.id}>
-      <div className="insp-close-row">
-        <span className="insp-keycap">Esc</span>
-        <button
-          type="button"
-          className="insp-close"
-          onClick={onClose}
-          title="Close"
-          aria-label="Close the inspector"
-          data-testid="inspector-close"
-        >
+      <button
+        type="button"
+        className="insp-close"
+        onClick={onClose}
+        title="Close (Esc)"
+        aria-label="Close the inspector"
+        data-testid="inspector-close"
+      >
+        <span className="insp-close-x" aria-hidden="true">
           ×
-        </button>
-      </div>
+        </span>
+        <span className="insp-close-key" aria-hidden="true">
+          Esc
+        </span>
+      </button>
 
       <Hero hero={hero} portrait={portrait} />
 

@@ -55,6 +55,7 @@ export function sheetInput(
 ): InspectorInput | null {
   const ch = os.characters.get(id);
   if (!ch || ch.isSubagent) return null;
+  const leadRows = tools.agentTools[id] ?? NO_TOOLS;
   const helpers: HelperInput[] = tools.subagentCharacters
     .filter((s) => s.parentAgentId === id)
     .map((s) => ({
@@ -64,6 +65,9 @@ export function sheetInput(
       group: s.group,
       tools: tools.subagentTools[id]?.[s.parentToolId] ?? NO_TOOLS,
       bubbleType: os.characters.get(s.id)?.bubbleType ?? null,
+      // The plate's rule: a sub-agent's task is over once the lead's spawn row is done.
+      done: leadRows.some((t) => t.toolId === s.parentToolId && t.done),
+      startedAt: s.startedAt,
     }));
   const leadCh = ch.leadAgentId !== undefined ? os.characters.get(ch.leadAgentId) : undefined;
   const mates = [...os.characters.values()]

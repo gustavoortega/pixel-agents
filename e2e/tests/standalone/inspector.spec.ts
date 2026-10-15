@@ -178,7 +178,7 @@ for (const dpr of [1, 2] as const) {
   test.describe(`Standalone / inspector layout at dpr ${dpr}`, () => {
     test.use({ deviceScaleFactor: dpr });
 
-    test(`at 1920x1080 the open sheet sits beside the map, and opening it closes Usage (dpr ${dpr}) @area:standalone`, async ({
+    test(`at 1920x1080 the open sheet takes layout width beside the stage, and opening it closes Usage (dpr ${dpr}) @area:standalone`, async ({
       page,
       standalone,
     }) => {
@@ -202,16 +202,8 @@ for (const dpr of [1, 2] as const) {
 
       const sheet = page.locator('[data-testid="monitor-sheet"][data-open="true"]');
       await expect(sheet).toHaveAttribute('data-sheet', 'inline');
-      const map = page.getByTestId('map-vignette');
-      await expect
-        .poll(async () => {
-          const [m, s] = [await map.boundingBox(), await sheet.boundingBox()];
-          if (!m || !s) return 'missing';
-          const apart = m.x + m.width <= s.x + 0.5 || s.x + s.width <= m.x + 0.5;
-          return apart ? 'apart' : `map ${m.x}+${m.width} sheet ${s.x}+${s.width}`;
-        })
-        .toBe('apart');
       // Layout space, not a cover: the office's canvas (the stage) ends where the sheet begins.
+      // How the office is framed in it is Q4.6's.
       const canvas = page.locator('canvas').first();
       await expect
         .poll(async () => {
@@ -222,6 +214,196 @@ for (const dpr of [1, 2] as const) {
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
       ).toBe(true);
+    });
+  });
+}
+
+type CameraWindow = Window & {
+  __pixelAgentsTestHooks?: {
+    getSelection?: () => { selectedAgentId: number | null; cameraFollowId: number | null };
+  };
+};
+
+function selection(page: Page) {
+  return page.evaluate(() => (window as CameraWindow).__pixelAgentsTestHooks?.getSelection?.());
+}
+
+/** One working agent in a window of this size, its fit settled; returns its id. */
+async function oneAgentAt(
+  page: Page,
+  standalone: Parameters<typeof startAgent>[0] & {
+    drainMessages: () => Promise<RecordedServerMessage[]>;
+  },
+  width = 1920,
+  height = 1080,
+): Promise<number> {
+  await page.setViewportSize({ width, height });
+  await setSettings(page, { watchAllSessions: true });
+  await startAgent(standalone, crypto.randomUUID());
+  const seen: RecordedServerMessage[] = [];
+  await expect
+    .poll(async () => {
+      seen.push(...(await standalone.drainMessages()));
+      return seen.some((m) => m.type === 'agentCreated');
+    })
+    .toBe(true);
+  await expect(page.locator('[data-testid="agent-overlay"]').first()).toBeVisible();
+  // A focused button would take the keys for itself.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  return seen.find((m) => m.type === 'agentCreated')!.id as number;
+}
+
+const fitButton = (page: Page) =>
+  page.getByRole('button', { name: 'Fit the view to the rooms in use' });
+
+test.describe('Standalone / inspector camera', () => {
+  test('Q4.4 selecting an agent while the whole map fits keeps the fit: there is nothing to follow @area:standalone', async ({
+    page,
+    standalone,
+  }) => {
+    const id = await oneAgentAt(page, standalone);
+    await expect(fitButton(page)).toHaveAttribute('aria-pressed', 'true');
+    const level = await page.getByTestId('zoom-level').textContent();
+
+    await page.keyboard.press('ArrowRight');
+
+    await expect.poll(() => selection(page)).toEqual({ selectedAgentId: id, cameraFollowId: null });
+    await expect(fitButton(page)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('zoom-level')).toHaveText(level!);
+  });
+
+  test('Q4.5 Fit takes the camera back from a follow @area:standalone', async ({
+    page,
+    standalone,
+  }) => {
+    const id = await oneAgentAt(page, standalone);
+    const level = await page.getByTestId('zoom-level').textContent();
+    // Zoomed in, the map is bigger than the stage: a selection follows the agent.
+    await page.getByRole('button', { name: 'Zoom in' }).click();
+    await expect(fitButton(page)).toHaveAttribute('aria-pressed', 'false');
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => selection(page)).toEqual({ selectedAgentId: id, cameraFollowId: id });
+
+    await fitButton(page).click();
+
+    await expect(page.getByTestId('zoom-level')).toHaveText(level!);
+    await expect(fitButton(page)).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => selection(page)).toEqual({ selectedAgentId: id, cameraFollowId: null });
+  });
+});
+
+/** The zoom badge once the view holds still: a fit lands a frame or two after it starts, a
+ *  follow eases in, and a quiet office draws once a second. */
+async function settledLevel(page: Page): Promise<string> {
+  const level = page.getByTestId('zoom-level');
+  const map = page.getByTestId('map-vignette');
+  const view = async () => JSON.stringify([await level.textContent(), await map.boundingBox()]);
+  let before = await view();
+  await expect
+    .poll(
+      async () => {
+        await page.waitForTimeout(1_200);
+        const [prev, next] = [before, await view()];
+        before = next;
+        return prev === next;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  return (await level.textContent())!;
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+
+/** Select the agent with the keys (→), then open its sheet (Enter). */
+async function openByKeys(page: Page, id: number): Promise<void> {
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(async () => (await selection(page))?.selectedAgentId).toBe(id);
+  await page.keyboard.press('Enter');
+}
+
+/**
+ * Q4: opening the sheet keeps the office's size. The zoom never drops below the one it had (nor
+ * under 1x); the whole map stays framed when only its outer wall is cut (at most 5% of its width
+ * a side), else the camera follows the inspected agent. Closing gives the previous fit back.
+ */
+for (const dpr of [1, 2] as const) {
+  test.describe(`Standalone / inspector sheet fit at dpr ${dpr}`, () => {
+    test.use({ deviceScaleFactor: dpr });
+
+    test(`Q4.1 at 1280x800 the overlay sheet keeps the zoom and frames the selected agent beside it (dpr ${dpr}) @area:standalone`, async ({
+      page,
+      standalone,
+    }) => {
+      const id = await oneAgentAt(page, standalone, 1280, 800);
+      await expect(fitButton(page)).toHaveAttribute('aria-pressed', 'true');
+      const before = await settledLevel(page);
+      await openByKeys(page, id);
+      const sheet = page.locator('[data-testid="monitor-sheet"][data-open="true"]');
+      await expect(sheet).toHaveAttribute('data-sheet', 'overlay');
+
+      expect(await settledLevel(page)).toBe(before);
+      const plate = page.locator(`[data-testid="agent-overlay"][data-agent-id="${id}"]`);
+      const rail = page.getByTestId('monitor-rail');
+      await expect
+        .poll(async () => {
+          const [p, s, r] = [
+            await plate.boundingBox(),
+            await sheet.boundingBox(),
+            await rail.boundingBox(),
+          ];
+          if (!p || !s || !r) return 'missing';
+          const inside =
+            p.x >= r.x + r.width - 0.5 &&
+            p.x + p.width <= s.x + 0.5 &&
+            p.y >= -0.5 &&
+            p.y + p.height <= 800.5;
+          return inside ? 'inside' : `plate ${p.x},${p.y} ${p.width}x${p.height} sheet at ${s.x}`;
+        })
+        .toBe('inside');
+
+      await page.keyboard.press('Escape');
+      await expect(page.locator('[data-testid="monitor-sheet"][data-open="false"]')).toHaveCount(1);
+      expect(await settledLevel(page)).toBe(before);
+      await expect(fitButton(page)).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    test(`Q4.6 at 1920x1080 the inline sheet keeps the zoom, the whole map framed with at most its outer wall cut (dpr ${dpr}) @area:standalone`, async ({
+      page,
+      standalone,
+    }) => {
+      const id = await oneAgentAt(page, standalone);
+      await expect(fitButton(page)).toHaveAttribute('aria-pressed', 'true');
+      const before = await settledLevel(page);
+      await openByKeys(page, id);
+      const sheet = page.locator('[data-testid="monitor-sheet"][data-open="true"]');
+      await expect(sheet).toHaveAttribute('data-sheet', 'inline');
+
+      const map = page.getByTestId('map-vignette');
+      const rail = page.getByTestId('monitor-rail');
+      // Framed, not followed: the fit stays on, at the zoom the office had.
+      expect(await settledLevel(page)).toBe(before);
+      await expect(fitButton(page)).toHaveAttribute('aria-pressed', 'true');
+      const [m, s, r] = (await Promise.all([
+        map.boundingBox(),
+        sheet.boundingBox(),
+        rail.boundingBox(),
+      ])) as Box[];
+      const cutLeft = r.x + r.width - m.x;
+      const cutRight = m.x + m.width - s.x;
+      const edge = 0.05 * m.width + 0.5;
+      expect(cutLeft).toBeLessThanOrEqual(edge);
+      expect(cutRight).toBeLessThanOrEqual(edge);
+      expect(Math.abs(cutLeft - cutRight)).toBeLessThanOrEqual(1);
+      expect(m.y).toBeGreaterThanOrEqual(-0.5);
+      expect(m.y + m.height).toBeLessThanOrEqual(1080.5);
+
+      await page.keyboard.press('Escape');
+      await expect(page.locator('[data-testid="monitor-sheet"][data-open="false"]')).toHaveCount(1);
+      expect(await settledLevel(page)).toBe(before);
+      await expect(fitButton(page)).toHaveAttribute('aria-pressed', 'true');
     });
   });
 }
