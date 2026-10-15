@@ -75,6 +75,8 @@ function App() {
     [autoFit, handleZoomChange],
   );
   const handleFit = useCallback(() => {
+    // A follow would take the camera straight back on the next frame.
+    getOfficeState().cameraFollowId = null;
     autoFit.enable();
     // The fit lands on the next drawn frame, which a quiet office would only draw a second later.
     requestRedraw();
@@ -321,6 +323,24 @@ function App() {
 
   // The inspector sheet and the Usage panel share the right edge: opening the sheet closes it.
   const handleInspectorOpen = useCallback(() => setIsUsageOpen(false), []);
+  // Opening or closing the sheet re-frames the office in the width it leaves: beside it from
+  // 1600 px (the stage narrows), in front of it below (the sheet covers `insetPx` of the stage).
+  // Open, the fit keeps the office's zoom (AutoFit.setSheet); closed, it frames as before. It
+  // takes the camera back from a follow or a manual view, which would otherwise keep the office
+  // cut by the sheet or squeezed to its old width.
+  const sheetLayoutRef = useRef({ open: false, insetPx: 0 });
+  const handleSheetLayout = useCallback(
+    (open: boolean, insetPx: number) => {
+      const prev = sheetLayoutRef.current;
+      if (prev.open === open && prev.insetPx === insetPx) return;
+      autoFit.setSheet(open, insetPx);
+      sheetLayoutRef.current = { open, insetPx };
+      getOfficeState().cameraFollowId = null;
+      autoFit.enable();
+      requestRedraw();
+    },
+    [autoFit],
+  );
 
   const handleClick = useCallback((agentId: number) => {
     // If clicked agent is a sub-agent, focus the parent's terminal instead
@@ -782,6 +802,7 @@ function App() {
         subagentCharacters,
         onAckTripwire: handleAckTripwire,
         onOpen: handleInspectorOpen,
+        onSheetLayout: handleSheetLayout,
       }}
     >
       {stage}

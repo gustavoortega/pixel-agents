@@ -22,11 +22,14 @@
 }
 
 .insp-board {
+  /* The clip's tab sits 8 px under the board's top edge; the paper starts across the clip's
+     middle, so the clip holds it. The paper keeps 8 px of board on its other sides. */
+  --insp-clip-top: 14px;
   position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 26px 8px 8px;
+  padding: 30px 8px 8px;
   background: repeating-linear-gradient(
     90deg,
     var(--mon-wood) 0 11px,
@@ -39,11 +42,12 @@
   box-shadow: -4px 0 0 var(--mon-ink-deep);
 }
 
-/* The brass clip holding the paper. */
+/* The brass clip holding the paper, centred on it: the paper fills the padding box less 8 px a
+   side, so their centres agree. Its tab (::before) rises 6 px above it. */
 .insp-clip {
   position: absolute;
   z-index: 2;
-  top: 6px;
+  top: var(--insp-clip-top);
   left: 50%;
   width: 112px;
   height: 24px;
@@ -171,31 +175,37 @@
   fill: var(--tier-4-hi);
 }
 
-/* ---------- close row ---------- */
-.insp-close-row {
-  position: absolute;
-  top: 34px;
-  right: calc(var(--insp-pad) + 8px);
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+/* ---------- close: one control, the x with its key inside ---------- */
 .insp-paper {
   position: relative;
 }
 .insp-close {
-  width: 30px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  font-size: 22px;
+  position: absolute;
+  top: 26px;
+  right: var(--insp-pad);
+  z-index: 1;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 7px;
+  font: inherit;
   line-height: 1;
   color: var(--brand-ink);
   background: var(--brand-paper-2);
   border: 2px solid var(--brand-ink);
   box-shadow: 0 2px 0 var(--brand-ink);
   cursor: pointer;
+}
+.insp-close-x {
+  font-size: 22px;
+}
+.insp-close-key {
+  font-size: 16px;
+  color: var(--mon-ink-3);
+}
+.insp-close:hover .insp-close-key {
+  color: var(--brand-ink);
 }
 .insp-close:hover {
   background: var(--brand-gold);
@@ -222,7 +232,8 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  padding-right: 84px;
+  /* Room for the close control (about 72 px) beside the name. */
+  padding-right: 80px;
 }
 .insp-portrait {
   position: relative;
@@ -470,17 +481,6 @@
 .insp-vital:last-child:nth-child(odd) {
   grid-column: span 2;
 }
-.insp-vital-side {
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-}
-.insp-vital-tx {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
-}
 .insp-k {
   font-size: 16px;
   line-height: 1;
@@ -492,9 +492,9 @@
 .insp-v {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
-  font-size: 26px;
+  font-size: 28px;
   line-height: 1;
   white-space: nowrap;
 }
@@ -515,6 +515,19 @@
 .insp-hot,
 .insp-hot .insp-num small {
   color: var(--mon-rust-ink);
+}
+/* The context ring: track under the fill, the fill's color by how full the context is. */
+.insp .px-ring-off {
+  fill: var(--mon-cream-3);
+}
+.insp .insp-ring-gold .px-ring-on {
+  fill: var(--brand-gold);
+}
+.insp .insp-ring-warm .px-ring-on {
+  fill: var(--mon-rust-light);
+}
+.insp .insp-ring-hot .px-ring-on {
+  fill: var(--brand-rust);
 }
 .insp-cap {
   font-size: 16px;

@@ -95,6 +95,7 @@ export function applyExistingAgents(sink: AgentListSink, msg: AgentListMessage):
 
 /** handshakeDone: the catch-up is over, and what it did not restate goes. */
 export function applyHandshakeDone(sink: AgentListSink): void {
+  reconnectState.caughtUp = true;
   resync.finish(sink.os, resyncSink(sink));
 }
 

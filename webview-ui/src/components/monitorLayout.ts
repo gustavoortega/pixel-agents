@@ -4,8 +4,8 @@
  *
  * - Rail: 360 px from 1600 wide, 300 px from 1100, else slim (76 px: face, glyph, minutes). A
  *   window under 420 tall (the VS Code panel) is slim at any width.
- * - Sheet: takes layout space from 1600 wide (the stage re-fits beside it), 420 px; narrower it
- *   overlays the stage, 360 px.
+ * - Sheet: takes layout space from 1600 wide (the stage re-fits beside it); narrower it overlays
+ *   the stage. 420 px, or 380 px up to 1440 wide.
  * - Full plates (line 2 at whole-map fit) only beside a rail that is not slim, on a stage at
  *   least 420 tall; otherwise the compact rule applies.
  */
@@ -16,8 +16,9 @@ import {
   MONITOR_RAIL_MID_PX,
   MONITOR_RAIL_SLIM_PX,
   MONITOR_RAIL_WIDE_PX,
-  MONITOR_SHEET_INLINE_PX,
-  MONITOR_SHEET_OVERLAY_PX,
+  MONITOR_SHEET_NARROW_MAX_WIDTH_PX,
+  MONITOR_SHEET_NARROW_PX,
+  MONITOR_SHEET_PX,
   MONITOR_WIDE_MIN_WIDTH_PX,
 } from '../constants.js';
 
@@ -52,7 +53,8 @@ export function monitorLayout(windowW: number, windowH: number): MonitorLayout {
     rail,
     railPx,
     sheetMode: wide ? 'inline' : 'overlay',
-    sheetPx: wide ? MONITOR_SHEET_INLINE_PX : MONITOR_SHEET_OVERLAY_PX,
+    sheetPx:
+      windowW <= MONITOR_SHEET_NARROW_MAX_WIDTH_PX ? MONITOR_SHEET_NARROW_PX : MONITOR_SHEET_PX,
     // The stage spans the window's height in the row layout.
     fullPlates: rail !== 'slim' && windowH >= MONITOR_MIN_FULL_HEIGHT_PX,
   };

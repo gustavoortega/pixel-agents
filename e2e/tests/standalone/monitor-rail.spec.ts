@@ -235,11 +235,8 @@ test.describe('Standalone / monitor attention rail', () => {
     await expect.poll(() => shownMinutes(t)).toBe(String(JUMP_MIN));
   });
 
-  // C5.3
-  test('a click on a ticket selects and follows that agent @area:standalone', async ({
-    page,
-    standalone,
-  }) => {
+  // C5.3. The whole map fits the stage here, so the selection starts no follow (Q4.4).
+  test('a click on a ticket selects that agent @area:standalone', async ({ page, standalone }) => {
     const first = await startAgent(page, standalone, 'rail-click-a', {
       name: 'Bash',
       input: { command: 'git push' },
@@ -263,7 +260,7 @@ test.describe('Standalone / monitor attention rail', () => {
       .poll(() =>
         page.evaluate(() => (window as MonitorWindow).__pixelAgentsTestHooks?.getSelection?.()),
       )
-      .toEqual({ selectedAgentId: second, cameraFollowId: second });
+      .toEqual({ selectedAgentId: second, cameraFollowId: null });
     await expect(ticket(page, second)).toHaveAttribute('data-selected', 'true');
     await expect(ticket(page, first)).toHaveAttribute('data-selected', 'false');
   });

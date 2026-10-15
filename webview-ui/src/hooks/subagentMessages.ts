@@ -13,6 +13,7 @@
  * confirmed so the window keeps it.
  */
 
+import { officeNow } from '../office/clock.js';
 import { isCrewParentToolId, type OfficeState } from '../office/engine/officeState.js';
 import { resync } from '../office/engine/resync.js';
 import { extractToolName, isSubagentToolName } from '../office/toolUtils.js';
@@ -28,6 +29,8 @@ export interface SubagentCharacter {
   /** Workflow agent label and phase from SubagentToolStart, for the plate and the full box. */
   plateLabel?: string;
   group?: string;
+  /** Epoch ms (office clock) the helper started, known only for a spawn this page saw live. */
+  startedAt?: number;
 }
 
 /** Sub-tool rows per agent, per parent tool id. */
@@ -135,12 +138,24 @@ export function applyToolStartHelper(sink: SubagentSink, msg: SubagentMessage): 
   if (isSubagentToolName(toolName) && !isTeammateSpawn && (!runInBackground || !parentHasTeam)) {
     const label = status.startsWith('Subtask:') ? status.slice('Subtask:'.length).trim() : '';
     const subId = os.addSubagent(id, toolId, resync.isActive());
+    // Read now: React may run the updater later, when the window has moved on.
+    const start = liveStart();
     sink.updateCharacters((prev) => {
       if (prev.some((s) => s.id === subId)) return prev;
-      return [...prev, { id: subId, parentAgentId: id, parentToolId: toolId, label }];
+      return [...prev, { id: subId, parentAgentId: id, parentToolId: toolId, label, ...start }];
     });
   }
   if (runInBackground && os.getSubagentId(id, toolId) !== null) confirmIfResyncing(toolId);
+}
+
+/**
+ * When a helper created now started: now, for a spawn seen live. The wire carries no start, so a
+ * helper restated by a handshake (the page's first, or a reconnect's) has none: its spawn was
+ * earlier, by an unknown span, and absent is never a guess.
+ */
+function liveStart(): { startedAt?: number } {
+  const live = reconnectState.caughtUp && !reconnectState.resyncPending && !resync.isActive();
+  return live ? { startedAt: officeNow().getTime() } : {};
 }
 
 /** From the reconnect on (a presence broadcast before the handshake counts too), the server
@@ -161,6 +176,7 @@ function createHelper(sink: SubagentSink, msg: SubagentMessage): number {
     label: '',
     ...(typeof msg.label === 'string' && msg.label ? { plateLabel: msg.label } : {}),
     ...(typeof msg.group === 'string' && msg.group ? { group: msg.group } : {}),
+    ...liveStart(),
   };
   sink.updateCharacters((prev) => (prev.some((s) => s.id === entry.id) ? prev : [...prev, entry]));
   // Only watched background spawns and workflow agents are created here: mark the parent tool as

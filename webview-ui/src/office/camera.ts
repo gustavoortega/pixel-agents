@@ -15,6 +15,8 @@ import {
   FIT_MIN_ROOMS,
   FIT_PADDING_CSS_PX,
   LOUNGE_FURNITURE_TYPE,
+  SHEET_FIT_EDGE_CUT,
+  SHEET_MIN_ZOOM,
   TILE_SIZE,
   WALL_FACE_TILES,
   ZOOM_LEVELS,
@@ -240,6 +242,39 @@ export function fitView(
 }
 
 /**
+ * Whether a map of `mapW` x `mapH` device px fits a view of `viewW` x `viewH`: its height whole,
+ * its width cut by at most SHEET_FIT_EDGE_CUT of itself per side.
+ */
+export function mapFitsView(mapW: number, mapH: number, viewW: number, viewH: number): boolean {
+  return mapH <= viewH && mapW - viewW <= 2 * SHEET_FIT_EDGE_CUT * mapW;
+}
+
+/**
+ * The zoom with the inspector sheet open: the largest level at which the whole map fits the view
+ * the sheet leaves (padding kept, the edge cut allowed), but never under `floor`. `fits` is false
+ * when the floor wins and the map overflows that view.
+ */
+export function sheetFit(
+  map: MapSize,
+  canvas: { width: number; height: number },
+  dpr: number,
+  floor: number,
+): { zoom: number; fits: boolean } {
+  const pad = paddingDevPx(dpr);
+  const fitsAt = (zoom: number): boolean =>
+    mapFitsView(
+      map.cols * TILE_SIZE * zoom,
+      map.rows * TILE_SIZE * zoom,
+      canvas.width * dpr - 2 * pad,
+      canvas.height * dpr - 2 * pad,
+    );
+  let best = ZOOM_MIN;
+  for (const level of ZOOM_LEVELS) if (fitsAt(level)) best = level;
+  const zoom = Math.max(best, floor);
+  return { zoom, fits: fitsAt(zoom) };
+}
+
+/**
  * What to do when the fit target changed. Null when the new box (with padding) is already inside
  * the current view. Otherwise the view moves to the box, and the zoom only ever goes OUT: it never
  * zooms back in by itself, so an agent starting work cannot make the room jump closer. The Fit
@@ -289,20 +324,26 @@ function panOfOffset(view: number, mapPx: number, offset: number): number {
   return offset - Math.floor((view - mapPx) / 2);
 }
 
-/** `pan` moved onto the nearest legal one for this zoom: centred per axis when the map is small, void-free when it is big. */
+/**
+ * `pan` moved onto the nearest legal one for this zoom: centred per axis when the map is small,
+ * void-free when it is big. `insetRight` (device px) is the canvas's right edge an overlay covers
+ * (the inspector sheet below 1600 px): the map is centred in, and clamped to, the rest.
+ */
 export function clampPan(
   pan: Point,
   canvas: { width: number; height: number },
   map: MapSize,
   zoom: number,
+  insetRight = 0,
 ): Point {
   const mapW = map.cols * TILE_SIZE * zoom;
   const mapH = map.rows * TILE_SIZE * zoom;
   return {
+    // The offset is the renderer's (full canvas); only the room it may use is narrower.
     x: panOfOffset(
       canvas.width,
       mapW,
-      clampOffset(canvas.width, mapW, offsetOfPan(canvas.width, mapW, pan.x)),
+      clampOffset(canvas.width - insetRight, mapW, offsetOfPan(canvas.width, mapW, pan.x)),
     ),
     y: panOfOffset(
       canvas.height,
@@ -321,7 +362,7 @@ function zoomAbout(anchor: Point, offset: Point, fromZoom: number, toZoom: numbe
   return { x: anchor.x - (anchor.x - offset.x) * k, y: anchor.y - (anchor.y - offset.y) * k };
 }
 
-/** The pan after a zoom change about `anchor`, clamped for the new zoom. */
+/** The pan after a zoom change about `anchor`, clamped for the new zoom (see clampPan for `insetRight`). */
 export function panAfterZoom(
   anchor: Point,
   pan: Point,
@@ -329,6 +370,7 @@ export function panAfterZoom(
   toZoom: number,
   canvas: { width: number; height: number },
   map: MapSize,
+  insetRight = 0,
 ): Point {
   const oldW = map.cols * TILE_SIZE * fromZoom;
   const oldH = map.rows * TILE_SIZE * fromZoom;
@@ -348,6 +390,7 @@ export function panAfterZoom(
     canvas,
     map,
     toZoom,
+    insetRight,
   );
 }
 
@@ -423,6 +466,8 @@ export interface AutoFitCommand {
   panZoom?: number;
   /** Set while a re-centre is still easing: the host keeps drawing every frame until it lands. */
   easing?: true;
+  /** The sheet's fit could not fit the map: the host follows the selected agent instead. */
+  followSelected?: true;
 }
 
 /**
@@ -444,9 +489,31 @@ export class AutoFit {
   private lastSize = '';
   private anim: { from: Point; to: Point; startMs: number } | null = null;
   private zoom = 0;
+  private insetCss = 0;
+  private sheetOpen = false;
+  /** The zoom the sheet's fit never goes under; null until the first step after opening reads it. */
+  private sheetFloor: number | null = null;
 
   get enabled(): boolean {
     return this.on;
+  }
+
+  /** CSS px of the stage's right edge an overlay covers; the view is the rest. */
+  get viewInsetCss(): number {
+    return this.insetCss;
+  }
+
+  /**
+   * The inspector sheet is open, covering `insetPx` CSS px of the stage's right edge (an overlay,
+   * below 1600 px; 0 when it sits beside the stage). While it is open the fit frames the whole
+   * map in the view it leaves (see `sheetFit`), never under the zoom the office had when it
+   * opened nor under SHEET_MIN_ZOOM; when that overflows, the host follows the selected agent. A
+   * change frames again from scratch, as a resize does.
+   */
+  setSheet(open: boolean, insetPx: number): void {
+    if (open && !this.sheetOpen) this.sheetFloor = null;
+    this.sheetOpen = open;
+    this.insetCss = open ? Math.max(0, insetPx) : 0;
   }
 
   /** The user took the camera. */
@@ -470,27 +537,54 @@ export class AutoFit {
 
   step(input: AutoFitInput): AutoFitCommand {
     if (input.editing || input.followed) this.disable();
-    if (!this.on || input.canvas.width <= 0 || input.canvas.height <= 0) return {};
+    const inset = Math.min(this.insetCss, input.canvas.width);
+    if (!this.on || input.canvas.width - inset <= 0 || input.canvas.height <= 0) return {};
     const { map, canvas, dpr } = input;
-    const key = input.target ? JSON.stringify(input.target) : '';
-    const size = `${canvas.width}x${canvas.height}@${dpr}`;
+    // Beside or under the sheet the office is framed whole in what the sheet leaves.
+    const target = this.sheetOpen ? null : input.target;
+    const view = { width: canvas.width - inset, height: canvas.height };
+    const key = target ? JSON.stringify(target) : '';
+    const size = `${canvas.width}x${canvas.height}@${dpr}-${this.sheetOpen ? inset : 'closed'}`;
     if (size !== this.lastSize) {
       this.lastSize = size;
       this.started = false;
     }
-    // Pans leave here already legal for the zoom they are valid at, so the canvas applies them as given.
-    const legal = (center: Point, zoom: number): Point =>
-      clampPan(
-        panForCenter(center, map, zoom),
+    // A centre is the uncovered view's: the pan for the full canvas's centre, shifted left by half
+    // the inset. Pans leave here already legal for the zoom they are valid at, so the canvas
+    // applies them as given.
+    const shift = (inset * dpr) / 2;
+    const legal = (center: Point, zoom: number): Point => {
+      const pan = panForCenter(center, map, zoom);
+      return clampPan(
+        { x: pan.x - shift, y: pan.y },
         { width: canvas.width * dpr, height: canvas.height * dpr },
         map,
         zoom,
+        inset * dpr,
       );
+    };
+
+    if (!this.started && this.sheetOpen) {
+      this.started = true;
+      this.lastKey = key;
+      // The zoom the office had when the sheet opened, read before this fit changes it.
+      this.sheetFloor ??= Math.max(SHEET_MIN_ZOOM, input.zoom);
+      const fit = sheetFit(map, view, dpr, this.sheetFloor);
+      this.zoom = fit.zoom;
+      this.anim = null;
+      const center = { x: (map.cols * TILE_SIZE) / 2, y: (map.rows * TILE_SIZE) / 2 };
+      return {
+        zoom: fit.zoom,
+        pan: legal(center, fit.zoom),
+        panZoom: fit.zoom,
+        ...(fit.fits ? {} : { followSelected: true as const }),
+      };
+    }
 
     if (!this.started) {
       this.started = true;
       this.lastKey = key;
-      const fit = fitView(input.target, map, canvas, dpr);
+      const fit = fitView(target, map, view, dpr);
       this.zoom = fit.zoom;
       this.anim = null;
       return { zoom: fit.zoom, pan: legal(fit.center, fit.zoom), panZoom: fit.zoom };
@@ -503,9 +597,9 @@ export class AutoFit {
       this.lastKey = key;
       const current: FitResult = {
         zoom: this.zoom,
-        center: centerForPan(input.pan, map, this.zoom),
+        center: centerForPan({ x: input.pan.x + shift, y: input.pan.y }, map, this.zoom),
       };
-      const next = refitView(current, input.target, map, canvas, dpr);
+      const next = refitView(current, target, map, view, dpr);
       if (next) {
         if (next.zoom !== this.zoom) {
           this.zoom = next.zoom;

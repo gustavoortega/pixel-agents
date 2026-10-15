@@ -8,6 +8,7 @@ import {
   clampPan as clampPanToView,
   fitTarget,
   followPan,
+  mapFitsView,
   panAfterZoom,
   roomsOf,
   stepZoom,
@@ -60,6 +61,11 @@ interface OfficeCanvasProps {
   activeAreaLabel: string | null;
 }
 
+/** Device px of the canvas's right edge an overlay sheet covers (the auto-fit's view inset). */
+function insetDevPx(autoFit: AutoFit): number {
+  return autoFit.viewInsetCss * (window.devicePixelRatio || 1);
+}
+
 export function OfficeCanvas({
   officeState,
   onClick,
@@ -103,7 +109,8 @@ export function OfficeCanvas({
   // off every drawn frame. The loop runs at the busier of this and the office's own level.
   const canvasActivityRef = useRef<ActivityLevel>('idle');
 
-  // Legal pan for the current zoom: a small map stays centred, a big one never shows void.
+  // Legal pan for the current zoom: a small map stays centred, a big one never shows void, both
+  // in the part of the canvas an overlay sheet leaves uncovered.
   const clampPan = useCallback(
     (px: number, py: number): { x: number; y: number } => {
       const canvas = canvasRef.current;
@@ -114,9 +121,10 @@ export function OfficeCanvas({
         { width: canvas.width, height: canvas.height },
         { cols: layout.cols, rows: layout.rows },
         zoom,
+        insetDevPx(autoFit),
       );
     },
-    [officeState, zoom],
+    [officeState, zoom, autoFit],
   );
 
   // A zoom change keeps the world point under its anchor still: the viewport centre for the
@@ -130,16 +138,17 @@ export function OfficeCanvas({
     const layout = officeState.getLayout();
     const map = { cols: layout.cols, rows: layout.rows };
     const view = { width: canvas.width, height: canvas.height };
+    const inset = insetDevPx(autoFit);
     const pending = pendingFitRef.current;
     if (pending && pending.panZoom === zoom) {
-      panRef.current = clampPanToView(pending.pan, view, map, zoom);
+      panRef.current = clampPanToView(pending.pan, view, map, zoom, inset);
       pendingFitRef.current = null;
     } else {
-      const anchor = zoomAnchorRef.current ?? { x: view.width / 2, y: view.height / 2 };
-      panRef.current = panAfterZoom(anchor, panRef.current, prev, zoom, view, map);
+      const anchor = zoomAnchorRef.current ?? { x: (view.width - inset) / 2, y: view.height / 2 };
+      panRef.current = panAfterZoom(anchor, panRef.current, prev, zoom, view, map, inset);
     }
     zoomAnchorRef.current = null;
-  }, [zoom, officeState, panRef]);
+  }, [zoom, officeState, panRef, autoFit]);
 
   // Resize canvas backing store to device pixels (no DPR transform on ctx)
   const resizeCanvas = useCallback(() => {
@@ -275,6 +284,19 @@ export function OfficeCanvas({
           }
         }
 
+        // A follow while the whole map fits the view (its outer wall may be cut) barely moves it
+        // and would only switch the fit off: a selection follows only a map bigger than the view.
+        if (officeState.cameraFollowId !== null) {
+          const l = officeState.getLayout();
+          const fits = mapFitsView(
+            l.cols * TILE_SIZE * zoom,
+            l.rows * TILE_SIZE * zoom,
+            w - insetDevPx(autoFit),
+            h,
+          );
+          if (fits) officeState.cameraFollowId = null;
+        }
+
         // Fit to activity: frame the rooms where agents work; any manual camera move switched it off.
         {
           const layoutForFit = officeState.getLayout();
@@ -296,6 +318,8 @@ export function OfficeCanvas({
             followed: officeState.cameraFollowId !== null || !!officeState.greeterCameraTarget,
           });
           if (cmd.easing) canvasActivity = 'active';
+          // The sheet keeps the office's size over showing all of it: frame its agent instead.
+          if (cmd.followSelected) officeState.cameraFollowId = officeState.selectedAgentId;
           if (cmd.zoom !== undefined && cmd.zoom !== zoom) onAutoZoom(cmd.zoom);
           if (cmd.pan && cmd.panZoom !== undefined) {
             if (cmd.panZoom === zoom) panRef.current = cmd.pan;
@@ -316,9 +340,11 @@ export function OfficeCanvas({
           const layout = officeState.getLayout();
           const mapW = layout.cols * TILE_SIZE * zoom;
           const mapH = layout.rows * TILE_SIZE * zoom;
+          // Centred in the view an overlay sheet leaves uncovered.
+          const inset = insetDevPx(autoFit);
           const follow = followPan(
             panRef.current,
-            { x: mapW / 2 - cameraFocus.x * zoom, y: mapH / 2 - cameraFocus.y * zoom },
+            { x: mapW / 2 - cameraFocus.x * zoom - inset / 2, y: mapH / 2 - cameraFocus.y * zoom },
             dt,
             (p) =>
               clampPanToView(
@@ -326,6 +352,7 @@ export function OfficeCanvas({
                 { width: w, height: h },
                 { cols: layout.cols, rows: layout.rows },
                 zoom,
+                inset,
               ),
           );
           panRef.current = follow.pan;

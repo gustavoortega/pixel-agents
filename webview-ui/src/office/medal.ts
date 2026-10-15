@@ -56,37 +56,55 @@ export function medalIsHot(fraction: number | null): boolean {
   return fraction !== null && fraction >= MEDAL_HOT_FRACTION;
 }
 
+/** One pixel of the medal's 12 px grid: the ring filled or its track, the hole, the tier glyph's
+ *  fill or highlight, or nothing (outside the ring). */
+export type MedalCell = 'on' | 'off' | 'hole' | 'f' | 'h' | null;
+
+/** The medal's pixel at (x, y) for a ring filled to `filled` (0..1, clockwise from twelve). */
+export function medalCell(x: number, y: number, filled: number, tier: ModelTier | null): MedalCell {
+  const c = MEDAL_GRID / 2;
+  const dx = x + 0.5 - c;
+  const dy = y + 0.5 - c;
+  const d = Math.hypot(dx, dy);
+  if (d > MEDAL_RING_OUTER) return null;
+  if (d < MEDAL_RING_INNER) {
+    const offset = (MEDAL_GRID - 6) / 2;
+    const g = tier === null ? undefined : TIER_GLYPH[tier][y - offset]?.charAt(x - offset);
+    return g === 'f' || g === 'h' ? g : 'hole';
+  }
+  let a = Math.atan2(dx, -dy) / (2 * Math.PI);
+  if (a < 0) a += 1;
+  return a < filled ? 'on' : 'off';
+}
+
 /**
  * The medal as rows of runs on the 12 px grid. Each pixel is the ring (filled or track), the hole,
  * or the glyph; outside the ring is empty.
  */
 export function medalRuns(spec: MedalSpec): MedalRun[] {
-  const c = MEDAL_GRID / 2;
   const filled = spec.fraction === null ? 0 : medalPercent(spec.fraction) / 100;
   const ring = medalIsHot(spec.fraction) ? MEDAL_RING_HOT_COLOR : MEDAL_RING_FILL_COLOR;
-  const glyph = spec.tier === null ? null : TIER_GLYPH[spec.tier];
-  const offset = (MEDAL_GRID - 6) / 2;
+  const colorOf = (cell: MedalCell): string | null => {
+    switch (cell) {
+      case 'on':
+        return ring;
+      case 'off':
+        return MEDAL_RING_TRACK_COLOR;
+      case 'hole':
+        return MEDAL_HOLE_COLOR;
+      case 'f':
+        return spec.tier === null ? MEDAL_HOLE_COLOR : MEDAL_TIER_FILL[spec.tier];
+      case 'h':
+        return spec.tier === null ? MEDAL_HOLE_COLOR : MEDAL_TIER_HI[spec.tier];
+      default:
+        return null;
+    }
+  };
   const runs: MedalRun[] = [];
   for (let y = 0; y < MEDAL_GRID; y++) {
     let run: MedalRun | null = null;
     for (let x = 0; x < MEDAL_GRID; x++) {
-      const dx = x + 0.5 - c;
-      const dy = y + 0.5 - c;
-      const d = Math.hypot(dx, dy);
-      let color: string | null = null;
-      if (d <= MEDAL_RING_OUTER) {
-        if (d < MEDAL_RING_INNER) {
-          color = MEDAL_HOLE_COLOR;
-          const g = glyph?.[y - offset]?.charAt(x - offset);
-          if (spec.tier !== null && g === 'f') color = MEDAL_TIER_FILL[spec.tier];
-          if (spec.tier !== null && g === 'h') color = MEDAL_TIER_HI[spec.tier];
-        } else {
-          // Clockwise from twelve o'clock, 0..1.
-          let a = Math.atan2(dx, -dy) / (2 * Math.PI);
-          if (a < 0) a += 1;
-          color = a < filled ? ring : MEDAL_RING_TRACK_COLOR;
-        }
-      }
+      const color = colorOf(medalCell(x, y, filled, spec.tier));
       if (run && run.color === color && run.x + run.w === x) {
         run.w++;
         continue;
