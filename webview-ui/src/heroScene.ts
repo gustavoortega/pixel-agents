@@ -425,11 +425,35 @@ export const MONITOR_WORKFLOW = {
   runId: 'monitor-run',
   name: 'review-pr',
   helpers: [
-    { agentId: 'a2', label: 'security pass', group: 'review' },
-    { agentId: 'a3', label: 'api contract check', group: 'review' },
-    { agentId: 'a4', label: 'test coverage', group: 'review' },
+    { agentId: 'a2', label: 'security pass', group: 'review', startedMinAgo: 17 },
+    { agentId: 'a3', label: 'api contract check', group: 'review', startedMinAgo: 12 },
+    { agentId: 'a4', label: 'test coverage', group: 'review', startedMinAgo: 6 },
   ],
 } as const;
+
+/** Barbara's two sub-agents: the spawn's tool id, task, current tool, minutes since it started. */
+const MONITOR_SUBAGENTS = [
+  ['monitor-5-sub-1', 'Map the call sites', 'Reading events.ts', 11],
+  ['monitor-5-sub-2', 'Draft the migration', 'Editing migrate.sql', 4],
+] as const;
+
+/**
+ * When, on the scene's clock, the helper a message creates started, or undefined for a message
+ * that creates none. The wire carries no helper start: the page stamps one only on a spawn it sees
+ * live, so the stage dispatches these at that earlier office time.
+ */
+export function monitorHelperStart(msg: ServerMessage, baseMs: number): number | undefined {
+  let min: number | undefined;
+  if (msg.type === 'subagentPresent') {
+    const wf = MONITOR_WORKFLOW;
+    min = wf.helpers.find(
+      (h) => msg.parentToolId === `${WORKFLOW_PARENT_TOOL_ID_PREFIX}${wf.runId}:${h.agentId}`,
+    )?.startedMinAgo;
+  } else if (msg.type === 'agentToolStart') {
+    min = MONITOR_SUBAGENTS.find(([toolId]) => msg.toolId === toolId)?.[3];
+  }
+  return min === undefined ? undefined : baseMs - min * MIN_MS;
+}
 
 /**
  * What the scene sends after the layout loads, in the order the real server would, with every
@@ -541,6 +565,14 @@ export function monitorMessages(baseMs: number): ServerMessage[] {
       group: h.group,
     });
   }
+  // One of them at a tool, so the inspector's rows are not three identical `thinking` chips.
+  out.push({
+    type: 'subagentToolStart',
+    id: wf.leadId,
+    parentToolId: `${WORKFLOW_PARENT_TOOL_ID_PREFIX}${wf.runId}:a3`,
+    toolId: 'monitor-4-a3-run',
+    status: 'Running: npm run lint:openapi',
+  });
   out.push({
     type: 'workflowRun',
     id: wf.leadId,
@@ -572,11 +604,7 @@ export function monitorMessages(baseMs: number): ServerMessage[] {
   });
 
   // Barbara: two sub-agents at work.
-  for (const [n, task, tool] of [
-    [1, 'Map the call sites', 'Reading events.ts'],
-    [2, 'Draft the migration', 'Editing migrate.sql'],
-  ] as const) {
-    const toolId = `monitor-5-sub-${n}`;
+  for (const [toolId, task, tool] of MONITOR_SUBAGENTS) {
     out.push({
       type: 'agentToolStart',
       id: 5,
@@ -630,15 +658,29 @@ export function monitorMessages(baseMs: number): ServerMessage[] {
 }
 
 /**
- * Pins the scene's clock and returns the minute it starts on (what the messages are relative to)
- * with a function that restores the real clock.
+ * Pins the scene's clock and returns the minute it starts on (what the messages are relative to),
+ * a function that runs `fn` with the office clock held at `ms` (a helper's spawn, stamped by the
+ * page from that clock) and a function that restores the real clock.
  */
 export function startMonitorStage(nowMs: () => number = Date.now): {
   baseMs: number;
+  at: (ms: number, fn: () => void) => void;
   stop: () => void;
 } {
-  overrideOfficeClock(() => monitorClock(nowMs()));
+  const clock = (): Date => monitorClock(nowMs());
+  overrideOfficeClock(clock);
   const start = officeNow();
   start.setSeconds(0, 0);
-  return { baseMs: start.getTime(), stop: () => overrideOfficeClock(null) };
+  return {
+    baseMs: start.getTime(),
+    at: (ms, fn) => {
+      overrideOfficeClock(() => new Date(ms));
+      try {
+        fn();
+      } finally {
+        overrideOfficeClock(clock);
+      }
+    },
+    stop: () => overrideOfficeClock(null),
+  };
 }

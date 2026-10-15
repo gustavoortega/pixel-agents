@@ -271,6 +271,8 @@ test.describe('Standalone / monitor attention rail', () => {
     page,
     standalone,
   }) => {
+    // The branch is on the stub, which only the 360 px rail shows.
+    await page.setViewportSize({ width: 1920, height: 1080 });
     const id = await promptedTranscriptAgent(
       page,
       standalone,
@@ -291,6 +293,7 @@ test.describe('Standalone / monitor attention rail', () => {
     const reason = t.locator('[data-part="reason"]');
     const name = t.locator('[data-part="name"]');
     await expect(where).toHaveText('feat/secret-launch');
+    await expect(where).toBeVisible();
     expect(await colorOf(where)).not.toBe(TRANSPARENT);
 
     await page.keyboard.press('p');
@@ -345,6 +348,8 @@ test.describe('Standalone / monitor attention rail', () => {
  * reads: FS Pixel Sans draws caps 7/16 em tall, so 12 px type (caps 0.7 x 12 px) needs 19.2 px.
  */
 const MIN_RAIL_FONT_PX = (12 * 0.7 * 16) / 7;
+/** R2: how tall FS Pixel Sans reads per CSS px, rounded down from that 0.625. */
+const READS_AS = 0.6;
 
 async function smallestRailText(page: Page): Promise<{ px: number; text: string }> {
   return page.evaluate(() => {
@@ -373,8 +378,10 @@ test.describe('Standalone / monitor rail type', () => {
   });
 
   // Q2.1: a permission ticket, a stuck one (with its reason's tail), the minutes' unit, the stub
-  // and the Pace header all on screen, at both rail widths.
-  test('no rail text reads under 12 px beside the 1920 and the 1280 office @area:standalone', async ({
+  // and the Pace header all on screen, at both rail widths. R2: beside the 1920 office a name
+  // reads 16 px, a reason 20 and the stub 12; below 1400 wide the stub, which would only fit cut,
+  // is gone.
+  test('no rail text reads under 12 px beside the 1920 and the 1280 office, and the 1920 rail reads from across the room @area:standalone', async ({
     page,
     standalone,
   }) => {
@@ -390,7 +397,6 @@ test.describe('Standalone / monitor rail type', () => {
       '6f1c1d2e-0000-4000-8000-0000000002a1',
     );
     await expect(ticket(page, stuck).locator('.tk-why small')).toHaveText('no edits');
-    await expect(ticket(page, stuck).locator('.tk-stub')).toBeVisible();
     await expect(page.getByTestId('pace-panel')).toContainText('limits off');
 
     for (const [width, height, rail] of [
@@ -403,6 +409,22 @@ test.describe('Standalone / monitor rail type', () => {
       expect(smallest.px, `"${smallest.text}" at ${width}`).toBeGreaterThanOrEqual(
         MIN_RAIL_FONT_PX,
       );
+      const stub = ticket(page, stuck).locator('.tk-stub');
+      if (width >= 1400) {
+        await expect(stub).toBeVisible();
+        for (const [part, px] of [
+          ['.tk-name', 16],
+          ['.tk-why', 20],
+          ['.tk-stub', 12],
+        ] as const) {
+          const size = await ticket(page, stuck)
+            .locator(part)
+            .evaluate((e) => parseFloat(getComputedStyle(e).fontSize));
+          expect(size * READS_AS, `${part} at ${width}`).toBeGreaterThanOrEqual(px);
+        }
+      } else {
+        await expect(stub).toBeHidden();
+      }
     }
   });
 });
