@@ -6,8 +6,21 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import {
+  DESK_HIGHLIGHT_INK,
+  DESK_HIGHLIGHT_STUCK_COLOR,
+  DESK_HIGHLIGHT_STUCK_FILL,
+  DESK_HIGHLIGHT_WAIT_COLOR,
+  DESK_HIGHLIGHT_WAIT_FILL,
+} from '../src/constants.js';
 import { crewBannerSize, crewBannerView, placeCrewBanner } from '../src/office/crewBanner.js';
-import { attentionTone, deskHighlights, type HighlightSeat } from '../src/office/deskHighlight.js';
+import {
+  attentionTone,
+  deskHighlightFill,
+  deskHighlightFrame,
+  deskHighlights,
+  type HighlightSeat,
+} from '../src/office/deskHighlight.js';
 import { placeTags, type Rect, type TagItem } from '../src/office/labelLayout.js';
 
 const T = 16;
@@ -78,28 +91,33 @@ describe('Q3.1 the desk that lights', () => {
 
 /**
  * A top room as the bundled office has it, scaled to a zoom: a wall band of two tiles with
- * windows, four face-on agents one pod (4 tiles) apart, their tags as wide as a long state reads.
+ * windows, four face-on agents one pod (4 tiles) apart at desks two tiles deep, their tags as wide
+ * as a long state reads. Each tag's slots: under its desk, then above its head.
  */
-function topRow(zoom: number) {
+function topRow(zoom: number, tagW = 120) {
   const z = (v: number) => v * zoom;
   const room: Rect = { x: 0, y: 0, w: z(17 * T), h: z(8 * T) };
   const windows: Rect[] = [7, 13].map((c) => ({ x: z(c * T), y: 0, w: z(2 * T), h: z(2 * T) }));
   const agents = [2, 6, 10, 14].map((col, i) => {
     const headTop = z(2 * T) + 13;
+    const body = { x: z(col * T), y: headTop, w: z(T), h: z(T + 5) };
+    const desk = { x: z((col - 1) * T), y: headTop, w: z(3 * T), h: z(3 * T) - 13 };
+    const tagH = 26;
     return {
       id: i + 1,
-      body: { x: z(col * T), y: headTop, w: z(T), h: z(T + 5) },
+      body,
+      desk,
       item: {
         id: i + 1,
         rank: 1,
         col,
         row: 3,
-        x: z(col * T + T / 2),
-        bottom: headTop - 6,
-        w: 130,
-        h: 26,
-        tagH: 26,
-        feetY: headTop + z(T + 5) + 6,
+        w: tagW,
+        tagH,
+        slots: [
+          { x: z(col * T + T / 2), y: desk.y + desk.h + 4, h: tagH, below: true, anchor: desk },
+          { x: z(col * T + T / 2), y: headTop - 6 - tagH, h: tagH, below: false, anchor: body },
+        ],
         bounds: room,
       } satisfies TagItem,
     };
@@ -107,31 +125,70 @@ function topRow(zoom: number) {
   return { room, windows, agents };
 }
 
-const SOLVER = { step: 8, maxSteps: 12, pad: 3, attach: 14, sideCost: 1.5 };
+const SOLVER = { step: 8, leaderAt: 8, reach: 24, farReach: 64, pad: 3, sideCost: 1.5 };
 
 describe('the tag solver', () => {
   it.each([2, 3, 4])(
-    'at zoom %i every tag is placed, none on another, a body or a window',
+    'at zoom %i every tag goes under its own desk, none on another, a body or a window',
     (zoom) => {
-      const { windows, agents } = topRow(zoom);
+      const { windows, agents } = topRow(zoom, zoom * 40);
       const bodies = agents.map((a) => a.body);
       const placed = placeTags(
         agents.map((a) => a.item),
         [...bodies, ...windows],
         SOLVER,
       );
-      const tags = agents.map((a) => placed.get(a.id)?.tag);
-      expect(tags.every((t) => t !== undefined && t !== null)).toBe(true);
-      const rects = tags as Rect[];
+      const hits = agents.map((a) => placed.get(a.id));
+      expect(hits.every((h) => h?.below && !h.leader)).toBe(true);
+      const rects = hits.map((h) => h!.tag);
       for (const [i, t] of rects.entries()) {
         for (const o of [...rects.slice(i + 1), ...bodies, ...windows])
           expect(hit(t, o)).toBe(false);
-        // Still over its own character.
-        const x = agents[i].item.x;
-        expect(t.x < x && x < t.x + t.w).toBe(true);
+        // Under its own desk, still over its own character.
+        const { desk, item } = agents[i];
+        expect(t.y).toBeGreaterThanOrEqual(desk.y + desk.h);
+        expect(t.x < item.slots[0].x && item.slots[0].x < t.x + t.w).toBe(true);
       }
     },
   );
+
+  it('a tag whose desk slot is taken goes above the head; one moved past 8 px hangs from a leader', () => {
+    const { windows, agents } = topRow(3);
+    const [a] = agents;
+    const blocked = { ...a.desk, y: a.desk.y + a.desk.h, h: 60 };
+    const above = placeTags([a.item], [a.body, ...windows, blocked], SOLVER).get(a.id);
+    expect(above?.below).toBe(false);
+    expect(above?.leader).toBe(false);
+    expect(above!.tag.y + above!.tag.h).toBeLessThanOrEqual(a.body.y);
+    // Both slots taken where they stand: the nearest free spot, 16 px down past the block.
+    const lower = { ...blocked, h: 12 + 4 + 26 };
+    const head = { x: a.body.x - 60, y: 0, w: a.body.w + 120, h: a.body.y };
+    const moved = placeTags([a.item], [a.body, lower, head], SOLVER).get(a.id);
+    expect(moved?.shift).toBeGreaterThan(8);
+    expect(moved?.leader).toBe(true);
+  });
+
+  it('a tag never leaves its room, even when its slot hangs past the room edge', () => {
+    const room = { x: 0, y: 0, w: 200, h: 100 };
+    const desk = { x: 140, y: 40, w: 60, h: 50 };
+    const item: TagItem = {
+      id: 1,
+      rank: 1,
+      col: 0,
+      row: 0,
+      w: 80,
+      tagH: 20,
+      // Under the desk is past the room's bottom; the head slot is past its right wall.
+      slots: [
+        { x: 170, y: 94, h: 20, below: true, anchor: desk },
+        { x: 170, y: 14, h: 20, below: false, anchor: desk },
+      ],
+      bounds: room,
+    };
+    const p = placeTags([item], [desk], SOLVER).get(1);
+    expect(p).not.toBeNull();
+    expect(inside(p!.tag, room)).toBe(true);
+  });
 
   it('a tag with no free spot in its room is not placed at all', () => {
     const room = { x: 0, y: 0, w: 100, h: 60 };
@@ -140,15 +197,44 @@ describe('the tag solver', () => {
       rank: 1,
       col: 0,
       row: 0,
-      x: 50,
-      bottom: 30,
       w: 80,
-      h: 20,
       tagH: 20,
-      feetY: 40,
+      slots: [{ x: 50, y: 10, h: 20, below: false, anchor: room }],
       bounds: room,
     };
     expect(placeTags([item], [room], SOLVER).get(1)).toBeNull();
+  });
+});
+
+describe('R1.3 the lit desk is the loudest thing in the room', () => {
+  const r = { x: 100, y: 50, w: 96, h: 120 };
+  it.each([1, 2])(
+    'at dpr %i a 4 px outline in the tile color, a 1 px ink inset and a wash',
+    (dpr) => {
+      for (const [tone, color, wash] of [
+        ['wait', DESK_HIGHLIGHT_WAIT_COLOR, DESK_HIGHLIGHT_WAIT_FILL],
+        ['stuck', DESK_HIGHLIGHT_STUCK_COLOR, DESK_HIGHLIGHT_STUCK_FILL],
+      ] as const) {
+        const ops = deskHighlightFrame(r, tone, 1, dpr);
+        const outline = ops.filter((o) => o.color === color);
+        expect(outline).toHaveLength(4);
+        // Top and bottom bars are the outline's thickness tall, the sides as wide.
+        expect(outline.map((o) => Math.min(o.w, o.h))).toEqual([4, 4, 4, 4].map((t) => t * dpr));
+        const ink = ops.filter((o) => o.color === DESK_HIGHLIGHT_INK);
+        expect(ink.map((o) => Math.min(o.w, o.h))).toEqual([dpr, dpr, dpr, dpr]);
+        // The ink runs inside the outline, on the desk's own edge.
+        expect(ink[0].y).toBe(r.y);
+        expect(deskHighlightFill(r, tone)).toEqual({ color: wash, ...r });
+        // A 12% wash: the carpet still reads through it.
+        expect(wash).toMatch(/, 0\.12\)$/);
+      }
+    },
+  );
+
+  it('pulses: the halo shows on one frame and not the other', () => {
+    const halo = (frame: 0 | 1) =>
+      deskHighlightFrame(r, 'wait', frame, 1).filter((o) => o.color.startsWith('rgba')).length;
+    expect([halo(0), halo(1)]).toEqual([4, 0]);
   });
 });
 
@@ -175,7 +261,7 @@ describe('Q3.3 the crew banner on its wall', () => {
     const band: Rect = { x: 0, y: 0, w: z(12 * T), h: z(2 * T) };
     const room: Rect = { x: 0, y: 0, w: z(12 * T), h: z(10 * T) };
     const heads = [3, 7].map((c) => ({ x: z(c * T), y: z(4 * T) }));
-    const size = crewBannerSize(view, true);
+    const size = crewBannerSize(view, 'wall');
     // The largest scale that fits the band, as the overlay asks for it.
     const k = Math.min(1.5, (band.h - 4) / (size.h + 4));
     const placed = placeCrewBanner({

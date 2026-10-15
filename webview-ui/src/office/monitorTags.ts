@@ -8,39 +8,42 @@ import { spriteWorldHeight, spriteWorldWidth } from '../../../core/src/assets/ar
 import {
   BUBBLE_VERTICAL_OFFSET_PX,
   OVERLAY_STACK_GAP_PX,
+  PIXEL_FONT_CAP_EM,
+  PIXEL_FONT_DESCENT_EM,
   PLAQUE_BORDER_PX,
-  PLAQUE_FOLDER_FONT_PX,
-  PLAQUE_FOLDER_LINE_PX,
+  PLAQUE_LINE_GAP_PX,
   PLAQUE_PAD_X_PX,
   PLAQUE_PAD_Y_PX,
-  PLAQUE_TITLE_FONT_PX,
-  PLAQUE_TITLE_LINE_PX,
-  TAG_ATTACH_PX,
+  TAG_DESK_GAP_PX,
+  TAG_FAR_REACH_PX,
   TAG_HEAD_GAP_PX,
-  TAG_MAX_STEPS,
+  TAG_LEADER_AT_PX,
+  TAG_LEADER_PX,
   TAG_PAD_PX,
+  TAG_REACH_PX,
   TAG_SIDE_COST,
   TAG_STEP_PX,
   TILE_SIZE,
   WALL_FACE_TILES,
   WINDOW_TYPE_PREFIX,
 } from '../constants.js';
-import type { CrewBannerView } from './crewBanner.js';
+import type { CrewBannerForm, CrewBannerView } from './crewBanner.js';
 import { sheetFrameIndex } from './engine/characters.js';
 import type { OfficeState } from './engine/officeState.js';
 import { ANCHORS } from './flair/accessories.js';
 import { fxTextBox } from './fx/fxTextBox.js';
 import { type AgentHealthView, healthMark } from './health.js';
 import {
-  type LabelItem,
   placeTags,
   type Rect,
   roomFloorRect,
   type TagItem,
+  tagLeader,
+  type TagObstacle,
   type TagPlacement,
   withTopWallFace,
 } from './labelLayout.js';
-import { pixelTextWidth, spriteHeadTopY } from './nameplate.js';
+import { type MonitorType, pixelTextWidth, spriteHeadTopY } from './nameplate.js';
 import type { OverlayProjection } from './projection.js';
 import { seatedBubbleOffsetPx, seatedDrawOffsetPx } from './seatDraw.js';
 import { BUBBLE_WAITING_SPRITE } from './sprites/spriteData.js';
@@ -85,6 +88,7 @@ export interface PlacedBanner {
   /** Its own scale: on a wall it may be drawn smaller than the plates to fit the band. */
   scale: number;
   onWall: boolean;
+  form: CrewBannerForm;
   /** The wall band it was tried on, CSS px (null in a compact office or a room at the map top). */
   band: Rect | null;
 }
@@ -107,6 +111,9 @@ export interface PlacedPlaque {
   label: string;
   folder: string | null;
   rect: Rect;
+  /** Its type, CSS px: title and folder sizes, each line trimmed to the caps. */
+  title: { font: number; line: number };
+  sub: { font: number; line: number } | null;
 }
 
 /** The folder a room maps (`+N` when several do), from the folder -> areas mappings. */
@@ -118,25 +125,50 @@ function plaqueFolder(label: string, mappings: Record<string, string[]>): string
   return folders.length > 1 ? `${folders[0]} +${folders.length - 1}` : folders[0];
 }
 
+/** A plaque title is set in caps with this much letter spacing (em). */
+export const PLAQUE_TITLE_TRACKING_EM = 0.05;
+
+/** A plaque's box at a type size, CSS px: the caps-trimmed title, then the folder with room for
+ *  its descenders. */
+export function plaqueSize(
+  label: string,
+  folder: string | null,
+  type: MonitorType,
+): Pick<PlacedPlaque, 'title' | 'sub'> & { w: number; h: number } {
+  const title = { font: type.plaqueTitle, line: Math.ceil(type.plaqueTitle * PIXEL_FONT_CAP_EM) };
+  const sub = folder
+    ? {
+        font: type.plaqueFolder,
+        line: Math.ceil(type.plaqueFolder * (PIXEL_FONT_CAP_EM + PIXEL_FONT_DESCENT_EM)),
+      }
+    : null;
+  const titleW =
+    pixelTextWidth(label.toUpperCase(), title.font) +
+    Math.ceil(label.length * PLAQUE_TITLE_TRACKING_EM * title.font);
+  const w =
+    Math.max(titleW, folder && sub ? pixelTextWidth(folder, sub.font) : 0) +
+    2 * (PLAQUE_PAD_X_PX + PLAQUE_BORDER_PX);
+  const h =
+    title.line +
+    (sub ? PLAQUE_LINE_GAP_PX + sub.line : 0) +
+    2 * (PLAQUE_PAD_Y_PX + PLAQUE_BORDER_PX);
+  return { title, sub, w, h };
+}
+
 /** Every Area's plaque, CSS px: on its room's top wall half a tile in from its first column,
  *  centred in the band (on the floor's top edge where the room has no wall above it). */
-export function roomPlaques(officeState: OfficeState, project: OverlayProjection): PlacedPlaque[] {
+export function roomPlaques(
+  officeState: OfficeState,
+  project: OverlayProjection,
+  type: MonitorType,
+): PlacedPlaque[] {
   const layout = officeState.getLayout();
   const out: PlacedPlaque[] = [];
   for (const area of layout.areas ?? []) {
     if (!layout.areaTiles?.includes(area.label)) continue;
     const floor = roomFloorRect(layout.areaTiles, layout.cols, layout.rows, area.label);
     const folder = plaqueFolder(area.label, officeState.areaMappings);
-    const w =
-      Math.max(
-        pixelTextWidth(area.label, PLAQUE_TITLE_FONT_PX),
-        folder ? pixelTextWidth(folder, PLAQUE_FOLDER_FONT_PX) : 0,
-      ) +
-      2 * (PLAQUE_PAD_X_PX + PLAQUE_BORDER_PX);
-    const h =
-      PLAQUE_TITLE_LINE_PX +
-      (folder ? PLAQUE_FOLDER_LINE_PX : 0) +
-      2 * (PLAQUE_PAD_Y_PX + PLAQUE_BORDER_PX);
+    const { w, h, title, sub } = plaqueSize(area.label, folder, type);
     const bandWorld = wallBand(floor);
     const band = bandWorld ? screenRect(project, bandWorld) : null;
     const x = project.toScreenX(floor.x + TILE_SIZE / 2);
@@ -144,21 +176,36 @@ export function roomPlaques(officeState: OfficeState, project: OverlayProjection
       band && band.h >= h
         ? Math.round(band.y + (band.h - h) / 2)
         : project.toScreenY(floor.y) - (band ? Math.min(h, band.h) : 0);
-    out.push({ label: area.label, folder, rect: { x, y, w, h } });
+    out.push({ label: area.label, folder, rect: { x, y, w, h }, title, sub });
   }
   return out;
 }
 
 /** What the last monitor layout placed, page CSS px: the e2e reads it to check no tag covers
- *  another or a face (canvas faces have no DOM). */
+ *  another or a face (canvas faces have no DOM), that each stays in its room and near what it
+ *  hangs from unless a leader joins them. */
 export interface TagLayoutSnapshot {
-  tags: Array<{ id: number; rect: Rect }>;
+  tags: Array<{
+    id: number;
+    rect: Rect;
+    /** Its room (floor and top wall), and the desk unit or sprite it hangs from. */
+    room: Rect;
+    anchor: Rect;
+    leader: boolean;
+  }>;
   heads: Array<{ id: number; rect: Rect }>;
+  badges: Array<{ id: number; rect: Rect }>;
   banners: Array<{ leadId: number; rect: Rect; onWall: boolean; band: Rect | null }>;
   plaques: Array<{ label: string; rect: Rect }>;
 }
 
-let lastTagLayout: TagLayoutSnapshot = { tags: [], heads: [], banners: [], plaques: [] };
+let lastTagLayout: TagLayoutSnapshot = {
+  tags: [],
+  heads: [],
+  badges: [],
+  banners: [],
+  plaques: [],
+};
 
 export function lastMonitorTagLayout(): TagLayoutSnapshot {
   return lastTagLayout;
@@ -178,19 +225,31 @@ function headRect(project: OverlayProjection, c: Character): Rect {
   return screenRect(project, { x: c.x - TILE_SIZE / 2, y: top, w: TILE_SIZE, h: FACE_WORLD_PX });
 }
 
+/** One character's tag for the monitor pass: its box, CSS px, and its solver rank. */
+export interface MonitorTagInput {
+  id: number;
+  rank: number;
+  w: number;
+  h: number;
+}
+
 /**
- * Beside the rail: every tag through the solver (placeTags) against every sprite body, the
- * windows, the plaques, the banners and the tags placed before it. What rides on a tag (the FX
- * text, then the bubble) is placed with it, so the stack above a head keeps its order; a tag under
- * the feet leaves them over the head. Writes the bubble lifts and weather anchors like the classic
+ * Beside the rail: the crew banners on their walls first, then every tag through the solver
+ * (placeTags): under its desk (or feet), else above its head, clear of every sprite body, window,
+ * plaque, banner, desk badge and other tag, inside its room. What rides on a tag above the head
+ * (the FX text, then the bubble) is placed with it, so the stack keeps its order; a tag under the
+ * desk leaves them over the head. Writes the bubble lifts and weather anchors like the classic
  * pass, and the snapshot the e2e reads.
  */
 export function layoutMonitorTags(input: {
   officeState: OfficeState;
   project: OverlayProjection;
   container: DOMRect;
-  items: readonly LabelItem[];
-  obstacles: readonly Rect[];
+  items: readonly MonitorTagInput[];
+  /** What no tag covers; one with an owner (a lit desk's frame) is in every tag's way but its own. */
+  obstacles: readonly TagObstacle[];
+  /** The desk badges (`! 12m` on a lit desk's outline): obstacles, and in the snapshot. */
+  badges: ReadonlyArray<{ id: number; rect: Rect }>;
   /** Places the crew banners clear of `avoid` (and, on a wall, of `wallAvoid`). */
   placeBanners: (avoid: readonly Rect[], wallAvoid: readonly Rect[]) => PlacedBanner[];
   plaques: readonly PlacedPlaque[];
@@ -198,6 +257,7 @@ export function layoutMonitorTags(input: {
 }): {
   fxSlots: Map<number, Rect>;
   tagPlacements: Map<number, TagPlacement | null>;
+  leaders: Map<number, Rect>;
   banners: PlacedBanner[];
 } {
   const { officeState, project } = input;
@@ -216,6 +276,7 @@ export function layoutMonitorTags(input: {
         h: spriteWorldHeight(f.sprite),
       }),
     );
+  const badgeRects = input.badges.map((b) => b.rect);
   const fxBoxes = new Map<number, { w: number; h: number }>();
   for (const e of officeState.fx.active) {
     const box = fxTextBox(e, input.fxScale);
@@ -227,6 +288,8 @@ export function layoutMonitorTags(input: {
     h: spriteWorldHeight(BUBBLE_WAITING_SPRITE) * zoomCss,
   };
   const riders = new Map<number, { fx: { w: number; h: number } | null; bubble: boolean }>();
+  // A bubble drawn where it is by default (its tag under the desk) is in every other tag's way.
+  const bubbleSpots: TagObstacle[] = [];
   const items: TagItem[] = [];
   for (const it of input.items) {
     const ch = officeState.characters.get(it.id);
@@ -238,18 +301,35 @@ export function layoutMonitorTags(input: {
       officeState.health.get(it.id),
     );
     riders.set(it.id, { fx, bubble });
-    const w = Math.max(it.w, fx?.w ?? 0, bubble ? bubbleBox.w : 0);
+    const body = bodyRect(project, ch);
+    const cx = project.toScreenX(ch.x);
+    if (bubble) {
+      const bottom = project.toScreenY(ch.y + seatedBubbleOffsetPx(ch) - BUBBLE_VERTICAL_OFFSET_PX);
+      bubbleSpots.push({
+        owner: it.id,
+        x: cx - bubbleBox.w / 2,
+        y: bottom - bubbleBox.h,
+        w: bubbleBox.w,
+        h: bubbleBox.h,
+      });
+    }
+    const unitWorld = officeState.deskUnitOf(ch);
+    const unit = unitWorld ? screenRect(project, unitWorld) : body;
+    const groupH = it.h + (fx ? gap + fx.h : 0) + (bubble ? gap + bubbleBox.h : 0);
+    const headTop = project.toScreenY(
+      spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch), napHeadBobPx(ch)),
+    );
     items.push({
       id: it.id,
-      rank: it.rank ?? 0,
-      col: it.col,
-      row: it.row,
-      x: it.x,
-      bottom: it.y + it.h,
-      w,
+      rank: it.rank,
+      col: ch.tileCol,
+      row: ch.tileRow,
+      w: Math.max(it.w, fx?.w ?? 0, bubble ? bubbleBox.w : 0),
       tagH: it.h,
-      h: it.h + (fx ? gap + fx.h : 0) + (bubble ? gap + bubbleBox.h : 0),
-      feetY: project.toScreenY(ch.y + seatedDrawOffsetPx(ch)) + TAG_HEAD_GAP_PX,
+      slots: [
+        { x: cx, y: unit.y + unit.h + TAG_DESK_GAP_PX, h: it.h, below: true, anchor: unit },
+        { x: cx, y: headTop - TAG_HEAD_GAP_PX - groupH, h: groupH, below: false, anchor: body },
+      ],
       bounds: screenRect(
         project,
         withTopWallFace(
@@ -260,30 +340,39 @@ export function layoutMonitorTags(input: {
   }
   const opts = {
     step: TAG_STEP_PX,
-    maxSteps: TAG_MAX_STEPS,
+    leaderAt: TAG_LEADER_AT_PX,
+    reach: TAG_REACH_PX,
+    farReach: TAG_FAR_REACH_PX,
     pad: TAG_PAD_PX,
-    attach: TAG_ATTACH_PX,
     sideCost: TAG_SIDE_COST,
   };
-  const fixed = [...input.obstacles, ...bodies, ...windows];
-  // The agents' tags first: a banner never takes the only spot an agent's tag had. Then the
-  // banners, clear of those tags and of every body; then the helpers' tags, clear of it all.
+  // The banners first, on their walls: a tag finds another spot more easily than a banner does.
+  // Then the agents' tags, then the helpers', clear of it all.
+  const banners = input.placeBanners([...input.obstacles, ...bodies, ...badgeRects], badgeRects);
+  const fixed: TagObstacle[] = [
+    ...input.obstacles,
+    ...bodies,
+    ...windows,
+    ...badgeRects,
+    ...banners.map((b) => b.rect),
+    ...bubbleSpots,
+  ];
   const solved = placeTags(
     items.filter((it) => it.rank < HELPER_RANK),
     fixed,
     opts,
   );
   const agentGroups = [...solved.values()].flatMap((p) => (p ? [p.group] : []));
-  const banners = input.placeBanners([...agentGroups, ...bodies], agentGroups);
   const helpers = placeTags(
     items.filter((it) => it.rank >= HELPER_RANK),
-    [...fixed, ...agentGroups, ...banners.map((b) => b.rect)],
+    [...fixed, ...agentGroups],
     opts,
   );
   for (const [id, p] of helpers) solved.set(id, p);
 
   // The group is as wide as its widest rider; the tag itself keeps its own width, centred in it.
   const tagPlacements = new Map<number, TagPlacement | null>();
+  const leaders = new Map<number, Rect>();
   const fxSlots = new Map<number, Rect>();
   officeState.bubbleLift.clear();
   officeState.weatherAnchor.clear();
@@ -302,6 +391,8 @@ export function layoutMonitorTags(input: {
     const cx = hit.group.x + hit.group.w / 2;
     const tag = { x: cx - it.w / 2, y: hit.tag.y, w: it.w, h: hit.tag.h };
     tagPlacements.set(it.id, { ...hit, tag });
+    const leader = hit.leader ? tagLeader(tag, hit.anchor, TAG_LEADER_PX) : null;
+    if (leader) leaders.set(it.id, leader);
     const headTop = project.toScreenY(spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch)));
     let top = hit.below ? headTop : tag.y;
     if (ride.fx) {
@@ -325,9 +416,23 @@ export function layoutMonitorTags(input: {
     w: r.w,
     h: r.h,
   });
+  const rooms = new Map(items.map((it) => [it.id, it.bounds] as const));
   lastTagLayout = {
-    tags: [...tagPlacements].flatMap(([id, p]) => (p ? [{ id, rect: page(p.tag) }] : [])),
+    tags: [...tagPlacements].flatMap(([id, p]) =>
+      p
+        ? [
+            {
+              id,
+              rect: page(p.tag),
+              room: page(rooms.get(id) ?? p.tag),
+              anchor: page(p.anchor),
+              leader: leaders.has(id),
+            },
+          ]
+        : [],
+    ),
     heads: chars.map((c) => ({ id: c.id, rect: page(headRect(project, c)) })),
+    badges: input.badges.map((b) => ({ id: b.id, rect: page(b.rect) })),
     banners: banners.map((b) => ({
       leadId: b.leadId,
       rect: page(b.rect),
@@ -336,5 +441,5 @@ export function layoutMonitorTags(input: {
     })),
     plaques: input.plaques.map((p) => ({ label: p.label, rect: page(p.rect) })),
   };
-  return { fxSlots, tagPlacements, banners };
+  return { fxSlots, tagPlacements, leaders, banners };
 }

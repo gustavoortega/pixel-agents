@@ -8,6 +8,7 @@ import {
   CHARACTER_SPRITE_HEIGHT_PX,
   MEDAL_COMPACT_PX,
   MEDAL_FULL_PX,
+  MONITOR_TYPE_LARGE_MIN_CSS_ZOOM,
   NAMEPLATE_BG,
   NAMEPLATE_BORDER_COLOR,
   NAMEPLATE_BORDER_PX,
@@ -50,11 +51,10 @@ import {
   PLATE_STATE_COLOR,
   PLATE_STUB_EM,
   TAG_BORDER_PX,
-  TAG_FONT_PX,
-  TAG_LINE_PX,
-  TAG_MEDAL_PX,
+  TAG_LARGE,
   TAG_PAD_Y_PX,
   TAG_SHADOW_PX,
+  TAG_SMALL,
   TILE_SIZE,
 } from '../constants.js';
 import { ANCHORS } from './flair/accessories.js';
@@ -158,6 +158,27 @@ export function isMonitorTag(compact: boolean): boolean {
   return monitorFullPlates && !fullPlates && !compact;
 }
 
+/** The type sizes of the monitor's office text (tags, the desk badge, plaques), CSS px. */
+export type MonitorType = { readonly [K in keyof typeof TAG_LARGE]: number };
+
+/** The large set where the map is drawn at 3 CSS px per world px or more (1920 beside the rail),
+ *  the small one below (1280 at zoom 2), where the large tags would be wider than a desk. */
+export function monitorType(cssZoom: number): MonitorType {
+  return cssZoom >= MONITOR_TYPE_LARGE_MIN_CSS_ZOOM ? TAG_LARGE : TAG_SMALL;
+}
+
+let tagType: MonitorType = TAG_LARGE;
+
+/** The overlay sets the map's CSS zoom (zoom / dpr) before it measures any tag. */
+export function setMonitorTagZoom(cssZoom: number): void {
+  tagType = monitorType(cssZoom);
+}
+
+/** The monitor type set the overlay last chose. */
+export function currentMonitorType(): MonitorType {
+  return tagType;
+}
+
 /** The sizes a plate is drawn with: compact, a monitor tag, a helper's one line, or the full plate. */
 export function plateMetrics(c: Pick<NameplateContent, 'helper'>, compact: boolean) {
   const box = {
@@ -178,10 +199,10 @@ export function plateMetrics(c: Pick<NameplateContent, 'helper'>, compact: boole
       border: TAG_BORDER_PX,
       padY: TAG_PAD_Y_PX,
       shadow: TAG_SHADOW_PX,
-      line1: TAG_LINE_PX,
-      nameFont: TAG_FONT_PX,
-      stateFont: TAG_FONT_PX,
-      medal: TAG_MEDAL_PX,
+      line1: tagType.line,
+      nameFont: tagType.name,
+      stateFont: tagType.state,
+      medal: tagType.medal,
     };
   if (c.helper)
     return {

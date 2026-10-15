@@ -2316,9 +2316,24 @@ export class OfficeState {
 
   /** The lit desks, world px, for the renderer. */
   deskHighlights(): DeskHighlight[] {
+    return this.deskUnits(this.litAgents());
+  }
+
+  /**
+   * An agent's desk unit, world px: its desk, its seat and its sprite while it sits there (what a lit
+   * desk frames). Null while it is not at its seat.
+   */
+  deskUnitOf(ch: Character): Rect | null {
+    const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
+    if (!seat || ch.state === CharacterState.WALK) return null;
+    if (seat.seatCol !== ch.tileCol || seat.seatRow !== ch.tileRow) return null;
+    return this.deskUnits([{ ch, tone: 'wait' }])[0]?.rect ?? null;
+  }
+
+  private deskUnits(list: Array<{ ch: Character; tone: 'wait' | 'stuck' }>): DeskHighlight[] {
     const agents: HighlightAgent[] = [];
     const seats = new Map<string, HighlightSeat>();
-    for (const { ch, tone } of this.litAgents()) {
+    for (const { ch, tone } of list) {
       const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
       if (seat && ch.seatId) {
         seats.set(ch.seatId, {

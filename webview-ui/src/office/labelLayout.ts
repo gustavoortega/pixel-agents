@@ -256,6 +256,18 @@ export function roomFloorRect(
   };
 }
 
+/** Where a tag may hang, CSS px: its centre x and the top of its group (the tag, and on an above
+ *  slot what rides on it), and what it hangs from (`anchor`: the desk unit under it, the sprite
+ *  over it). */
+export interface TagSlot {
+  x: number;
+  y: number;
+  /** The group's height at this slot: the tag alone under the desk, tag and riders above. */
+  h: number;
+  below: boolean;
+  anchor: Rect;
+}
+
 /** One character's tag for the monitor's solver, CSS px. */
 export interface TagItem {
   id: number;
@@ -263,16 +275,10 @@ export interface TagItem {
   rank: number;
   col: number;
   row: number;
-  /** Centre x of the tag. */
-  x: number;
-  /** Bottom of the group at its natural spot: a gap above the head. */
-  bottom: number;
-  /** The group: the tag at its bottom and what rides on it (the bubble), `tagH` of it the tag. */
+  /** Its slots, preferred first: under the desk (or the feet), then above the head. */
+  slots: readonly TagSlot[];
   w: number;
-  h: number;
   tagH: number;
-  /** Top of the room under the feet, where the tag alone goes when nothing above is free. */
-  feetY: number;
   /** Where the tag may go: its room's floor and top wall. */
   bounds: Rect;
 }
@@ -280,34 +286,63 @@ export interface TagItem {
 export interface TagPlacement {
   /** The tag itself. */
   tag: Rect;
-  /** The tag and what rides on it (the tag alone below the feet). */
+  /** The tag and what rides on it (the tag alone under the desk). */
   group: Rect;
   below: boolean;
+  /** How far it moved from its slot, CSS px. */
+  shift: number;
+  /** What it hangs from (its slot's anchor), and whether a leader joins them. */
+  anchor: Rect;
+  leader: boolean;
 }
 
 export interface TagSolverOptions {
   step: number;
-  maxSteps: number;
+  /** Farthest move from a slot that still hangs free of a leader (`leaderAt` and less) or within
+   *  reach, and how far it looks at all (`farReach`), CSS px. */
+  leaderAt: number;
+  reach: number;
+  farReach: number;
   /** Air kept from obstacles and from other tags. */
   pad: number;
-  /** A tag slid sideways keeps at least this much of itself on each side of its centre x, so
-   *  it still hangs over its own character. */
-  attach: number;
   /** A sideways step costs this many vertical ones. */
   sideCost: number;
 }
 
+/** An obstacle; one with an `owner` is in the way of every tag but that character's own. */
+export type TagObstacle = Rect & { owner?: number };
+
+/** The gap between two rects, CSS px: 0 when they meet. */
+export function rectGap(a: Rect, b: Rect): number {
+  const dx = Math.max(0, b.x - (a.x + a.w), a.x - (b.x + b.w));
+  const dy = Math.max(0, b.y - (a.y + a.h), a.y - (b.y + b.h));
+  return Math.hypot(dx, dy);
+}
+
+/** Every move of at most `reach`, in whole steps, cheapest first. */
+function movesWithin(step: number, reach: number, sideCost: number): Array<[number, number]> {
+  const n = Math.floor(reach / step);
+  const out: Array<[number, number]> = [];
+  for (let i = -n; i <= n; i++)
+    for (let j = -n; j <= n; j++)
+      if (Math.hypot(i * step, j * step) <= reach) out.push([i * step, j * step]);
+  return out.sort(
+    (a, b) =>
+      Math.abs(a[1]) + sideCost * Math.abs(a[0]) - (Math.abs(b[1]) + sideCost * Math.abs(b[0])),
+  );
+}
+
 /**
- * The monitor's tags: each one goes to its natural spot above the head, else the nearest free spot
- * above it, moving up in `step` px (and sideways, at a higher cost, while the tag still covers
- * its own x), else under the feet going down the same way. Free means clear of every obstacle
- * (sprite bodies, windows, plaques, banners) and of the tags placed before it, by `pad`, and
- * inside its room. A tag with no free spot gets null: it is not drawn, so no tag ever covers
- * another or a face.
+ * The monitor's tags. Each one tries its slots in order (under the desk, then above the head):
+ * first at most `leaderAt` from a slot, then within `reach`, then within `farReach`, cheapest move
+ * first (vertical before sideways). Free means clear of every obstacle (sprite bodies, windows,
+ * plaques, banners, desk badges) and of the tags placed before it, by `pad`, and inside its room.
+ * A tag moved more than `leaderAt`, or left farther than `reach` from its anchor, gets a leader. A
+ * tag with no free spot gets null: it is not drawn, so no tag ever covers another or a face.
  */
 export function placeTags(
   items: readonly TagItem[],
-  obstacles: readonly Rect[],
+  obstacles: readonly TagObstacle[],
   opts: TagSolverOptions,
 ): Map<number, TagPlacement | null> {
   const order = [...items].sort(
@@ -316,49 +351,68 @@ export function placeTags(
   const placed: Rect[] = [];
   const out = new Map<number, TagPlacement | null>();
   const pad = opts.pad;
-  const free = (r: Rect): boolean => {
-    const grown = { x: r.x - pad, y: r.y - pad, w: r.w + 2 * pad, h: r.h + 2 * pad };
-    return (
-      !obstacles.some((o) => intersects(grown, o)) && !placed.some((p) => intersects(grown, p))
-    );
-  };
+  const near = movesWithin(opts.step, opts.leaderAt, opts.sideCost);
+  const mid = movesWithin(opts.step, opts.reach, opts.sideCost).filter(
+    ([dx, dy]) => Math.hypot(dx, dy) > opts.leaderAt,
+  );
+  const far = movesWithin(opts.step, opts.farReach, opts.sideCost).filter(
+    ([dx, dy]) => Math.hypot(dx, dy) > opts.reach,
+  );
   for (const it of order) {
     const b = it.bounds;
-    const slide = (cx: number): number =>
-      it.w >= b.w ? b.x + b.w / 2 : Math.max(b.x + it.w / 2, Math.min(cx, b.x + b.w - it.w / 2));
-    const sides = Math.max(0, Math.floor((it.w / 2 - opts.attach) / opts.step));
-    // Every (vertical, sideways) step pair, cheapest first.
-    const moves: Array<[number, number]> = [];
-    for (let k = 0; k <= opts.maxSteps; k++) {
-      for (let s = -sides; s <= sides; s++) moves.push([k, s]);
-    }
-    moves.sort(
-      (m, n) => m[0] + opts.sideCost * Math.abs(m[1]) - (n[0] + opts.sideCost * Math.abs(n[1])),
-    );
+    const free = (r: Rect): boolean => {
+      if (r.x < b.x || r.y < b.y || r.x + r.w > b.x + b.w || r.y + r.h > b.y + b.h) return false;
+      const grown = { x: r.x - pad, y: r.y - pad, w: r.w + 2 * pad, h: r.h + 2 * pad };
+      return (
+        !obstacles.some((o) => o.owner !== it.id && intersects(grown, o)) &&
+        !placed.some((p) => intersects(grown, p))
+      );
+    };
     let hit: TagPlacement | null = null;
-    for (const [k, s] of moves) {
-      const top = it.bottom - it.h - k * opts.step;
-      const x = slide(it.x + s * opts.step) - it.w / 2;
-      const group = { x, y: top, w: it.w, h: it.h };
-      if (top >= b.y && free(group)) {
-        hit = { group, tag: { x, y: top + it.h - it.tagH, w: it.w, h: it.tagH }, below: false };
-        break;
-      }
-    }
-    for (const [k, s] of hit ? [] : moves) {
-      const tag = {
-        x: slide(it.x + s * opts.step) - it.w / 2,
-        y: it.feetY + k * opts.step,
-        w: it.w,
-        h: it.tagH,
-      };
-      if (tag.y + tag.h <= b.y + b.h && free(tag)) {
-        hit = { group: tag, tag, below: true };
-        break;
+    search: for (const moves of [near, mid, far]) {
+      for (const slot of it.slots) {
+        for (const [dx, dy] of moves) {
+          const group = { x: slot.x - it.w / 2 + dx, y: slot.y + dy, w: it.w, h: slot.h };
+          if (!free(group)) continue;
+          const tag = { x: group.x, y: group.y + slot.h - it.tagH, w: it.w, h: it.tagH };
+          const shift = Math.hypot(dx, dy);
+          hit = {
+            tag,
+            group,
+            below: slot.below,
+            shift,
+            anchor: slot.anchor,
+            leader: shift > opts.leaderAt || rectGap(tag, slot.anchor) > opts.reach,
+          };
+          break search;
+        }
       }
     }
     out.set(it.id, hit);
     if (hit) placed.push(hit.group);
   }
   return out;
+}
+
+/**
+ * The leader from a tag to what it hangs from, CSS px: one `width` px segment, vertical at the
+ * anchor's centre x (kept over the tag) when one is above the other, else horizontal. Null when
+ * they meet.
+ */
+export function tagLeader(tag: Rect, anchor: Rect, width: number): Rect | null {
+  if (rectGap(tag, anchor) === 0) return null;
+  const half = width / 2;
+  if (tag.y >= anchor.y + anchor.h || tag.y + tag.h <= anchor.y) {
+    const cx = Math.max(tag.x + 4, Math.min(anchor.x + anchor.w / 2, tag.x + tag.w - 4));
+    const x = Math.round(cx - half);
+    const above = tag.y + tag.h <= anchor.y;
+    const y0 = above ? tag.y + tag.h : anchor.y + anchor.h;
+    const y1 = above ? anchor.y : tag.y;
+    return { x, y: Math.round(y0), w: width, h: Math.round(y1 - y0) };
+  }
+  const cy = Math.max(tag.y + 2, Math.min(anchor.y + anchor.h / 2, tag.y + tag.h - 2));
+  const left = tag.x + tag.w <= anchor.x;
+  const x0 = left ? tag.x + tag.w : anchor.x + anchor.w;
+  const x1 = left ? anchor.x : tag.x;
+  return { x: Math.round(x0), y: Math.round(cy - half), w: Math.round(x1 - x0), h: width };
 }

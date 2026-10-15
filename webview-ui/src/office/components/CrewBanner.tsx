@@ -15,7 +15,12 @@ import {
   CREW_BANNER_SHADOW_PX,
   CREW_BANNER_Z_INDEX,
 } from '../../constants.js';
-import { CREW_BANNER_LABEL, type CrewBannerPhase, type CrewBannerView } from '../crewBanner.js';
+import {
+  CREW_BANNER_LABEL,
+  type CrewBannerForm,
+  type CrewBannerPhase,
+  type CrewBannerView,
+} from '../crewBanner.js';
 import type { Rect } from '../labelLayout.js';
 
 function PhaseChip({ phase }: { phase: CrewBannerPhase }) {
@@ -63,7 +68,7 @@ export function CrewBanner({
   rect,
   scale,
   leadId,
-  wall = false,
+  form = 'free',
 }: {
   view: CrewBannerView;
   /** The reserved box, its hard shadow included. */
@@ -71,9 +76,20 @@ export function CrewBanner({
   /** The plates' scale: the banner is authored at 1 and scaled about its top centre. */
   scale: number;
   leadId: number;
-  /** Hung on the room's top wall: the counts share the chips' row (crewBannerSize's wall form). */
-  wall?: boolean;
+  /** crewBannerSize's form: on a wall the counts share the chips' row (`wall`), or the name and
+   *  the chips share one row and the counts are left out (`row`). */
+  form?: CrewBannerForm;
 }) {
+  const wall = form !== 'free';
+  const row = form === 'row';
+  const chips = view.phases.map((p, i) => (
+    <span key={`${i}:${p.name}`} className="flex items-center" style={{ gap: 6 }}>
+      {i > 0 && (
+        <span style={{ fontSize: CREW_BANNER_CHIP_FONT_PX, color: CREW_BANNER_INK_3 }}>{'›'}</span>
+      )}
+      <PhaseChip phase={p} />
+    </span>
+  ));
   const w = rect.w / scale;
   const h = rect.h / scale - CREW_BANNER_SHADOW_PX;
   return (
@@ -97,12 +113,13 @@ export function CrewBanner({
       data-testid="crew-banner"
       data-lead-id={leadId}
       data-wall={wall ? 'true' : 'false'}
+      data-form={form}
     >
       <div
-        className="flex items-baseline whitespace-nowrap leading-none"
-        style={{ height: CREW_BANNER_ROW1_PX, gap: 6, paddingTop: 3 }}
+        className={`flex ${row ? 'items-center' : 'items-baseline'} whitespace-nowrap leading-none`}
+        style={{ height: CREW_BANNER_ROW1_PX, gap: 6, paddingTop: row ? 0 : 3 }}
       >
-        {view.named && (
+        {view.named && !row && (
           <span
             style={{
               fontSize: CREW_BANNER_LABEL_FONT_PX,
@@ -123,22 +140,21 @@ export function CrewBanner({
         <span style={{ fontSize: CREW_BANNER_COUNT_FONT_PX, color: CREW_BANNER_INK_2 }}>
           {'·'} {view.lead}
         </span>
+        {row &&
+          view.phases
+            .filter((p) => p.newest)
+            .map((p) => (
+              <span key={p.name} className="flex items-center" style={{ marginLeft: 6 }}>
+                <PhaseChip phase={p} />
+              </span>
+            ))}
       </div>
-      {(view.phases.length > 0 || (wall && view.counts)) && (
+      {!row && (view.phases.length > 0 || (wall && view.counts)) && (
         <div
           className="flex items-center whitespace-nowrap"
           style={{ height: CREW_BANNER_ROW2_PX, gap: 6 }}
         >
-          {view.phases.map((p, i) => (
-            <span key={`${i}:${p.name}`} className="flex items-center" style={{ gap: 6 }}>
-              {i > 0 && (
-                <span style={{ fontSize: CREW_BANNER_CHIP_FONT_PX, color: CREW_BANNER_INK_3 }}>
-                  {'›'}
-                </span>
-              )}
-              <PhaseChip phase={p} />
-            </span>
-          ))}
+          {chips}
           {wall && view.counts && (
             <span
               className="leading-none"

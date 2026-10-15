@@ -109,7 +109,7 @@ describe('plate kind by zoom level', () => {
     },
   );
 
-  it('beside the rail, whole-map fit (zoom 2, dpr 1) shows a one-line tag: name and state at 14 px, no line 2', () => {
+  it('beside the rail, whole-map fit (zoom 2, dpr 1) shows a one-line tag in the small set: name 16 px, state 14 px, no line 2', () => {
     // The shell sets the rule from monitorLayout: 1920 x 1080 and 1280 x 800 both have a full rail.
     setMonitorFullPlates(true);
     try {
@@ -120,12 +120,11 @@ describe('plate kind by zoom level', () => {
       expect(html).toContain('data-testid="plate-state"');
       expect(html).not.toContain('data-testid="plate-line2"');
       expect(html).not.toContain(TITLE);
-      // A tag is drawn at its size: no scale, every line-1 font at 14 px.
+      // A tag is drawn at its size: no scale; at 2 CSS px per world px the small type set.
       expect(html).toContain('scale(1)');
       const plate = html.slice(html.indexOf('class="nameplate '));
       const sizes = [...plate.matchAll(/font-size:(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
-      expect(sizes.length).toBeGreaterThanOrEqual(2);
-      for (const px of sizes) expect(px).toBe(14);
+      expect(new Set(sizes)).toEqual(new Set([16, 14]));
     } finally {
       setMonitorFullPlates(false);
     }

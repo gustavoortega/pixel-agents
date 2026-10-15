@@ -4,7 +4,20 @@
  * the renderer draws the rects this returns.
  */
 
-import { DESK_HIGHLIGHT_BLINK_MS, TILE_SIZE } from '../constants.js';
+import {
+  DESK_HIGHLIGHT_BLINK_MS,
+  DESK_HIGHLIGHT_HALO_PX,
+  DESK_HIGHLIGHT_INK,
+  DESK_HIGHLIGHT_INSET_PX,
+  DESK_HIGHLIGHT_OUTLINE_PX,
+  DESK_HIGHLIGHT_STUCK_COLOR,
+  DESK_HIGHLIGHT_STUCK_FILL,
+  DESK_HIGHLIGHT_STUCK_HALO,
+  DESK_HIGHLIGHT_WAIT_COLOR,
+  DESK_HIGHLIGHT_WAIT_FILL,
+  DESK_HIGHLIGHT_WAIT_HALO,
+  TILE_SIZE,
+} from '../constants.js';
 import type { Rect } from './labelLayout.js';
 
 export type AttentionTone = 'wait' | 'stuck';
@@ -91,4 +104,54 @@ export function deskHighlights(
 /** Which of the two frames shows at `nowMs`: 0 with the halo, 1 the outline alone. */
 export function highlightFrame(nowMs: number): 0 | 1 {
   return Math.floor(nowMs / DESK_HIGHLIGHT_BLINK_MS) % 2 === 0 ? 0 : 1;
+}
+
+/** One solid rect to paint, device px. */
+export interface PaintOp {
+  color: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** The four sides of a frame `t` thick around `r`, outside it. */
+function ring(r: Rect, t: number, color: string): PaintOp[] {
+  return [
+    { color, x: r.x - t, y: r.y - t, w: r.w + 2 * t, h: t },
+    { color, x: r.x - t, y: r.y + r.h, w: r.w + 2 * t, h: t },
+    { color, x: r.x - t, y: r.y, w: t, h: r.h },
+    { color, x: r.x + r.w, y: r.y, w: t, h: r.h },
+  ];
+}
+
+/** The faint wash of a lit desk on the carpet, under its furniture and people: `r` device px. */
+export function deskHighlightFill(r: Rect, tone: AttentionTone): PaintOp {
+  return { color: tone === 'stuck' ? DESK_HIGHLIGHT_STUCK_FILL : DESK_HIGHLIGHT_WAIT_FILL, ...r };
+}
+
+/**
+ * A lit desk's frame over the scene, device px: the outline in the rail tile's color around `r`,
+ * an ink line just inside it, and on frame 0 a hard halo outside the outline. Thicknesses are CSS
+ * px times `dpr`, whole device px.
+ */
+export function deskHighlightFrame(
+  r: Rect,
+  tone: AttentionTone,
+  frame: 0 | 1,
+  dpr: number,
+): PaintOp[] {
+  const line = Math.max(1, Math.round(DESK_HIGHLIGHT_OUTLINE_PX * dpr));
+  const inset = Math.max(1, Math.round(DESK_HIGHLIGHT_INSET_PX * dpr));
+  const halo = Math.max(1, Math.round(DESK_HIGHLIGHT_HALO_PX * dpr));
+  const stuck = tone === 'stuck';
+  const inner = { x: r.x + inset, y: r.y + inset, w: r.w - 2 * inset, h: r.h - 2 * inset };
+  const outline = { x: r.x - line, y: r.y - line, w: r.w + 2 * line, h: r.h + 2 * line };
+  return [
+    ...(frame === 0
+      ? ring(outline, halo, stuck ? DESK_HIGHLIGHT_STUCK_HALO : DESK_HIGHLIGHT_WAIT_HALO)
+      : []),
+    ...ring(r, line, stuck ? DESK_HIGHLIGHT_STUCK_COLOR : DESK_HIGHLIGHT_WAIT_COLOR),
+    ...ring(inner, inset, DESK_HIGHLIGHT_INK),
+  ];
 }

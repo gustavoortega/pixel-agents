@@ -37,12 +37,6 @@ import {
   DEAD_CHARACTER_ALPHA,
   DEAD_CHARACTER_FILTER,
   DELETE_BUTTON_BG,
-  DESK_HIGHLIGHT_HALO_PX,
-  DESK_HIGHLIGHT_OUTLINE_PX,
-  DESK_HIGHLIGHT_STUCK_COLOR,
-  DESK_HIGHLIGHT_STUCK_HALO,
-  DESK_HIGHLIGHT_WAIT_COLOR,
-  DESK_HIGHLIGHT_WAIT_HALO,
   DESK_PROP_FEET_INSET_PX,
   DESK_PROP_Z_OFFSET,
   FALLBACK_FLOOR_COLOR,
@@ -85,7 +79,13 @@ import {
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
 import type { CrewLine } from '../crewLines.js';
-import { type DeskHighlight, highlightFrame } from '../deskHighlight.js';
+import {
+  type DeskHighlight,
+  deskHighlightFill,
+  deskHighlightFrame,
+  highlightFrame,
+  type PaintOp,
+} from '../deskHighlight.js';
 import {
   accessoryPlacement,
   accessoryZ,
@@ -1261,9 +1261,45 @@ export function lastDrawnDeskHighlights(): ReadonlyArray<DeskHighlight & { frame
   return drawnDeskHighlights;
 }
 
+/** A lit desk's rect in device px, rounded once. */
+function deskRectDev(h: DeskHighlight, offsetX: number, offsetY: number, zoom: number) {
+  const x = Math.round(offsetX + h.rect.x * zoom);
+  const y = Math.round(offsetY + h.rect.y * zoom);
+  return {
+    x,
+    y,
+    w: Math.round(offsetX + (h.rect.x + h.rect.w) * zoom) - x,
+    h: Math.round(offsetY + (h.rect.y + h.rect.h) * zoom) - y,
+  };
+}
+
+function paint(ctx: CanvasRenderingContext2D, ops: readonly PaintOp[]): void {
+  for (const op of ops) {
+    ctx.fillStyle = op.color;
+    ctx.fillRect(op.x, op.y, op.w, op.h);
+  }
+}
+
+/** The lit desks' wash on the carpet, under the furniture and the people. */
+function renderDeskHighlightFills(
+  ctx: CanvasRenderingContext2D,
+  highlights: readonly DeskHighlight[],
+  offsetX: number,
+  offsetY: number,
+  zoom: number,
+): void {
+  if (highlights.length === 0) return;
+  ctx.save();
+  paint(
+    ctx,
+    highlights.map((h) => deskHighlightFill(deskRectDev(h, offsetX, offsetY, zoom), h.tone)),
+  );
+  ctx.restore();
+}
+
 /**
- * A lit desk: an outline around the desk, its seat and the agent at it, and a hard halo outside
- * the outline on every other half second. Thickness in CSS px, whole device px at any zoom.
+ * A lit desk's frame (deskHighlightFrame) around the desk, its seat and the agent at it, over the
+ * night and the glows; the halo on every other half second.
  *
  * @internal
  */
@@ -1279,27 +1315,9 @@ export function renderDeskHighlights(
   drawnDeskHighlights = highlights.map((h) => ({ ...h, frame }));
   if (highlights.length === 0) return;
   const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
-  const line = Math.max(1, Math.round(DESK_HIGHLIGHT_OUTLINE_PX * dpr));
-  const halo = Math.max(1, Math.round(DESK_HIGHLIGHT_HALO_PX * dpr));
-  const ring = (x: number, y: number, w: number, h: number, t: number): void => {
-    ctx.fillRect(x - t, y - t, w + 2 * t, t);
-    ctx.fillRect(x - t, y + h, w + 2 * t, t);
-    ctx.fillRect(x - t, y, t, h);
-    ctx.fillRect(x + w, y, t, h);
-  };
   ctx.save();
   for (const h of highlights) {
-    const x = Math.round(offsetX + h.rect.x * zoom);
-    const y = Math.round(offsetY + h.rect.y * zoom);
-    const w = Math.round(h.rect.w * zoom);
-    const hh = Math.round(h.rect.h * zoom);
-    const stuck = h.tone === 'stuck';
-    ctx.fillStyle = stuck ? DESK_HIGHLIGHT_STUCK_COLOR : DESK_HIGHLIGHT_WAIT_COLOR;
-    ring(x, y, w, hh, line);
-    if (frame === 0) {
-      ctx.fillStyle = stuck ? DESK_HIGHLIGHT_STUCK_HALO : DESK_HIGHLIGHT_WAIT_HALO;
-      ring(x - line, y - line, w + 2 * line, hh + 2 * line, halo);
-    }
+    paint(ctx, deskHighlightFrame(deskRectDev(h, offsetX, offsetY, zoom), h.tone, frame, dpr));
   }
   ctx.restore();
 }
@@ -1716,7 +1734,8 @@ export function renderFrame(
   const wallInstances = hasWallSprites() ? getWallInstances(tileMap, tileColors, layoutCols) : [];
   const allFurniture = wallInstances.length > 0 ? [...wallInstances, ...furniture] : furniture;
 
-  // Crew lines on the floor: under the furniture and the people, over the carpet
+  // The lit desks' wash and the crew lines on the floor: under the furniture and the people
+  renderDeskHighlightFills(ctx, deskHighlights ?? [], offsetX, offsetY, zoom);
   renderCrewLines(ctx, crewLines ?? [], offsetX, offsetY, zoom);
 
   // Draw walls + furniture + characters (z-sorted)

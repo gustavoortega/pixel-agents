@@ -30,13 +30,25 @@ type OfficeWindow = Window & {
     getDeskHighlights?: () => Array<{ id: number; tone: 'wait' | 'stuck'; rect: Box }>;
     getAgentSeats?: () => Array<{ id: number; seatId: string | null }>;
     getSeats?: () => Array<{ uid: string; col: number; row: number }>;
-    getTagLayout?: () => {
-      heads: Array<{ id: number; rect: Box }>;
-      banners: Array<{ leadId: number; rect: Box }>;
-      plaques: Array<{ label: string; rect: Box }>;
-    };
+    getTagLayout?: () => TagLayout;
   };
 };
+
+interface TagLayout {
+  tags: Array<{ id: number; rect: Box; room: Box; anchor: Box; leader: boolean }>;
+  heads: Array<{ id: number; rect: Box }>;
+  badges: Array<{ id: number; rect: Box }>;
+  banners: Array<{ leadId: number; rect: Box; onWall: boolean; band: Box | null }>;
+  plaques: Array<{ label: string; rect: Box }>;
+}
+
+async function tagLayout(page: Page): Promise<TagLayout> {
+  return page.evaluate(() => {
+    const hooks = (window as OfficeWindow).__pixelAgentsTestHooks;
+    if (!hooks?.getTagLayout) throw new Error('tag layout hook missing');
+    return hooks.getTagLayout();
+  });
+}
 
 async function deliver(page: Page, messages: Array<Record<string, unknown>>): Promise<void> {
   await page.evaluate((msgs) => {
@@ -126,10 +138,11 @@ test.describe('Standalone / monitor office', () => {
 const overlaps = (a: Box, b: Box): boolean =>
   a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
-/** Every drawn tag (DOM) against every other and every face (the hook: faces are canvas), and
- *  the tags, banners and plaques against the stage clock drawn over the map. */
+/** Every drawn tag (DOM) against every other, every face (the hook: faces are canvas) and every
+ *  desk badge, the badges against the faces, and the tags, banners and plaques against the stage
+ *  clock drawn over the map. */
 async function tagCollisions(page: Page): Promise<{ tags: number; hits: string[] }> {
-  const { tags, heads, boards, clock } = await page.evaluate(() => {
+  const { tags, heads, badges, boards, clock } = await page.evaluate(() => {
     const hooks = (window as OfficeWindow).__pixelAgentsTestHooks;
     if (!hooks?.getTagLayout) throw new Error('tag layout hook missing');
     const plates = [
@@ -145,6 +158,7 @@ async function tagCollisions(page: Page): Promise<{ tags: number; hits: string[]
     return {
       tags: plates,
       heads: layout.heads,
+      badges: layout.badges,
       boards: [
         ...layout.banners.map((b) => ({ id: `banner ${b.leadId}`, rect: b.rect })),
         ...layout.plaques.map((p) => ({ id: `plaque ${p.label}`, rect: p.rect })),
@@ -157,7 +171,10 @@ async function tagCollisions(page: Page): Promise<{ tags: number; hits: string[]
     for (const u of tags.slice(i + 1)) if (overlaps(t.rect, u.rect)) hits.push(`${t.id}/${u.id}`);
     for (const f of heads) if (overlaps(t.rect, f.rect)) hits.push(`${t.id} on face ${f.id}`);
     if (clock && overlaps(t.rect, clock)) hits.push(`${t.id} under the clock`);
+    for (const b of badges) if (overlaps(t.rect, b.rect)) hits.push(`${t.id} on badge ${b.id}`);
   }
+  for (const b of badges)
+    for (const f of heads) if (overlaps(b.rect, f.rect)) hits.push(`badge ${b.id} on face ${f.id}`);
   for (const b of boards)
     if (clock && overlaps(b.rect, clock)) hits.push(`${b.id} under the clock`);
   return { tags: tags.length, hits };
@@ -181,13 +198,138 @@ for (const dpr of [1, 2] as const) {
       await page.waitForTimeout(1_500);
       expect((await tagCollisions(page)).hits).toEqual([]);
 
-      // The lead's sheet open: its helpers' tags join in.
+      // The lead's sheet open: its helpers' tags join in, one word on paper each.
       await select(page, SCENE_LEAD_ID, true);
       await expect
         .poll(async () => (await tagCollisions(page)).tags)
         .toBe(SCENE_AGENT_COUNT + SCENE_HELPER_COUNT);
+      const helperWords = await page
+        .locator('[data-testid="agent-overlay"] .nameplate-tag[data-form="helper"]')
+        .allTextContents();
+      expect(helperWords).toHaveLength(SCENE_HELPER_COUNT);
+      for (const w of helperWords) expect(w.trim()).toMatch(/^\S+$/);
       await page.waitForTimeout(1_500);
       expect((await tagCollisions(page)).hits).toEqual([]);
     });
   });
 }
+
+/** How tall type reads in FS Pixel Sans: caps are 7/16 em, where a common font's are about 0.7,
+ *  so a size read as `px` needs `px x 0.7 x 16/7` CSS px (the rail's rule, Q2.1). */
+const readsAs = (cssPx: number): number => (cssPx * 7) / 16 / 0.7;
+
+/** The gap between two boxes, px: 0 when they meet. */
+const gapBetween = (a: Box, b: Box): number =>
+  Math.hypot(
+    Math.max(0, b.x - (a.x + a.w), a.x - (b.x + b.w)),
+    Math.max(0, b.y - (a.y + a.h), a.y - (b.y + b.h)),
+  );
+
+const insideBox = (r: Box, b: Box): boolean =>
+  r.x >= b.x - 0.5 &&
+  r.y >= b.y - 0.5 &&
+  r.x + r.w <= b.x + b.w + 0.5 &&
+  r.y + r.h <= b.y + b.h + 0.5;
+
+test.describe('Standalone / monitor office text', () => {
+  // R1.1: from across the room at 1920 the name reads 14 px, the state and the desk badge 12.
+  test('R1.1 at 1920 the tags read 14 px names and 12 px states, and the desk badges 12 px @area:standalone', async ({
+    page,
+    standalone,
+  }) => {
+    void standalone;
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await deliver(page, monitorSceneMessages(Date.now()));
+    await select(page, null);
+    // The fit lands a frame after the first one, at zoom 3 (1.5x): the type follows the map.
+    await expect(page.getByTestId('zoom-level')).toHaveText('1.5x');
+    await expect.poll(async () => (await tagCollisions(page)).tags).toBe(SCENE_AGENT_COUNT);
+    await page.waitForTimeout(1_000);
+    const sizes = await page.evaluate(() => {
+      const px = (sel: string) =>
+        [...document.querySelectorAll(sel)].map((el) => parseFloat(getComputedStyle(el).fontSize));
+      return {
+        names: px('[data-testid="agent-overlay"] .nameplate-tag [data-testid="plate-name"]'),
+        states: px('[data-testid="agent-overlay"] .nameplate-tag [data-testid="plate-state"]'),
+        badges: px('[data-testid="desk-badge"]'),
+      };
+    });
+    expect(sizes.names).toHaveLength(SCENE_AGENT_COUNT);
+    expect(sizes.states.length).toBeGreaterThan(0);
+    // Two need you and one is stuck in the scene: three lit desks, each with its badge.
+    expect(sizes.badges).toHaveLength(3);
+    for (const n of sizes.names) expect(readsAs(n)).toBeGreaterThanOrEqual(14);
+    for (const s of [...sizes.states, ...sizes.badges])
+      expect(readsAs(s)).toBeGreaterThanOrEqual(12);
+  });
+
+  for (const [width, height] of [
+    [1920, 1080],
+    [1280, 800],
+  ] as const) {
+    // R1.2: a tag stays in its room, and within 24 px of the desk or sprite it hangs from unless
+    // an ink leader joins them.
+    test(`R1.2 at ${width} every tag stays in its room and near its agent, or hangs from a leader @area:standalone`, async ({
+      page,
+      standalone,
+    }) => {
+      void standalone;
+      await page.setViewportSize({ width, height });
+      await deliver(page, monitorSceneMessages(Date.now()));
+      await select(page, null);
+      await expect.poll(async () => (await tagLayout(page)).tags.length).toBe(SCENE_AGENT_COUNT);
+      // The lead's sheet open, so its helpers' tags join in (a bare selection shows its full box).
+      await select(page, SCENE_LEAD_ID, true);
+      await expect
+        .poll(async () => (await tagLayout(page)).tags.length)
+        .toBe(SCENE_AGENT_COUNT + SCENE_HELPER_COUNT);
+      await page.waitForTimeout(1_500);
+      const { tags, heads } = await tagLayout(page);
+      const leaders = await page
+        .locator('[data-testid="tag-leader"]')
+        .evaluateAll((els) => els.map((el) => Number(el.getAttribute('data-agent-id'))));
+      const far: string[] = [];
+      for (const t of tags) {
+        expect(insideBox(t.rect, t.room), `tag ${t.id} inside its room`).toBe(true);
+        // What it hangs from is its own agent: the desk unit or the sprite holds its face.
+        const face = heads.find((h) => h.id === t.id);
+        expect(face && insideBox(face.rect, t.anchor), `tag ${t.id} hangs from its agent`).toBe(
+          true,
+        );
+        if (t.leader) expect(leaders, `tag ${t.id} draws its leader`).toContain(t.id);
+        else if (gapBetween(t.rect, t.anchor) > 24)
+          far.push(`${t.id}: ${gapBetween(t.rect, t.anchor)}`);
+      }
+      expect(far).toEqual([]);
+    });
+  }
+
+  // R1.4: the workflow's banner hangs on a wall at the laptop size too (zoom 2), never over desks.
+  test('R1.4 at 1280x800 the crew banner hangs inside its wall band @area:standalone', async ({
+    page,
+    standalone,
+  }) => {
+    void standalone;
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await deliver(page, monitorSceneMessages(Date.now()));
+    await select(page, null);
+    await expect(page.getByTestId('zoom-level')).toHaveText('1x');
+    await expect.poll(async () => (await tagLayout(page)).banners.length).toBe(1);
+    const [banner] = (await tagLayout(page)).banners;
+    expect(banner.onWall).toBe(true);
+    expect(banner.band).not.toBeNull();
+    expect(insideBox(banner.rect, banner.band!)).toBe(true);
+  });
+
+  // R1.5: an empty office is framed by the same rule as a busy one: the whole map at the largest
+  // level that fits beside the rail, zoom 3 (1.5x) at 1920.
+  test('R1.5 an empty office at 1920 fits the whole map at zoom 3 @area:standalone', async ({
+    page,
+    standalone,
+  }) => {
+    void standalone;
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await expect(page.getByTestId('monitor-rail')).toBeVisible();
+    await expect(page.getByTestId('zoom-level')).toHaveText('1.5x');
+  });
+});
