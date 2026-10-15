@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NAMEPLATE_COMPACT_BG, PLATE_SELECTED_BG } from '../src/constants.js';
 import { ToolOverlay } from '../src/office/components/ToolOverlay.js';
 import { OfficeState } from '../src/office/engine/officeState.js';
-import { plateAnchorAboveY, plateScale } from '../src/office/nameplate.js';
+import { plateAnchorAboveY, plateScale, setMonitorFullPlates } from '../src/office/nameplate.js';
 import type { OfficeLayout } from '../src/office/types.js';
 import { TileType } from '../src/office/types.js';
 
@@ -109,25 +109,27 @@ describe('plate kind by zoom level', () => {
     },
   );
 
-  it.each([
-    [1920, 1080],
-    [1280, 800],
-  ])(
-    'beside the rail (a %i x %i window, dpr 1) whole-map fit (zoom 2) shows name, state and line 2',
-    (innerWidth, innerHeight) => {
-      (globalThis as { window?: unknown }).window = {
-        devicePixelRatio: 1,
-        innerWidth,
-        innerHeight,
-      };
+  it('beside the rail, whole-map fit (zoom 2, dpr 1) shows name, state and line 2, line 1 at 14 px or more', () => {
+    // The shell sets the rule from monitorLayout: 1920 x 1080 and 1280 x 800 both have a full rail.
+    setMonitorFullPlates(true);
+    try {
       const html = overlayHtml(2);
       expect(html).toMatch(/class="nameplate /);
       expect(html).toContain('Ada');
       expect(html).toContain('data-testid="plate-state"');
       expect(html).toContain('data-testid="plate-line2"');
       expect(html).toContain(TITLE);
-    },
-  );
+      // What the eye gets: each line-1 font size times the plate's scale.
+      const scale = Number(/scale\(([\d.]+)\)/.exec(html)?.[1]);
+      const plate = html.slice(html.indexOf('class="nameplate '));
+      const line1 = plate.slice(0, plate.lastIndexOf('<span', plate.indexOf('plate-line2')));
+      const sizes = [...line1.matchAll(/font-size:(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
+      expect(sizes.length).toBeGreaterThanOrEqual(2);
+      for (const px of sizes) expect(px * scale).toBeGreaterThanOrEqual(14);
+    } finally {
+      setMonitorFullPlates(false);
+    }
+  });
 });
 
 describe('plateScale', () => {

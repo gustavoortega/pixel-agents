@@ -28,6 +28,7 @@ import {
   PLATE_FULL_LINE1_PX,
   PLATE_FULL_LINE2_PX,
   PLATE_FULL_MAX_WIDTH_PX,
+  PLATE_FULL_MIN_TEXT_PX,
   PLATE_FULL_MIN_WIDTH_PX,
   PLATE_FULL_NAME_FONT_PX,
   PLATE_FULL_PITCH_TILES,
@@ -82,9 +83,14 @@ export function plateIsCompact(zoom: number): boolean {
 }
 
 /** Scale of full plates beside the rail: the map's CSS px per world px against the reference,
- *  clamped like plateScale. */
+ *  never so small that line-1 text drops under PLATE_FULL_MIN_TEXT_PX, capped like plateScale. */
 export function monitorPlateScale(zoom: number, dpr: number): number {
-  return Math.max(PLATE_SCALE_MIN, Math.min(PLATE_SCALE_MAX, zoom / dpr / PLATE_FULL_REF_CSS_ZOOM));
+  const floor = Math.max(
+    PLATE_SCALE_MIN,
+    PLATE_FULL_MIN_TEXT_PX /
+      Math.min(PLATE_FULL_STATE_FONT_PX, PLATE_FULL_NAME_FONT_PX, PLATE_HELPER_FONT_PX),
+  );
+  return Math.max(floor, Math.min(PLATE_SCALE_MAX, zoom / dpr / PLATE_FULL_REF_CSS_ZOOM));
 }
 
 /** Widest a full plate may be, CSS px: about two desk pitches (neighbours alternate rows), clamped. */

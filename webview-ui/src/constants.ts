@@ -824,11 +824,11 @@ export const MONITOR_RING_HOT_PCT = 85;
 export const PLATE_FULL_LINE1_PX = 28;
 export const PLATE_FULL_LINE2_PX = 20;
 export const PLATE_FULL_NAME_FONT_PX = 20;
-export const PLATE_FULL_STATE_FONT_PX = 15;
+export const PLATE_FULL_STATE_FONT_PX = 16;
 export const PLATE_FULL_SUB_FONT_PX = 14;
 /** A helper's one-line plate: its run label and what it does. */
 export const PLATE_HELPER_LINE_PX = 22;
-export const PLATE_HELPER_FONT_PX = 15;
+export const PLATE_HELPER_FONT_PX = 16;
 /** Horizontal padding inside a plate and the gap between its line-1 items. */
 export const PLATE_PAD_X_PX = 6;
 export const PLATE_ITEM_GAP_PX = 5;
@@ -874,18 +874,18 @@ export const PIXEL_FONT_GLYPH_EM = 0.375;
 export const PIXEL_FONT_NARROW_EM = 0.16;
 export const PIXEL_FONT_WIDE_EM = 0.5625;
 /** The crew banner over a running workflow's helpers. */
-export const CREW_BANNER_LABEL_FONT_PX = 11;
-export const CREW_BANNER_NAME_FONT_PX = 18;
-export const CREW_BANNER_CHIP_FONT_PX = 13;
-export const CREW_BANNER_COUNT_FONT_PX = 13;
-export const CREW_BANNER_ROW1_PX = 24;
-export const CREW_BANNER_ROW2_PX = 22;
-export const CREW_BANNER_ROW3_PX = 17;
+export const CREW_BANNER_LABEL_FONT_PX = 12;
+export const CREW_BANNER_NAME_FONT_PX = 20;
+export const CREW_BANNER_CHIP_FONT_PX = 16;
+export const CREW_BANNER_COUNT_FONT_PX = 16;
+export const CREW_BANNER_ROW1_PX = 27;
+export const CREW_BANNER_ROW2_PX = 25;
+export const CREW_BANNER_ROW3_PX = 20;
 export const CREW_BANNER_PAD_X_PX = 8;
 export const CREW_BANNER_PAD_Y_PX = 4;
 export const CREW_BANNER_BORDER_PX = 3;
 export const CREW_BANNER_SHADOW_PX = 4;
-export const CREW_BANNER_PIP_PX = 6;
+export const CREW_BANNER_PIP_PX = 7;
 export const CREW_BANNER_MAX_PIPS = 6;
 /** Clear space between the banner's bottom and the helpers' heads, CSS px. */
 export const CREW_BANNER_GAP_PX = 6;
@@ -901,6 +901,9 @@ export const CREW_BANNER_INK_3 = '#7a5a3c';
 /** Full plates beside the rail scale with the map's CSS size (zoom / dpr): 1 at this many CSS px
  *  per world px, so a plate keeps its share of the map on a 1x and a 2x screen alike. */
 export const PLATE_FULL_REF_CSS_ZOOM = 2.5;
+/** Smallest line-1 text a full plate beside the rail may draw, CSS px: read from two metres on a
+ *  1080p screen. It floors the plates' scale at the smallest line-1 font. */
+export const PLATE_FULL_MIN_TEXT_PX = 14;
 /** Side-by-side plates keep this much air between them. */
 export const PLATE_SIDE_GAP_PX = 6;
 /** A cut text on a plate (a branch, the state words) keeps at least this much (em), so it still

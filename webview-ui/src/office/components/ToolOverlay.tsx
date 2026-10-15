@@ -949,6 +949,16 @@ export function ToolOverlay({
   // plates never cover each other: the later one in the label order (helpers after agents) goes
   // faint and under, like a plate with no room.
   const faint = new Set<number>();
+  const hidden = new Set<number>();
+  const faceRects = [...officeState.characters.values()].map((c) => ({
+    id: c.id,
+    x: project.toScreenX(c.x) - (FACE_WORLD_PX * zoomCss) / 2,
+    y: project.toScreenY(spriteHeadTopY(c.y, seatedDrawOffsetPx(c))),
+    w: FACE_WORLD_PX * zoomCss,
+    h: FACE_WORLD_PX * zoomCss,
+  }));
+  const intersects = (a: Rect, b: Rect): boolean =>
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
   // The banners were placed in free space first; a plate pushed onto one gives way too.
   const settled: Rect[] = banners.map((b) => b.rect);
   for (const it of [...labelItems].sort(
@@ -957,11 +967,13 @@ export function ToolOverlay({
     const dx = clamps.get(it.id)?.dx ?? 0;
     const dy = (placements.get(it.id)?.dy ?? 0) + (clamps.get(it.id)?.dy ?? 0);
     const r = { x: it.x - it.w / 2 + dx, y: it.y + dy, w: it.w, h: it.h };
-    const hit = settled.some(
-      (o) => r.x < o.x + o.w && o.x < r.x + r.w && r.y < o.y + o.h && o.y < r.y + r.h,
-    );
-    if (placements.get(it.id)?.dim || hit) faint.add(it.id);
-    else settled.push(r);
+    const hit = settled.some((o) => intersects(r, o));
+    if (placements.get(it.id)?.dim || hit) {
+      faint.add(it.id);
+      // A faint plate over someone else's face would still hide it: that plate goes. Its crew
+      // line and the banner still show the helper.
+      if (faceRects.some((f) => f.id !== it.id && intersects(r, f))) hidden.add(it.id);
+    } else settled.push(r);
   }
 
   return (
@@ -1000,7 +1012,7 @@ export function ToolOverlay({
               key={id}
               id={id}
               status={status}
-              plate={plan.content.mode === 'compact' ? plan.content.plate : null}
+              plate={plan.content.mode === 'compact' && !hidden.has(id) ? plan.content.plate : null}
               maxWidth={(plateWidth.get(id) ?? maxWidth) / scale}
               left={project.toScreenX(ch.x)}
               top={
