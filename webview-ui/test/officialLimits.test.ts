@@ -140,8 +140,9 @@ describe('Pace panel (the official limits beside the attention rail)', () => {
     expect(pace({ ...fiveHourGone, sevenDay: null })).not.toContain('hud-limits');
   });
 
-  it('says how to turn the limits on when the wrapper is off, and stays empty before the server says it receives them', () => {
-    expect(text(pace(null, false))).toContain('Turn on "Claude status line" in Settings.');
+  it('says the limits are off, and how to turn them on, when the wrapper is off, and stays empty before the server says it receives them', () => {
+    expect(text(pace(null, false))).toBe('Pacelimits off');
+    expect(pace(null, false)).toContain('Turn on &quot;Claude status line&quot; in Settings');
     expect(pace(null, true)).toBe('');
   });
 

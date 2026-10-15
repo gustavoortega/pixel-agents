@@ -123,6 +123,32 @@ async function promptedTranscriptAgent(
   return id;
 }
 
+/** A transcript session with three red test runs and no edit between them: health marks it
+ *  stuck, so it gets a Stuck ticket. Health reads the transcript only. */
+async function stuckTranscriptAgent(
+  page: Page,
+  standalone: StandaloneSession,
+  sessionId: string,
+): Promise<number> {
+  const session = transcriptSession(standalone, sessionId);
+  const id = await startAgent(
+    page,
+    standalone,
+    sessionId,
+    { name: 'Read', input: { file_path: path.join(standalone.workspaceDir, 'cart.ts') } },
+    session.file,
+  );
+  for (let run = 1; run <= 3; run++) {
+    session.toolUse(`toolu_red_${run}`, 'npm test');
+    session.toolResult(
+      `toolu_red_${run}`,
+      ' Test Files  1 failed (1)\n      Tests  3 failed | 41 passed (44)',
+    );
+  }
+  await expect(ticket(page, id)).toHaveAttribute('data-kind', 'stuck', { timeout: 15_000 });
+  return id;
+}
+
 async function askPermission(standalone: StandaloneSession, sessionId: string): Promise<void> {
   await sendHookEvent(standalone.hookServerConfig, {
     session_id: sessionId,
@@ -294,25 +320,9 @@ test.describe('Standalone / monitor attention rail', () => {
     page,
     standalone,
   }) => {
-    const sessionId = '6f1c1d2e-0000-4000-8000-00000000c507';
-    const session = transcriptSession(standalone, sessionId);
-    const id = await startAgent(
-      page,
-      standalone,
-      sessionId,
-      { name: 'Read', input: { file_path: path.join(standalone.workspaceDir, 'cart.ts') } },
-      session.file,
-    );
-    for (let run = 1; run <= 3; run++) {
-      session.toolUse(`toolu_red_${run}`, 'npm test');
-      session.toolResult(
-        `toolu_red_${run}`,
-        ' Test Files  1 failed (1)\n      Tests  3 failed | 41 passed (44)',
-      );
-    }
+    const id = await stuckTranscriptAgent(page, standalone, '6f1c1d2e-0000-4000-8000-00000000c507');
 
     const t = ticket(page, id);
-    await expect(t).toHaveAttribute('data-kind', 'stuck', { timeout: 15_000 });
     await expect(t.locator('.tk-why')).toContainText('tests failing ×3');
     let since: unknown;
     await expect
@@ -333,6 +343,104 @@ test.describe('Standalone / monitor attention rail', () => {
   });
 });
 
+/**
+ * Q2.1: the smallest type anywhere in the rail, as computed. The plan's sizes are how tall type
+ * reads: FS Pixel Sans draws caps 7/16 em tall, so 12 px type (caps 0.7 x 12 px) needs 19.2 px.
+ */
+const MIN_RAIL_FONT_PX = (12 * 0.7 * 16) / 7;
+
+async function smallestRailText(page: Page): Promise<{ px: number; text: string }> {
+  return page.evaluate(() => {
+    const rail = document.querySelector('[data-testid="monitor-rail"]');
+    let px = Infinity;
+    let text = '';
+    if (!rail) return { px, text: 'no rail' };
+    const walker = document.createTreeWalker(rail, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const shown = n.textContent?.trim();
+      if (!shown || !n.parentElement) continue;
+      const size = parseFloat(getComputedStyle(n.parentElement).fontSize);
+      if (size < px) {
+        px = size;
+        text = shown;
+      }
+    }
+    return { px, text };
+  });
+}
+
+test.describe('Standalone / monitor rail type', () => {
+  test.beforeEach(async ({ page, standalone }) => {
+    void standalone;
+    await setSettings(page, { watchAllSessions: true });
+  });
+
+  // Q2.1: a permission ticket, a stuck one (with its reason's tail), the minutes' unit, the stub
+  // and the Pace header all on screen, at both rail widths.
+  test('no rail text reads under 12 px beside the 1920 and the 1280 office @area:standalone', async ({
+    page,
+    standalone,
+  }) => {
+    const asked = await startAgent(page, standalone, 'rail-type-permission', {
+      name: 'Bash',
+      input: { command: 'git push' },
+    });
+    await askPermission(standalone, 'rail-type-permission');
+    await expect(ticket(page, asked)).toHaveAttribute('data-kind', 'permission');
+    const stuck = await stuckTranscriptAgent(
+      page,
+      standalone,
+      '6f1c1d2e-0000-4000-8000-0000000002a1',
+    );
+    await expect(ticket(page, stuck).locator('.tk-why small')).toHaveText('no edits');
+    await expect(ticket(page, stuck).locator('.tk-stub')).toBeVisible();
+    await expect(page.getByTestId('pace-panel')).toContainText('limits off');
+
+    for (const [width, height, rail] of [
+      [1920, 1080, 'wide'],
+      [1280, 800, 'mid'],
+    ] as const) {
+      await page.setViewportSize({ width, height });
+      await expect(page.getByTestId('monitor-rail')).toHaveAttribute('data-rail', rail);
+      const smallest = await smallestRailText(page);
+      expect(smallest.px, `"${smallest.text}" at ${width}`).toBeGreaterThanOrEqual(
+        MIN_RAIL_FONT_PX,
+      );
+    }
+  });
+});
+
+// Q2.4: the bar gets out of the office's way when the pointer rests, and comes back on a move.
+test.describe('Standalone / monitor bottom bar', () => {
+  test('the bar hides after 3 s without the pointer moving and shows again on a move @area:standalone', async ({
+    page,
+    standalone,
+  }) => {
+    void standalone;
+    const bar = page.getByTestId('bottom-toolbar');
+    // Every timer on the installed clock (one armed before it would run on the real one), held
+    // still so only runFor moves it.
+    await page.clock.install();
+    await page.reload();
+    await expect(bar).toBeAttached();
+    await page.clock.pauseAt(Date.now() + 10_000);
+    // A move over the stage shows the bar and arms its timer.
+    await page.mouse.move(700, 300);
+    await page.mouse.move(720, 320);
+    await expect(bar).toHaveAttribute('data-hidden', 'false');
+
+    await page.clock.runFor(2_500);
+    await expect(bar).toHaveAttribute('data-hidden', 'false');
+    await page.clock.runFor(600);
+    await expect(bar).toHaveAttribute('data-hidden', 'true');
+    await expect(bar).toHaveCSS('opacity', '0');
+
+    await page.mouse.move(760, 340);
+    await expect(bar).toHaveAttribute('data-hidden', 'false');
+    await expect(bar).toHaveCSS('opacity', '1');
+  });
+});
+
 // C5.6
 test.describe('Standalone / monitor pace', () => {
   test.skip(process.platform === 'win32', 'the status line wrapper is POSIX only');
@@ -342,7 +450,7 @@ test.describe('Standalone / monitor pace', () => {
     standalone,
   }) => {
     const pace = page.getByTestId('pace-panel');
-    await expect(pace).toContainText('Turn on "Claude status line" in Settings.');
+    await expect(pace).toContainText('limits off');
     await expect(page.getByTestId('monitor-rail')).not.toContainText(/(^|\D)0%/);
 
     // The wrapper on (through the consent the Settings toggle asks for), then a reading that

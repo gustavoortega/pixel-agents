@@ -16,6 +16,7 @@ import { MigrationNotice } from './components/MigrationNotice.js';
 import { monitorLayout } from './components/monitorLayout.js';
 import { MonitorShell } from './components/MonitorShell.js';
 import { SettingsModal } from './components/SettingsModal.js';
+import { StageClock } from './components/StageClock.js';
 import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
 import { UsagePanel } from './components/UsagePanel.js';
@@ -497,13 +498,7 @@ function App() {
             />
           )}
 
-          <HudCard
-            characters={officeState.characters}
-            zoom={editor.zoom}
-            onZoomChange={handleManualZoom}
-            fitActive={fitActive}
-            onFit={handleFit}
-          />
+          <StageClock characters={officeState.characters} />
 
           {/* Vignette overlay */}
           <div
@@ -675,6 +670,18 @@ function App() {
           setIsUsageOpen((v) => !v);
         }}
         workspaceFolders={workspaceFolders}
+        zoomControls={
+          isDebugMode ? null : (
+            <HudCard
+              zoom={editor.zoom}
+              onZoomChange={handleManualZoom}
+              fitActive={fitActive}
+              onFit={handleFit}
+            />
+          )
+        }
+        privacy={privacy}
+        onTogglePrivacy={togglePrivacy}
       />
 
       {isUsageOpen && (
@@ -768,7 +775,6 @@ function App() {
       limits={statuslineInstalled ? usageLimits : null}
       statuslineInstalled={statuslineInstalled}
       privacy={privacy}
-      onTogglePrivacy={togglePrivacy}
       onSelect={handleRailSelect}
       inspector={{
         agentTools,
