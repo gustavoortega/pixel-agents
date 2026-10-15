@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 
+import { BOTTOM_BAR_IDLE_HIDE_MS } from '../constants.js';
 import type { WorkspaceFolder } from '../hooks/useExtensionMessages.js';
+import { PixelWarn } from '../office/components/PixelIcons.js';
 import { isBrowserRuntime } from '../runtime.js';
 import { transport } from '../transport/index.js';
 import { Button } from './ui/Button.js';
@@ -15,6 +17,10 @@ interface BottomToolbarProps {
   isUsageOpen: boolean;
   onToggleUsage: () => void;
   workspaceFolders: WorkspaceFolder[];
+  /** The zoom controls, at the bar's left end (none in debug view). */
+  zoomControls?: ReactNode;
+  privacy: boolean;
+  onTogglePrivacy: () => void;
 }
 
 export function BottomToolbar({
@@ -26,6 +32,9 @@ export function BottomToolbar({
   isUsageOpen,
   onToggleUsage,
   workspaceFolders,
+  zoomControls,
+  privacy,
+  onTogglePrivacy,
 }: BottomToolbarProps) {
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
   const [isBypassMenuOpen, setIsBypassMenuOpen] = useState(false);
@@ -85,61 +94,141 @@ export function BottomToolbar({
     }
   };
 
+  // The bar steps out of the way of the office: it fades after a while without the pointer
+  // moving over the stage and comes back on the next move. A plain timer, no frame loop. It stays
+  // while the pointer is on it, while a menu or panel it opened is open, and in edit mode.
+  const barRef = useRef<HTMLDivElement>(null);
+  const [idle, setIdle] = useState(false);
+  const idleRef = useRef(false);
+  const [hovered, setHovered] = useState(false);
+  const [keyboardFocus, setKeyboardFocus] = useState(false);
+  const pinned =
+    isEditMode ||
+    isSettingsOpen ||
+    isUsageOpen ||
+    isFolderPickerOpen ||
+    isBypassMenuOpen ||
+    hovered ||
+    keyboardFocus;
+  useEffect(() => {
+    const stage = barRef.current?.parentElement;
+    let timer: number | undefined;
+    const setIdleOnce = (next: boolean) => {
+      if (idleRef.current === next) return;
+      idleRef.current = next;
+      setIdle(next);
+    };
+    const arm = () => {
+      window.clearTimeout(timer);
+      if (!pinned) timer = window.setTimeout(() => setIdleOnce(true), BOTTOM_BAR_IDLE_HIDE_MS);
+    };
+    const onMove = () => {
+      setIdleOnce(false);
+      arm();
+    };
+    arm();
+    stage?.addEventListener('pointermove', onMove);
+    return () => {
+      window.clearTimeout(timer);
+      stage?.removeEventListener('pointermove', onMove);
+    };
+  }, [pinned]);
+  const hidden = idle && !pinned;
+
   return (
-    <div data-testid="bottom-toolbar" className="absolute bottom-10 left-10 z-20 flex items-center gap-6 brand-panel p-4">
-      {/* Hide + Agent in standalone browser mode (no terminal to interact with) */}
-      {!isBrowserRuntime && (
-        <div
-          ref={folderPickerRef}
-          className="relative"
-          onMouseEnter={handleAgentHover}
-          onMouseLeave={handleAgentLeave}
-        >
-          <Button
-            variant={isFolderPickerOpen || isBypassMenuOpen ? 'brandActive' : 'brand'}
-            onClick={handleAgentClick}
+    <div
+      ref={barRef}
+      data-testid="bottom-toolbar"
+      data-hidden={hidden}
+      className="stage-bar"
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocus={(e) => setKeyboardFocus(e.target.matches(':focus-visible'))}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setKeyboardFocus(false);
+      }}
+    >
+      <div className="bar-left">{zoomControls}</div>
+      <div className="bar-right">
+        <div className="bar-keys">
+          <span>
+            <kbd>{'\u2190'}</kbd>
+            <kbd>{'\u2192'}</kbd>
+            select
+          </span>
+          <span>
+            <kbd>Enter</kbd>
+            inspect
+          </span>
+          <button
+            type="button"
+            aria-pressed={privacy}
+            onClick={(e) => {
+              onTogglePrivacy();
+              if (e.detail > 0) e.currentTarget.blur();
+            }}
           >
-            + Agent
-          </Button>
-          <Dropdown isOpen={isBypassMenuOpen}>
-            <DropdownItem onClick={() => handleBypassSelect(true)}>
-              Skip permissions mode <span className="text-2xs text-warning">⚠</span>
-            </DropdownItem>
-          </Dropdown>
-          <Dropdown isOpen={isFolderPickerOpen} className="min-w-128">
-            {workspaceFolders.map((folder) => (
-              <DropdownItem
-                key={folder.path}
-                onClick={() => handleFolderSelect(folder)}
-                className="text-base"
-              >
-                {folder.name}
-              </DropdownItem>
-            ))}
-          </Dropdown>
+            <kbd>P</kbd>
+            hide text
+          </button>
         </div>
-      )}
-      <Button
-        variant={isEditMode ? 'brandActive' : 'brand'}
-        onClick={onToggleEditMode}
-        title="Edit office layout"
-      >
-        Layout
-      </Button>
-      <Button
-        variant={isUsageOpen ? 'brandActive' : 'brand'}
-        onClick={onToggleUsage}
-        title="Token usage"
-      >
-        Usage
-      </Button>
-      <Button
-        variant={isSettingsOpen ? 'brandActive' : 'brand'}
-        onClick={onToggleSettings}
-        title="Settings"
-      >
-        Settings
-      </Button>
+        {/* Hide + Agent in standalone browser mode (no terminal to interact with) */}
+        {!isBrowserRuntime && (
+          <div
+            ref={folderPickerRef}
+            className="relative"
+            onMouseEnter={handleAgentHover}
+            onMouseLeave={handleAgentLeave}
+          >
+            <Button
+              variant={isFolderPickerOpen || isBypassMenuOpen ? 'brandActive' : 'brand'}
+              onClick={handleAgentClick}
+            >
+              + Agent
+            </Button>
+            <Dropdown isOpen={isBypassMenuOpen}>
+              <DropdownItem onClick={() => handleBypassSelect(true)}>
+                Skip permissions mode{' '}
+                <span className="inline-flex text-warning">
+                  <PixelWarn px={2} />
+                </span>
+              </DropdownItem>
+            </Dropdown>
+            <Dropdown isOpen={isFolderPickerOpen} className="min-w-128">
+              {workspaceFolders.map((folder) => (
+                <DropdownItem
+                  key={folder.path}
+                  onClick={() => handleFolderSelect(folder)}
+                  className="text-base"
+                >
+                  {folder.name}
+                </DropdownItem>
+              ))}
+            </Dropdown>
+          </div>
+        )}
+        <Button
+          variant={isEditMode ? 'brandActive' : 'brand'}
+          onClick={onToggleEditMode}
+          title="Edit office layout"
+        >
+          Layout
+        </Button>
+        <Button
+          variant={isUsageOpen ? 'brandActive' : 'brand'}
+          onClick={onToggleUsage}
+          title="Token usage"
+        >
+          Usage
+        </Button>
+        <Button
+          variant={isSettingsOpen ? 'brandActive' : 'brand'}
+          onClick={onToggleSettings}
+          title="Settings"
+        >
+          Settings
+        </Button>
+      </div>
     </div>
   );
 }

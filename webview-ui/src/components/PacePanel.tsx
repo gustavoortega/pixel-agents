@@ -1,10 +1,12 @@
 import type { UsageLimits } from '../../../core/src/messages.js';
 import { hudLimits, noLiveLimits, paceRows, paceTipKey } from './limitsPace.js';
 
+const LIMITS_OFF_HINT = 'Turn on "Claude status line" in Settings for the official limits.';
+
 /**
  * The official limits as the rail's bottom panel: one phrase per live window (`5 h block ·
  * runs out 18:33`, `Week · 66% at reset`), its bar with the even-pace tick, and when it resets.
- * Not installed: how to turn it on. Installed with nothing live: waiting. A window with no
+ * Not installed: `limits off` on the header line, how to turn it on in its tooltip. Installed with nothing live: waiting. A window with no
  * reading has no row: never a 0.
  */
 export function PacePanel({
@@ -34,14 +36,20 @@ export function PacePanel({
       </div>
     );
   }
+  if (!installed) {
+    // Off is one line: the panel's header says so, the tooltip says how to turn it on.
+    return (
+      <section className="pace" data-testid="pace-panel" aria-label="Pace">
+        <div className="pace-h">
+          Pace
+          <span className="pace-off" title={LIMITS_OFF_HINT}>
+            limits off
+          </span>
+        </div>
+      </section>
+    );
+  }
   const body = (() => {
-    if (!installed) {
-      return (
-        <p className="pc-hint m-0">
-          Official limits are off. Turn on "Claude status line" in Settings.
-        </p>
-      );
-    }
     if (noLiveLimits(limits, now)) {
       return <p className="pc-hint m-0">Waiting for Claude Code's status line…</p>;
     }

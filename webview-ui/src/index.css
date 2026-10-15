@@ -390,30 +390,36 @@
 }
 
 /* ── Monitor: the attention rail and its Pace panel ─────────────────────────────────────────
-   Sizes are per rail mode (MonitorRail sets data-rail): the 300 px rail uses the laptop
-   tokens of the design, the 360 px rail those x1.2, the slim one (76 px) only faces and
-   minutes. Every length is a whole px so the pixel font and the borders stay crisp. */
+   Sizes are per rail mode (MonitorRail sets data-rail): the 300 px rail is the laptop's, the
+   360 px rail the second monitor's, the slim one (76 px) only faces and minutes. Every length is
+   a whole px so the pixel font and the borders stay crisp.
+   Type: FS Pixel Sans draws caps 7/16 em and digits 5/16 em tall, about 0.6 of what a common
+   font shows at the same size, so a type size is picked by how tall it reads. Nothing in the
+   rail reads under 12 px: caps of 0.7 x 12 px need 20 px here (19.2). */
 .mon-rail {
   --bw: 3px;
   --sh: 4px;
   --rail-pad: 12px;
-  --att-fs: 17px;
+  --att-fs: 28px;
   --tk-face: 44px;
-  --tk-tw: 74px;
+  --tk-tw: 76px;
   --tk-pad: 10px;
-  --tk-gap: 11px;
+  --tk-gap: 10px;
   --tk-rg: 6px;
-  --tk-ic: 15px;
-  --tk-why: 22px;
-  --tk-name: 17px;
-  --tk-time: 50px;
-  --tk-stub: 14px;
-  --pc-h: 14px;
-  --pc-k: 16px;
+  --tk-ic: 20px;
+  --tk-why: 26px;
+  --tk-sub: 20px;
+  --tk-name: 22px;
+  --tk-time: 80px;
+  --tk-time-long: 44px;
+  --tk-unit: 20px;
+  --tk-stub: 20px;
+  --clear-fs: 22px;
+  --pc-h: 20px;
+  --pc-k: 20px;
   --pc-v: 32px;
-  --pc-note: 14px;
+  --pc-note: 20px;
   --bar-h: 12px;
-  --keys-fs: 12px;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -429,23 +435,18 @@
 .mon-rail[data-rail='wide'] {
   --sh: 5px;
   --rail-pad: 16px;
-  --att-fs: 20px;
+  --att-fs: 40px;
   --tk-face: 53px;
-  --tk-tw: 89px;
-  --tk-pad: 12px;
-  --tk-gap: 13px;
+  --tk-tw: 90px;
   --tk-rg: 7px;
-  --tk-ic: 18px;
-  --tk-why: 26px;
-  --tk-name: 20px;
-  --tk-time: 60px;
-  --tk-stub: 15px;
-  --pc-h: 17px;
-  --pc-k: 19px;
-  --pc-v: 38px;
-  --pc-note: 16px;
+  --tk-why: 32px;
+  --tk-name: 26px;
+  --tk-time: 96px;
+  --tk-time-long: 56px;
+  --clear-fs: 26px;
+  --pc-k: 24px;
+  --pc-v: 48px;
   --bar-h: 14px;
-  --keys-fs: 14px;
 }
 .mon-rail[data-rail='slim'] {
   --rail-pad: 8px;
@@ -498,23 +499,35 @@
 .att-h.stuck .cnt {
   background: var(--mon-rust-light);
 }
-.att-h.zero .cnt {
-  color: var(--mon-cream-2);
-  background: transparent;
-  box-shadow: inset 0 0 0 2px var(--mon-edge);
-}
 .mon-rail[data-rail='slim'] .att-h {
   justify-content: center;
   margin: 0;
 }
+/* All clear: the time tile's twin in sage, a pixel check where the minutes would be. */
 .att-clear {
   display: flex;
   align-items: center;
-  gap: 0.5em;
-  margin: -4px 0 2px;
-  font-size: var(--tk-stub);
-  line-height: 1.2;
-  color: var(--mon-cream-3);
+  gap: 16px;
+  margin-top: 4px;
+  font-size: var(--clear-fs);
+  line-height: 1;
+  color: var(--mon-cream);
+}
+.att-clear .tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  box-sizing: border-box;
+  width: var(--tk-tw);
+  height: var(--tk-tw);
+  background: var(--mon-sage);
+  border: var(--bw) solid var(--mon-ink);
+  box-shadow: 0 var(--sh) 0 var(--mon-ink);
+}
+.mon-rail[data-rail='slim'] .att-clear .tile {
+  width: 56px;
+  height: 56px;
 }
 
 /* Ticket: the reason is the line to read from 2 m, the minutes the biggest thing on it. */
@@ -627,8 +640,8 @@
   background: var(--mon-paper-2);
   border: 2px solid var(--mon-ink);
   box-shadow: 0 2px 0 var(--mon-ink);
-  padding: 0 0.18em 1px;
-  margin: 0 0.06em;
+  padding: 0 0.12em 1px;
+  margin: 0 0.04em;
   line-height: 1.04;
   white-space: nowrap;
   max-width: 100%;
@@ -638,8 +651,8 @@
 }
 .tk-why small {
   display: block;
-  margin-top: 0.22em;
-  font-size: 0.62em;
+  margin-top: 6px;
+  font-size: var(--tk-sub);
   color: var(--mon-ink-2);
 }
 .tk-time {
@@ -649,25 +662,32 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: calc(var(--tk-face) + 8px);
+  gap: 10px;
+  box-sizing: border-box;
+  min-height: var(--tk-tw);
   background: var(--mon-gold);
   color: var(--mon-ink);
   border: var(--bw) solid var(--mon-ink);
   font-size: var(--tk-time);
-  line-height: 0.86;
+  line-height: 1;
   white-space: nowrap;
 }
+/* The numeral and its unit trimmed to their ink (digits and lowercase are x-height here), so the
+   gap between them is what the tile shows. */
+.tk-time > span {
+  text-box: trim-both ex alphabetic;
+}
 .tk-time.long {
-  font-size: calc(var(--tk-time) * 0.5);
+  font-size: var(--tk-time-long);
 }
 .tk.stuck .tk-time {
   background: var(--mon-rust);
   color: var(--mon-light);
 }
-.tk-time .unit {
-  font-size: calc(var(--tk-time) * 0.3);
+.tk-time > .unit {
+  font-size: var(--tk-unit);
   letter-spacing: 0.06em;
-  margin-top: 0.3em;
+  text-box: trim-both cap alphabetic;
 }
 .tk-stub {
   grid-area: stub;
@@ -676,7 +696,7 @@
   justify-content: space-between;
   gap: 0.8em;
   margin: 0 calc(-1 * var(--tk-pad));
-  padding: 0.36em var(--tk-pad) 0.42em;
+  padding: 6px var(--tk-pad) 7px;
   color: var(--mon-ink-3);
   background: var(--mon-paper-2);
   border-top: 2px solid var(--mon-rule);
@@ -783,12 +803,27 @@
   padding: 12px 18px 14px;
 }
 .pace-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   font-size: var(--pc-h);
   line-height: 1;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--mon-ink-2);
   margin-bottom: 8px;
+}
+.pace-h:last-child {
+  margin-bottom: 0;
+}
+/* Official limits off: said on the header line, how to turn them on in its tooltip. */
+.pace-off {
+  font-size: var(--pc-note);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--mon-ink-3);
+  cursor: help;
 }
 .pc-row + .pc-row {
   margin-top: 10px;
@@ -915,45 +950,6 @@
   color: var(--mon-sage-ink);
 }
 
-/* Keys: what the window answers to, quiet under the Pace panel. */
-.mon-keys {
-  flex: none;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 12px;
-  font-size: var(--keys-fs);
-  line-height: 1;
-  color: var(--mon-cream-3);
-  opacity: 0.85;
-}
-.mon-keys > span,
-.mon-keys > button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.mon-keys > button {
-  margin: 0;
-  padding: 0;
-  background: none;
-  border: 0;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-}
-.mon-keys > button[aria-pressed='true'] {
-  color: var(--mon-gold);
-}
-.mon-keys kbd {
-  font: inherit;
-  padding: 2px 4px 3px;
-  background: var(--mon-paper-3);
-  color: var(--mon-ink);
-  border: 2px solid var(--mon-ink);
-  box-shadow: 0 2px 0 var(--mon-ink);
-}
-
 /* Privacy mode (P): every .pv text turns into a flat bar of its own size. Names, minutes,
    models and contexts are never .pv. A surface on ink sets --pv-mask to --mon-mask-on-ink. */
 .mon-privacy .pv,
@@ -972,25 +968,165 @@
   background: transparent !important;
 }
 
-/* The 300 px rail sits in a laptop window: tighter vertical rhythm so three tickets and the
-   Pace panel fit 800 px without scrolling. */
+/* The 300 px rail sits in a laptop window: a tighter vertical rhythm, so three tickets (one of
+   them stuck, with its two-line reason) and the Pace panel fit 800 px without scrolling. */
 .mon-rail[data-rail='mid'] {
+  --tk-face: 40px;
+  --tk-pad: 8px;
+  --tk-rg: 4px;
   gap: 10px;
 }
 .mon-rail[data-rail='mid'] .mon-list {
-  gap: 10px;
+  gap: 8px;
   padding-top: 8px;
 }
-.mon-rail[data-rail='mid'] .pace {
-  padding: 8px 12px 10px;
+.mon-rail[data-rail='mid'] .att-h.stuck {
+  margin-top: 4px;
 }
-.mon-rail[data-rail='mid'] .pace-h {
+.mon-rail[data-rail='mid'] .tk-why {
+  line-height: 1.05;
+}
+.mon-rail[data-rail='mid'] .tk-why small {
+  margin-top: 2px;
+}
+.mon-rail[data-rail='mid'] .tk-stub {
+  padding: 5px var(--tk-pad) 6px;
+}
+.mon-rail[data-rail='mid'] .pace {
+  padding: 6px 12px 8px;
+}
+.mon-rail[data-rail='mid'] .pace-h:not(:last-child) {
   margin-bottom: 6px;
 }
 .mon-rail[data-rail='mid'] .bar {
-  margin: 6px 0;
+  margin: 5px 0;
 }
 .mon-rail[data-rail='mid'] .pc-row + .pc-row {
-  margin-top: 8px;
-  padding-top: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+}
+
+/* ── The stage's chrome: the clock at its top right, the bar along its bottom ──────────────── */
+/* The time reads like the rail: 32 px digits are 72 px of this font, 14 px words 24 px. */
+.stage-clock {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  color: var(--mon-paper);
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+}
+.stage-clock .time {
+  font-size: 72px;
+  text-box: trim-both ex alphabetic;
+}
+.stage-clock .active {
+  font-size: 24px;
+  color: var(--mon-cream-3);
+  text-box: trim-both cap alphabetic;
+}
+
+/* The bar: zoom on the left, the keys and the panels' buttons on the right, all 32 px tall. It
+   fades out when the pointer rests (BottomToolbar), but stays hit-testable, so the next move or
+   click brings it back. */
+.stage-bar {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  pointer-events: none;
+  transition:
+    opacity 180ms ease-out,
+    transform 180ms ease-out;
+}
+.stage-bar > * {
+  pointer-events: auto;
+}
+.stage-bar[data-hidden='true'] {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.stage-bar .bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.stage-bar .brand-btn {
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 24px;
+  line-height: 1;
+}
+.hud-zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+}
+.hud-zoom .brand-btn {
+  height: 24px;
+  min-width: 28px;
+  padding: 0 6px;
+  font-size: 20px;
+  border-width: 2px;
+}
+.hud-level {
+  margin-left: 4px;
+  font-size: 20px;
+  color: var(--mon-cream-3);
+}
+.bar-keys {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-right: 8px;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--mon-cream-3);
+  white-space: nowrap;
+}
+.bar-keys > span,
+.bar-keys > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.bar-keys > button {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.bar-keys > button[aria-pressed='true'] {
+  color: var(--mon-gold);
+}
+.bar-keys kbd {
+  font: inherit;
+  padding: 2px 4px 3px;
+  background: var(--mon-paper-3);
+  color: var(--mon-ink);
+  border: 2px solid var(--mon-ink);
+  box-shadow: 0 2px 0 var(--mon-ink);
+}
+/* A narrow or short window (a VS Code panel) keeps the buttons and drops the legend. */
+@media (max-width: 1099px), (max-height: 419px) {
+  .bar-keys {
+    display: none;
+  }
 }

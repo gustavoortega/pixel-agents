@@ -25,8 +25,6 @@ export interface MonitorRailProps {
   attention: Attention;
   limits: UsageLimits | null;
   statuslineInstalled: boolean;
-  privacy: boolean;
-  onTogglePrivacy: () => void;
   /** A ticket was clicked: select, follow and focus that agent. */
   onSelect: (id: number) => void;
 }
@@ -251,21 +249,26 @@ function Section({
   children: React.ReactNode;
 }) {
   const title = stuck ? 'Stuck' : 'Needs you';
-  const cls = ['att-h', stuck ? 'stuck' : '', count === 0 ? 'zero' : ''].filter(Boolean).join(' ');
   return (
     <>
-      <h2 className={cls} title={slim ? title : undefined}>
+      <h2 className={stuck ? 'att-h stuck' : 'att-h'} title={slim ? title : undefined}>
         {!slim && <span>{title}</span>}
         <span className="cnt">{count}</span>
       </h2>
-      {count === 0 && !slim && (
-        <div className="att-clear">
-          <CheckMark scale={2} color="var(--mon-sage)" />
-          all clear
-        </div>
-      )}
       {children}
     </>
+  );
+}
+
+/** Nobody needs you and nobody is stuck: the time tile's twin, sage with a check, and no count. */
+function AllClear({ slim }: { slim: boolean }) {
+  return (
+    <div className="att-clear" data-testid="rail-all-clear">
+      <span className="tile">
+        <CheckMark scale={slim ? 3 : 5} color="var(--mon-ink)" />
+      </span>
+      {!slim && <span className="txt">all clear</span>}
+    </div>
   );
 }
 
@@ -280,8 +283,6 @@ export function MonitorRail({
   attention,
   limits,
   statuslineInstalled,
-  privacy,
-  onTogglePrivacy,
   onSelect,
 }: MonitorRailProps) {
   useNow(MONITOR_CLOCK_TICK_MS);
@@ -324,38 +325,20 @@ export function MonitorRail({
       aria-label="Attention"
     >
       <div className="mon-list pixel-scrollbar">
-        <Section stuck={false} count={needs.length} slim={slim}>
-          {needs.map(render)}
-        </Section>
-        <Section stuck count={stuck.length} slim={slim}>
-          {stuck.map(render)}
-        </Section>
+        {/* A section with nobody in it is left out: absent, never 0. */}
+        {needs.length > 0 && (
+          <Section stuck={false} count={needs.length} slim={slim}>
+            {needs.map(render)}
+          </Section>
+        )}
+        {stuck.length > 0 && (
+          <Section stuck count={stuck.length} slim={slim}>
+            {stuck.map(render)}
+          </Section>
+        )}
+        {needs.length + stuck.length === 0 && <AllClear slim={slim} />}
       </div>
       <PacePanel limits={limits} installed={statuslineInstalled} now={now} slim={slim} />
-      {!slim && (
-        <div className="mon-keys">
-          <span>
-            <kbd>{'←'}</kbd>
-            <kbd>{'→'}</kbd>
-            select
-          </span>
-          <span>
-            <kbd>Enter</kbd>
-            inspect
-          </span>
-          <button
-            type="button"
-            aria-pressed={privacy}
-            onClick={(e) => {
-              onTogglePrivacy();
-              if (e.detail > 0) e.currentTarget.blur();
-            }}
-          >
-            <kbd>P</kbd>
-            hide text
-          </button>
-        </div>
-      )}
       {slim && popView && hover && (
         <div
           className="tk-pop"

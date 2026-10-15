@@ -323,15 +323,15 @@ export function dispatchMockMessages(host?: {
   console.log('[BrowserMock] Messages dispatched');
 }
 
-/** `&hud=0`: the scene is a screenshot, so the HUD card, toolbar, status badge and the monitor's
+/** `&hud=0`: the scene is a screenshot, so the clock, the bottom bar, the status badge and the monitor's
  *  rail and sheet stay out of it. */
 function hideHud(): void {
   const style = document.createElement('style');
   style.textContent =
     [
-      '[data-testid="hud-card"]',
+      '[data-testid="stage-clock"]',
+      '[data-testid="bottom-toolbar"]',
       '.absolute.top-8.pixel-panel',
-      '.absolute.bottom-10.left-10.brand-panel',
       '[data-testid="monitor-rail"]',
       '[data-testid="monitor-sheet"]',
     ].join(', ') + ' { display: none !important; }';

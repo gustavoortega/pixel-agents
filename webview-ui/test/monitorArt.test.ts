@@ -83,10 +83,12 @@ function fontCodePoints(file: string): Set<number> {
 }
 
 const SRC = path.join(__dirname, '../src/components');
-/** The monitor's own components (W2 and W3 add theirs by the same names). */
+/** The monitor's own components and the stage's chrome (W2 and W3 add theirs by the same names). */
 const MONITOR_FILES = fs
   .readdirSync(SRC)
-  .filter((f) => /^(Monitor|Pace|attention|railArt|limitsPace)/.test(f));
+  .filter((f) =>
+    /^(Monitor|Pace|attention|railArt|limitsPace|BottomToolbar|StageClock|HudCard)/.test(f),
+  );
 
 /** Every non-ASCII character a source prints, literal or written as a \u escape. Comments are
  *  not printed, so they are dropped first. */

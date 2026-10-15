@@ -23,7 +23,6 @@ export interface MonitorShellProps {
   limits: UsageLimits | null;
   statuslineInstalled: boolean;
   privacy: boolean;
-  onTogglePrivacy: () => void;
   onSelect: (id: number) => void;
   /** The App's tool rows and actions the inspector sheet reads. */
   inspector: InspectorWiring;
@@ -46,7 +45,6 @@ export function MonitorShell({
   limits,
   statuslineInstalled,
   privacy,
-  onTogglePrivacy,
   onSelect,
   inspector,
   children,
@@ -78,8 +76,6 @@ export function MonitorShell({
         attention={attention}
         limits={limits}
         statuslineInstalled={statuslineInstalled}
-        privacy={privacy}
-        onTogglePrivacy={onTogglePrivacy}
         onSelect={onSelect}
       />
       {children}

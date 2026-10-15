@@ -693,15 +693,12 @@ export const LIGHT_FIXTURE_FAIRY = 'FAIRY_LIGHTS';
 export const WINDOW_FOOTPRINT_W_TILES = 2;
 export const WINDOW_FOOTPRINT_H_TILES = 2;
 export const LAMP_HEAD_OFFSET_PX = 6;
-/** HUD clock refresh, ms. */
+/** Stage clock refresh, ms. */
 export const HUD_CLOCK_REFRESH_MS = 15_000;
-/** HUD active-agent count refresh, ms (reads the characters' status, which is not React state). */
+/** Stage clock active-agent count refresh, ms (reads the characters' status, which is not React state). */
 export const HUD_ACTIVE_REFRESH_MS = 500;
-/** HUD card type and glyph sizes, CSS px; the zoom row keeps the default size. */
-export const HUD_CLOCK_FONT_PX = 20;
-export const HUD_ACTIVE_FONT_PX = 16;
-export const HUD_GLYPH_PX = 20;
-export const HUD_CARD_MIN_HEIGHT_PX = 52;
+/** The bottom bar fades out after this long without the pointer moving over the stage. */
+export const BOTTOM_BAR_IDLE_HIDE_MS = 3_000;
 
 // ── Official usage limits (status line wrapper) ─────────────────
 /** Hook provider ids the Settings checkboxes toggle (HookProvider.id on the server). */
