@@ -6,9 +6,12 @@
  */
 
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
 import { test } from 'vitest';
 
+import { monitorLayout } from '../src/components/monitorLayout.js';
 import {
   AutoFit,
   type AutoFitInput,
@@ -134,8 +137,8 @@ test('fitView: 8 CSS px of padding a side, in CSS px whatever the dpr: it decide
   const zoomOf = (width: number, height: number, dpr: number) =>
     fitView(null, map, { width, height }, dpr).zoom;
   assert.equal(zoomOf(1296, 720, 1), 4, 'exactly map + 8 px a side');
-  assert.equal(zoomOf(1295, 720, 1), 2, 'a pixel short');
-  assert.equal(zoomOf(1296, 719, 1), 2, 'a pixel short, vertically');
+  assert.equal(zoomOf(1295, 720, 1), 3, 'a pixel short: the level below 4 is 3');
+  assert.equal(zoomOf(1296, 719, 1), 3, 'a pixel short, vertically');
   // Zoom 8 needs 2560x1408 device px plus 16 a side at dpr 2 (the padding doubles with it).
   assert.equal(zoomOf(1296, 720, 2), 8, 'exactly map + 8 CSS px a side');
   assert.equal(zoomOf(1295, 720, 2), 6, 'a CSS pixel short');
@@ -154,29 +157,53 @@ test('fitView: no target is the whole map at the biggest zoom level that fits', 
   assert.equal(fitView(null, { cols: 20, rows: 11 }, { width: 1296, height: 720 }, 2).zoom, 8);
 });
 
-test('fitView: the zoom is the largest of {1, 2, 4, ..., 20} that fits, never odd', () => {
+test('fitView: the zoom is the largest of {1, 2, 3, 4, 6, ..., 20} that fits; 3 is the only odd level above 1', () => {
   // The whole 20x11 map on a very wide canvas: 11 rows x 16 px = 176 device px per zoom unit
   const fitAt = (height: number) =>
     fitView(null, { cols: 20, rows: 11 }, { width: 100000, height }, 1).zoom;
-  assert.equal(fitAt(176 * 3.9), 2);
+  assert.equal(fitAt(176 * 2.9), 2);
+  assert.equal(fitAt(176 * 3.9), 3);
   assert.equal(fitAt(176 * 5), 4);
   assert.equal(fitAt(176 * 1.9), 1);
   assert.equal(fitAt(176 * 25), 20);
 });
 
-test('stepZoom: + and - walk the zoom levels, 1 <-> 2 then by 2, and stop at the ends', () => {
+test('fitView: the bundled office beside the monitor rail fits at 3 on a 1080p screen, 2 at 1280x800 (Q1.1)', () => {
+  // The stage is the window less the rail (the sheet closed); the fit frames the whole office.
+  const { cols, rows } = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '../public/assets/default-layout-1.json'), 'utf8'),
+  ) as { cols: number; rows: number };
+  const stageFit = (width: number, height: number, dpr: number) =>
+    fitView(
+      null,
+      { cols, rows },
+      { width: width - monitorLayout(width, height).railPx, height },
+      dpr,
+    ).zoom;
+  const table: Array<[width: number, height: number, dpr: number, zoom: number]> = [
+    [1920, 1080, 1, 3],
+    [1920, 1080, 2, 6],
+    [1280, 800, 1, 2],
+    [1280, 800, 2, 4],
+  ];
+  for (const [width, height, dpr, zoom] of table) {
+    assert.equal(stageFit(width, height, dpr), zoom, `${width}x${height} at dpr ${dpr}`);
+  }
+});
+
+test('stepZoom: + and - walk the zoom levels, 1, 2, 3, 4 then by 2, and stop at the ends', () => {
   const walk = (from: number, dir: 1 | -1, n: number) => {
     const seen = [from];
     for (let i = 0; i < n; i++) seen.push(stepZoom(seen[seen.length - 1], dir));
     return seen;
   };
-  assert.deepEqual(walk(1, 1, 4), [1, 2, 4, 6, 8]);
-  assert.deepEqual(walk(8, -1, 5), [8, 6, 4, 2, 1, 1]);
+  assert.deepEqual(walk(1, 1, 5), [1, 2, 3, 4, 6, 8]);
+  assert.deepEqual(walk(8, -1, 6), [8, 6, 4, 3, 2, 1, 1]);
   assert.deepEqual(walk(18, 1, 2), [18, 20, 20]);
 });
 
-test('fitZoomWholeMap: the 27x21 layout on a 2560x1300 device-px canvas fits at 2 (3.87 snaps down)', () => {
-  assert.equal(fitZoomWholeMap({ cols: 27, rows: 21 }, { width: 1280, height: 650 }, 2), 2);
+test('fitZoomWholeMap: the 27x21 layout on a 2560x1300 device-px canvas fits at 3 (3.87 snaps down)', () => {
+  assert.equal(fitZoomWholeMap({ cols: 27, rows: 21 }, { width: 1280, height: 650 }, 2), 3);
 });
 
 // ── Hysteresis ─────────────────────────────────────────────────
@@ -203,12 +230,12 @@ test('refitView: a target outside the view re-centres but never zooms in', () =>
 test('refitView: a target that no longer fits zooms out', () => {
   const current = { zoom: 5, center: { x: 160, y: 88 } };
   // the 20x11 tiles in 1280x704 px fit at min(4, 4), so the view drops from 5 to 4; one
-  // CSS pixel less on the canvas and it would be 2
+  // CSS pixel less on the canvas and it would be 3
   assert.equal(refitView(current, box(0, 0, 19, 10), { cols: 20, rows: 11 }, CANVAS, 1)?.zoom, 4);
   assert.equal(
     refitView(current, box(0, 0, 19, 10), { cols: 20, rows: 11 }, { width: 1295, height: 720 }, 1)
       ?.zoom,
-    2,
+    3,
   );
 });
 

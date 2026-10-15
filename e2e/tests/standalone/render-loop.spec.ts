@@ -112,20 +112,37 @@ async function quietWindow(page: Page): Promise<QuietWindow> {
   });
 }
 
+/** The settled-office rule at the window the suite opens with (zoom 2) and at 1920x1080, where the
+ *  office beside the rail fits at zoom 3 (badge 1.5x), the one odd level a fit can land on. */
+const SETTLED_VIEWS = [
+  {
+    title: 'a settled office requests no animation frame and redraws at most ten times a second',
+    viewport: null,
+  },
+  {
+    title:
+      'a settled office at zoom 3 (1920x1080 beside the rail) requests no animation frame either',
+    viewport: { width: 1920, height: 1080, badge: '1.5x' },
+  },
+] as const;
+
 test.describe('Render loop', () => {
-  test('a settled office requests no animation frame and redraws at most ten times a second @area:render', async ({
-    page,
-    standalone: _standalone,
-  }) => {
-    const counted = await quietWindow(page);
-    test.info().annotations.push({ type: 'quiet window', description: JSON.stringify(counted) });
-    expect(counted.raf).toBe(0);
-    expect(counted.pageRaf).toBe(0);
-    // 2 s at the 10 Hz ambient redraw, plus one for a tick on each edge.
-    expect(counted.render).toBeLessThanOrEqual(21);
-    // The frames drawn changed nothing the monitor shows.
-    expect(counted.monitorRenders).toBe(0);
-  });
+  for (const { title, viewport } of SETTLED_VIEWS) {
+    test(`${title} @area:render`, async ({ page, standalone: _standalone }) => {
+      if (viewport) {
+        await page.setViewportSize({ width: viewport.width, height: viewport.height });
+        await expect(page.getByTestId('zoom-level')).toHaveText(viewport.badge);
+      }
+      const counted = await quietWindow(page);
+      test.info().annotations.push({ type: 'quiet window', description: JSON.stringify(counted) });
+      expect(counted.raf).toBe(0);
+      expect(counted.pageRaf).toBe(0);
+      // 2 s at the 10 Hz ambient redraw, plus one for a tick on each edge.
+      expect(counted.render).toBeLessThanOrEqual(21);
+      // The frames drawn changed nothing the monitor shows.
+      expect(counted.monitorRenders).toBe(0);
+    });
+  }
 
   test('an office where nothing moves redraws once a second @area:render', async ({ page }) => {
     // No agents, no pets, no furniture: nothing in it animates, by day or by night.

@@ -154,15 +154,20 @@ export const CAMERA_FOLLOW_SNAP_THRESHOLD = 0.5;
 
 // ── Zoom ─────────────────────────────────────────────────────
 /** Zoom is device px per WORLD px. Art is ART_DENSITY art px per world px, so an art px is
- *  zoom / 2 device px: every even zoom keeps it whole. 1 is the one exception, drawn from a 2x2
- *  downsample, for whole-map views on small panels. */
+ *  zoom / 2 device px: every even zoom keeps it whole. Two exceptions: 1, drawn from a 2x2
+ *  downsample, for whole-map views on small panels; and 3 (art px 1.5 device px, nearest
+ *  neighbour), because the 25x20 office beside the monitor rail on a 1080p screen fits at 3 and
+ *  would otherwise drop to 2 and fill half the stage. */
 export const ZOOM_MIN = 1;
 export const ZOOM_MAX = 20;
 export const ZOOM_STEP = 2;
+/** The one odd level above ZOOM_MIN. */
+export const ZOOM_ODD_LEVEL = 3;
 export const ZOOM_LEVELS: readonly number[] = [
   ZOOM_MIN,
   ...Array.from({ length: ZOOM_MAX / ZOOM_STEP }, (_, i) => (i + 1) * ZOOM_STEP),
-];
+  ZOOM_ODD_LEVEL,
+].sort((a, b) => a - b);
 export const ZOOM_DEFAULT_DPR_FACTOR = 2;
 export const ZOOM_SCROLL_THRESHOLD = 50;
 

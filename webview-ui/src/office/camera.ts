@@ -1,5 +1,5 @@
 /**
- * Camera: "fit to activity" (the integer zoom and centre that frame the rooms where agents are
+ * Camera: "fit to activity" (the zoom level and centre that frame the rooms where agents are
  * working, kept framed without jumping the view around) and the pan/zoom rules (a zoom keeps the
  * point under an anchor still, a map smaller than the view is centred, a bigger one never shows void).
  *
