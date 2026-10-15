@@ -1053,6 +1053,13 @@
 .stage-bar > * {
   pointer-events: auto;
 }
+/* Below 1600 px the open sheet overlays the stage's right side: the bar ends where it begins. */
+.mon-row:has(.insp-overlay[data-open='true']) .stage-bar {
+  right: calc(12px + var(--mon-sheet-px));
+}
+.mon-row:has(.insp-overlay[data-open='true']) .bar-keys {
+  display: none;
+}
 .stage-bar[data-hidden='true'] {
   opacity: 0;
   transform: translateY(6px);

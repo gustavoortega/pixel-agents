@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useState } from 'react';
 
 import type { UsageLimits } from '../../../core/src/messages.js';
 import { useMonitorVersion } from '../hooks/useMonitorVersion.js';
@@ -66,8 +66,10 @@ export function MonitorShell({
   return (
     <div
       // Relative: below 1600 px the sheet overlays the stage, positioned on this row.
-      className={`relative w-full h-full flex overflow-hidden${privacy ? ' mon-privacy' : ''}`}
+      className={`mon-row relative w-full h-full flex overflow-hidden${privacy ? ' mon-privacy' : ''}`}
       data-privacy={privacy ? 'on' : 'off'}
+      // The overlay sheet's width, for what on the stage must stay clear of it (the bottom bar).
+      style={{ '--mon-sheet-px': `${layout.sheetPx}px` } as CSSProperties}
     >
       <MonitorRail
         officeState={officeState}
