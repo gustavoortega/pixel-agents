@@ -11,7 +11,12 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { NAMEPLATE_COMPACT_BG, PLATE_SELECTED_BG } from '../src/constants.js';
+import {
+  NAMEPLATE_BG,
+  NAMEPLATE_COMPACT_BG,
+  PLATE_SELECTED_BG,
+  TAG_QUIET_TEXT,
+} from '../src/constants.js';
 import { ToolOverlay } from '../src/office/components/ToolOverlay.js';
 import { OfficeState } from '../src/office/engine/officeState.js';
 import { plateAnchorAboveY, plateScale, setMonitorFullPlates } from '../src/office/nameplate.js';
@@ -20,7 +25,12 @@ import { TileType } from '../src/office/types.js';
 
 const TITLE = 'Refactor the parser';
 
-function overlayHtml(zoom: number, focus?: 'hover' | 'select', sheetOpen = false): string {
+function overlayHtml(
+  zoom: number,
+  focus?: 'hover' | 'select',
+  sheetOpen = false,
+  idle = false,
+): string {
   const cols = 12;
   const rows = 9;
   const layout: OfficeLayout = {
@@ -46,6 +56,7 @@ function overlayHtml(zoom: number, focus?: 'hover' | 'select', sheetOpen = false
   // The sheet shows the selected agent.
   if (focus === 'select' || sheetOpen) os.selectedAgentId = 1;
   os.monitorSheetOpen = sheetOpen;
+  if (idle) os.setAgentActive(1, false);
   const container = {
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 1200, height: 900 }),
   } as unknown as HTMLDivElement;
@@ -123,11 +134,34 @@ describe('plate kind by zoom level', () => {
       // A tag is drawn at its size: no scale; at 2 CSS px per world px the small type set.
       expect(html).toContain('scale(1)');
       const plate = html.slice(html.indexOf('class="nameplate '));
-      const sizes = [...plate.matchAll(/font-size:(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
-      expect(new Set(sizes)).toEqual(new Set([16, 14]));
+      const px = (testId: string) =>
+        Number(new RegExp(`font-size:(\\d+)px[^>]*data-testid="${testId}"`).exec(plate)?.[1]);
+      expect(px('plate-name')).toBe(16);
+      expect(px('plate-state')).toBe(14);
     } finally {
       setMonitorFullPlates(false);
     }
+  });
+});
+
+describe('a quiet tag beside the rail', () => {
+  const saved = globalThis.window;
+  beforeEach(() => {
+    (globalThis as { window?: unknown }).window = { devicePixelRatio: 1 };
+    setMonitorFullPlates(true);
+  });
+  afterEach(() => {
+    setMonitorFullPlates(false);
+    (globalThis as { window?: unknown }).window = saved;
+  });
+
+  it('is opaque ink with its words in the dim cream: the office never shows through it', () => {
+    const html = overlayHtml(2, undefined, false, true);
+    const plate = html.slice(html.indexOf('class="nameplate '));
+    expect(plate).toContain('data-plate-state="idle"');
+    expect(plate).toContain(`--plate-bg:${NAMEPLATE_BG}`);
+    expect(plate).toContain(`--plate-text:${TAG_QUIET_TEXT}`);
+    expect(plate).not.toMatch(/rgba\s*\(/);
   });
 });
 

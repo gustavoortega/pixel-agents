@@ -861,9 +861,11 @@ export const PLATE_STATE_COLOR = '#e9d2a8';
 export const PLATE_CMD_COLOR = '#f2dcae';
 export const PLATE_SUB_COLOR = '#d9c29b';
 export const PLATE_DONE_COLOR = '#8fb09a';
-/** An idle plate goes quiet: see-through, a fainter edge, no shadow. */
+/** An idle plate goes quiet: see-through, a fainter edge, no shadow. A monitor tag never dims by
+ *  alpha (the office shows through it): it keeps the ink and says quiet in TAG_QUIET_TEXT. */
 export const PLATE_QUIET_BG = 'rgba(59, 36, 18, 0.56)';
 export const PLATE_QUIET_BORDER = 'rgba(30, 18, 10, 0.5)';
+export const TAG_QUIET_TEXT = 'var(--mon-cream-3)';
 /** The selected agent's plate while the inspector holds its details: paper and ink. */
 export const PLATE_SELECTED_BG = '#f6e3bd';
 export const PLATE_SELECTED_TEXT = '#3b2412';
@@ -946,6 +948,9 @@ export const DESK_HIGHLIGHT_STUCK_FILL = 'rgba(192, 86, 63, 0.12)';
 export const DESK_HIGHLIGHT_STUCK_HALO = 'rgba(192, 86, 63, 0.45)';
 /** Two frames a second apart from each other: the halo shows on one, the outline alone on the other. */
 export const DESK_HIGHLIGHT_BLINK_MS = 500;
+/** Two lit desks keep at least this much air between their outlines, CSS px (times the device
+ *  pixel ratio): the facing sides move to the midline and draw no halo. */
+export const DESK_HIGHLIGHT_GAP_PX = 8;
 /**
  * Beside the rail every character carries one tag: one line, sized by how tall the type reads.
  * FS Pixel Sans draws caps 7/16 em tall, about 0.6 of what a common font shows at the same size,
@@ -960,8 +965,6 @@ export const TAG_LARGE = {
   line: 26,
   medal: 24,
   maxWidth: 184,
-  badge: 20,
-  badgeLine: 24,
   helper: 18,
   helperLine: 20,
   plaqueTitle: 24,
@@ -973,8 +976,6 @@ export const TAG_SMALL = {
   line: 18,
   medal: 12,
   maxWidth: 124,
-  badge: 14,
-  badgeLine: 18,
   helper: 13,
   helperLine: 15,
   plaqueTitle: 16,
@@ -993,9 +994,10 @@ export const TAG_REACH_PX = 24;
 export const TAG_FAR_REACH_PX = 64;
 export const TAG_LEADER_AT_PX = 8;
 export const TAG_LEADER_PX = 2;
-/** A helper's tag: one word on paper, see-through a little, so the agents' tags lead. */
+/** A helper's tag: one word on paper, no ink box, so the agents' tags lead. */
 export const HELPER_TAG_PAD_X_PX = 5;
-export const HELPER_TAG_OPACITY = 0.9;
+/** A monitor tag's state is a whole word of at most this many characters, or it is left out. */
+export const TAG_STATE_MAX_CHARS = 10;
 /** Air a tag keeps from what it avoids. */
 export const TAG_PAD_PX = 3;
 /** A room plaque on the top wall: ink box, gold title, the mapped folder under it. */

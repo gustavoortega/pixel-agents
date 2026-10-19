@@ -1,7 +1,7 @@
 /**
  * The monitor's office labels beside the rail: room plaques on the top walls, and one tag per
- * character placed by the tag solver (placeTags) clear of every sprite body, window, plaque,
- * banner and other tag. No React: ToolOverlay draws what this places.
+ * character placed by the tag solver (placeTags) clear of every sprite body, plaque, banner and
+ * other tag. No React: ToolOverlay draws what this places.
  */
 
 import { spriteWorldHeight, spriteWorldWidth } from '../../../core/src/assets/artDensity.js';
@@ -25,7 +25,6 @@ import {
   TAG_STEP_PX,
   TILE_SIZE,
   WALL_FACE_TILES,
-  WINDOW_TYPE_PREFIX,
 } from '../constants.js';
 import type { CrewBannerForm, CrewBannerView } from './crewBanner.js';
 import { sheetFrameIndex } from './engine/characters.js';
@@ -41,6 +40,7 @@ import {
   tagLeader,
   type TagObstacle,
   type TagPlacement,
+  type TagSlot,
   withTopWallFace,
 } from './labelLayout.js';
 import { type MonitorType, pixelTextWidth, spriteHeadTopY } from './nameplate.js';
@@ -48,22 +48,23 @@ import type { OverlayProjection } from './projection.js';
 import { seatedBubbleOffsetPx, seatedDrawOffsetPx } from './seatDraw.js';
 import { BUBBLE_WAITING_SPRITE } from './sprites/spriteData.js';
 import { statusGlyph } from './toolUtils.js';
-import type { Character } from './types.js';
+import type { Character, OfficeLayout } from './types.js';
 import { CharacterState, Direction, IdlePose } from './types.js';
 
 /** Something is drawn on the canvas right above the head (bubble, idle glyph, Zz, beacon,
- *  health mark). A dead agent draws nothing there. */
+ *  health mark). A dead agent draws nothing there. `rules` is the office's word on the bubble and
+ *  on a tag that already carries the alert (OfficeState). */
 export function headSlotTaken(
   ch: Character,
   hasTripwire: boolean,
   health: AgentHealthView | undefined,
+  rules: Pick<OfficeState, 'bubbleShown' | 'alertOnTag'>,
 ): boolean {
-  const bubble = ch.bubbleType && !(ch.bubbleType === 'waiting' && ch.waitingAwaitingInput);
   return (
-    !!bubble ||
+    rules.bubbleShown(ch) ||
     hasTripwire ||
     healthMark(health?.state) !== null ||
-    statusGlyph(ch, hasTripwire || health !== undefined) !== null
+    statusGlyph(ch, hasTripwire || health !== undefined || rules.alertOnTag(ch)) !== null
   );
 }
 
@@ -188,13 +189,13 @@ export interface TagLayoutSnapshot {
   tags: Array<{
     id: number;
     rect: Rect;
-    /** Its room (floor and top wall), and the desk unit or sprite it hangs from. */
-    room: Rect;
+    /** The desk unit or sprite it hangs from. */
     anchor: Rect;
     leader: boolean;
   }>;
   heads: Array<{ id: number; rect: Rect }>;
-  badges: Array<{ id: number; rect: Rect }>;
+  /** Every room: what a tag in it may occupy (its floor and top wall), as `tagRoom` bounds it. */
+  rooms: Array<{ label: string; rect: Rect }>;
   banners: Array<{ leadId: number; rect: Rect; onWall: boolean; band: Rect | null }>;
   plaques: Array<{ label: string; rect: Rect }>;
 }
@@ -202,13 +203,30 @@ export interface TagLayoutSnapshot {
 let lastTagLayout: TagLayoutSnapshot = {
   tags: [],
   heads: [],
-  badges: [],
+  rooms: [],
   banners: [],
   plaques: [],
 };
 
 export function lastMonitorTagLayout(): TagLayoutSnapshot {
   return lastTagLayout;
+}
+
+/** A room's floor and its own top wall, world px: what a tag in the room may occupy. */
+function roomRect(layout: Pick<OfficeLayout, 'areaTiles' | 'cols' | 'rows'>, label: string | null) {
+  return withTopWallFace(roomFloorRect(layout.areaTiles, layout.cols, layout.rows, label));
+}
+
+/**
+ * Where a character's tag may go, world px: the room of the tile it stands on now (floor and top
+ * wall), not its seat's, since the tag follows the agent into the lobby while it walks or drinks
+ * its coffee. A tile with no area gives the whole map.
+ */
+export function tagRoom(
+  layout: Pick<OfficeLayout, 'areaTiles' | 'cols' | 'rows'>,
+  ch: Pick<Character, 'tileCol' | 'tileRow'>,
+): Rect {
+  return roomRect(layout, layout.areaTiles?.[ch.tileRow * layout.cols + ch.tileCol] ?? null);
 }
 
 /** Where the sprite is drawn now, CSS px: from the head's top to the feet, one sprite wide. */
@@ -225,6 +243,44 @@ function headRect(project: OverlayProjection, c: Character): Rect {
   return screenRect(project, { x: c.x - TILE_SIZE / 2, y: top, w: TILE_SIZE, h: FACE_WORLD_PX });
 }
 
+/** What one agent's slots are built from, CSS px. */
+export interface SlotGeometry {
+  /** The centre x the tag hangs from: the agent's. */
+  x: number;
+  /** The desk unit while it sits at its seat, else its sprite: what a tag under it hangs from. */
+  unit: Rect;
+  body: Rect;
+  /** The head's top edge, nap bob included. */
+  headTop: number;
+  tagH: number;
+  /** The tag and what rides on it above the head (the FX text, then the bubble). */
+  groupH: number;
+}
+
+function slotOn(side: 'under' | 'above', g: SlotGeometry): TagSlot {
+  return side === 'under'
+    ? { x: g.x, y: g.unit.y + g.unit.h + TAG_DESK_GAP_PX, h: g.tagH, below: true, anchor: g.unit }
+    : {
+        x: g.x,
+        y: g.headTop - TAG_HEAD_GAP_PX - g.groupH,
+        h: g.groupH,
+        below: false,
+        anchor: g.body,
+      };
+}
+
+/**
+ * The agent's open side, the one slot its tag hangs from: under the desk unit for one seated
+ * facing up (the desk is over its head, and the chair back hides it below), above the head for
+ * every other agent (face-on at its desk, on a couch, or standing, `facing` null). Under the
+ * unit the tag's top edge sits TAG_DESK_GAP_PX under the chair back and what rides on it stays
+ * over the head; above the head its bottom edge sits TAG_HEAD_GAP_PX over the head and the riders
+ * stack over it. The other side of a desk pod is the next seat's cell, so it is only a fallback.
+ */
+export function openSideSlots(facing: Direction | null, g: SlotGeometry): TagSlot[] {
+  return [slotOn(facing === Direction.UP ? 'under' : 'above', g)];
+}
+
 /** One character's tag for the monitor pass: its box, CSS px, and its solver rank. */
 export interface MonitorTagInput {
   id: number;
@@ -233,23 +289,32 @@ export interface MonitorTagInput {
   h: number;
 }
 
+/** A lit desk's frame, CSS px: the outline around the desk unit (pulled back where a neighbour is
+ *  too near, see separateFrames). Its owner's tag is pinned to it. */
+export interface LitFrameBox {
+  id: number;
+  unit: Rect;
+  outline: Rect;
+}
+
 /**
  * Beside the rail: the crew banners on their walls first, then every tag through the solver
- * (placeTags): under its desk (or feet), else above its head, clear of every sprite body, window,
- * plaque, banner, desk badge and other tag, inside its room. What rides on a tag above the head
- * (the FX text, then the bubble) is placed with it, so the stack keeps its order; a tag under the
- * desk leaves them over the head. Writes the bubble lifts and weather anchors like the classic
- * pass, and the snapshot the e2e reads.
+ * (placeTags). A lit desk's tag goes to its frame's corner (the top edge, or the bottom edge for
+ * an agent facing up); every other tag hangs from its agent's open side, else the other side on a
+ * leader, clear of every sprite body, plaque, banner, other tag and lit desk, inside the room the
+ * agent stands in. What rides on a tag above the head (the FX text, then the bubble) is placed with
+ * it, so the stack keeps its order; a tag under the desk leaves them over the head. Writes the
+ * bubble lifts and weather anchors like the classic pass, and the snapshot the e2e reads.
  */
 export function layoutMonitorTags(input: {
   officeState: OfficeState;
   project: OverlayProjection;
   container: DOMRect;
   items: readonly MonitorTagInput[];
-  /** What no tag covers; one with an owner (a lit desk's frame) is in every tag's way but its own. */
+  /** What no tag covers (the plaques, the stage chrome). */
   obstacles: readonly TagObstacle[];
-  /** The desk badges (`! 12m` on a lit desk's outline): obstacles, and in the snapshot. */
-  badges: ReadonlyArray<{ id: number; rect: Rect }>;
+  /** The lit desks: in every tag's way but their owner's, and where that tag is pinned. */
+  frames: readonly LitFrameBox[];
   /** Places the crew banners clear of `avoid` (and, on a wall, of `wallAvoid`). */
   placeBanners: (avoid: readonly Rect[], wallAvoid: readonly Rect[]) => PlacedBanner[];
   plaques: readonly PlacedPlaque[];
@@ -266,17 +331,9 @@ export function layoutMonitorTags(input: {
   const gap = OVERLAY_STACK_GAP_PX;
   const chars = [...officeState.characters.values()];
   const bodies = chars.map((c) => bodyRect(project, c));
-  const windows = officeState.furniture
-    .filter((f) => f.type?.startsWith(WINDOW_TYPE_PREFIX))
-    .map((f) =>
-      screenRect(project, {
-        x: f.x,
-        y: f.y,
-        w: spriteWorldWidth(f.sprite),
-        h: spriteWorldHeight(f.sprite),
-      }),
-    );
-  const badgeRects = input.badges.map((b) => b.rect);
+  const frames = new Map(input.frames.map((f) => [f.id, f] as const));
+  // A lit desk is its agent's: no other tag sits inside its frame.
+  const frameObstacles: TagObstacle[] = input.frames.map((f) => ({ owner: f.id, ...f.outline }));
   const fxBoxes = new Map<number, { w: number; h: number }>();
   for (const e of officeState.fx.active) {
     const box = fxTextBox(e, input.fxScale);
@@ -288,6 +345,8 @@ export function layoutMonitorTags(input: {
     h: spriteWorldHeight(BUBBLE_WAITING_SPRITE) * zoomCss,
   };
   const riders = new Map<number, { fx: { w: number; h: number } | null; bubble: boolean }>();
+  // A tag never grows past its room: the name's ellipsis takes the rest.
+  const tagWidths = new Map<number, number>();
   // A bubble drawn where it is by default (its tag under the desk) is in every other tag's way.
   const bubbleSpots: TagObstacle[] = [];
   const items: TagItem[] = [];
@@ -299,6 +358,7 @@ export function layoutMonitorTags(input: {
       ch,
       officeState.tripwires.has(it.id),
       officeState.health.get(it.id),
+      officeState,
     );
     riders.set(it.id, { fx, bubble });
     const body = bodyRect(project, ch);
@@ -315,27 +375,50 @@ export function layoutMonitorTags(input: {
     }
     const unitWorld = officeState.deskUnitOf(ch);
     const unit = unitWorld ? screenRect(project, unitWorld) : body;
+    const bounds = screenRect(project, tagRoom(layout, ch));
+    const room = bounds.w - 2 * TAG_PAD_PX;
+    const tagW = Math.min(it.w, room);
+    tagWidths.set(it.id, tagW);
     const groupH = it.h + (fx ? gap + fx.h : 0) + (bubble ? gap + bubbleBox.h : 0);
-    const headTop = project.toScreenY(
-      spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch), napHeadBobPx(ch)),
-    );
+    const geometry: SlotGeometry = {
+      x: cx,
+      unit,
+      body,
+      headTop: project.toScreenY(spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch), napHeadBobPx(ch))),
+      tagH: it.h,
+      groupH,
+    };
+    const facing = officeState.seatFacingOf(ch);
+    const open = openSideSlots(facing, geometry);
+    // The other side of the agent: on a leader to the agent itself wherever the tag lands. Under a
+    // desk the tag touches the desk, so a leader to the desk would not be drawn and the tag would
+    // read as the next seat's.
+    const other = {
+      ...slotOn(open[0].below ? 'above' : 'under', geometry),
+      anchor: body,
+      leader: true,
+    };
+    // A lit desk's tag goes to its frame, but only for one sitting at it: a frame around an empty
+    // desk (its agent walking) would name the desk, not the agent.
+    const frame = unitWorld ? frames.get(it.id) : undefined;
     items.push({
       id: it.id,
       rank: it.rank,
       col: ch.tileCol,
       row: ch.tileRow,
-      w: Math.max(it.w, fx?.w ?? 0, bubble ? bubbleBox.w : 0),
+      w: Math.min(Math.max(tagW, fx?.w ?? 0, bubble ? bubbleBox.w : 0), room),
+      tagW,
       tagH: it.h,
-      slots: [
-        { x: cx, y: unit.y + unit.h + TAG_DESK_GAP_PX, h: it.h, below: true, anchor: unit },
-        { x: cx, y: headTop - TAG_HEAD_GAP_PX - groupH, h: groupH, below: false, anchor: body },
-      ],
-      bounds: screenRect(
-        project,
-        withTopWallFace(
-          roomFloorRect(layout.areaTiles, layout.cols, layout.rows, officeState.roomOf(ch)),
-        ),
-      ),
+      slots: [...open, other],
+      bounds,
+      pin: frame
+        ? {
+            outline: frame.outline,
+            unit: frame.unit,
+            edge: facing === Direction.UP ? 'bottom' : 'top',
+            groupH,
+          }
+        : undefined,
     });
   }
   const opts = {
@@ -345,15 +428,33 @@ export function layoutMonitorTags(input: {
     farReach: TAG_FAR_REACH_PX,
     pad: TAG_PAD_PX,
     sideCost: TAG_SIDE_COST,
+    leaderPx: TAG_LEADER_PX,
   };
   // The banners first, on their walls: a tag finds another spot more easily than a banner does.
   // Then the agents' tags, then the helpers', clear of it all.
-  const banners = input.placeBanners([...input.obstacles, ...bodies, ...badgeRects], badgeRects);
+  // A banner keeps off the spots the agents' tags hang from over their heads: on a top row that
+  // is the wall band, and a tag pushed off it would need a leader. The spot is where the tag lands
+  // inside its room, with the solver's air around it and one step either side (the solver moves a
+  // tag in whole steps, so a gap narrower than that fits nothing).
+  const tagSpots: Rect[] = items
+    .filter((it) => it.rank < HELPER_RANK)
+    .flatMap((it) => {
+      const [slot] = it.slots;
+      const w = it.pin ? (it.tagW ?? it.w) : it.w;
+      const x = it.pin ? it.pin.outline.x : slot.x - w / 2;
+      const y = it.pin ? it.pin.outline.y - it.pin.groupH : slot.y;
+      const h = it.pin ? it.pin.groupH : slot.h;
+      if (!it.pin && slot.below) return [];
+      const b = it.bounds;
+      const left = Math.max(b.x, Math.min(x, b.x + b.w - w));
+      const side = TAG_PAD_PX + TAG_STEP_PX;
+      return [{ x: left - side, y: y - TAG_PAD_PX, w: w + 2 * side, h: h + 2 * TAG_PAD_PX }];
+    });
+  const banners = input.placeBanners([...input.obstacles, ...frameObstacles, ...bodies], tagSpots);
   const fixed: TagObstacle[] = [
     ...input.obstacles,
+    ...frameObstacles,
     ...bodies,
-    ...windows,
-    ...badgeRects,
     ...banners.map((b) => b.rect),
     ...bubbleSpots,
   ];
@@ -388,8 +489,9 @@ export function layoutMonitorTags(input: {
       tagPlacements.set(it.id, null);
       continue;
     }
+    const tagW = tagWidths.get(it.id) ?? it.w;
     const cx = hit.group.x + hit.group.w / 2;
-    const tag = { x: cx - it.w / 2, y: hit.tag.y, w: it.w, h: hit.tag.h };
+    const tag = { x: cx - tagW / 2, y: hit.tag.y, w: tagW, h: hit.tag.h };
     tagPlacements.set(it.id, { ...hit, tag });
     const leader = hit.leader ? tagLeader(tag, hit.anchor, TAG_LEADER_PX) : null;
     if (leader) leaders.set(it.id, leader);
@@ -416,23 +518,16 @@ export function layoutMonitorTags(input: {
     w: r.w,
     h: r.h,
   });
-  const rooms = new Map(items.map((it) => [it.id, it.bounds] as const));
   lastTagLayout = {
     tags: [...tagPlacements].flatMap(([id, p]) =>
-      p
-        ? [
-            {
-              id,
-              rect: page(p.tag),
-              room: page(rooms.get(id) ?? p.tag),
-              anchor: page(p.anchor),
-              leader: leaders.has(id),
-            },
-          ]
-        : [],
+      p ? [{ id, rect: page(p.tag), anchor: page(p.anchor), leader: leaders.has(id) }] : [],
     ),
     heads: chars.map((c) => ({ id: c.id, rect: page(headRect(project, c)) })),
-    badges: input.badges.map((b) => ({ id: b.id, rect: page(b.rect) })),
+    rooms: (layout.areas ?? []).flatMap((a) =>
+      layout.areaTiles?.includes(a.label)
+        ? [{ label: a.label, rect: page(screenRect(project, roomRect(layout, a.label))) }]
+        : [],
+    ),
     banners: banners.map((b) => ({
       leadId: b.leadId,
       rect: page(b.rect),

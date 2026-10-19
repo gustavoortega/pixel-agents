@@ -10,6 +10,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { WorkflowRun } from '../../core/src/messages.js';
+import { TAG_STATE_MAX_CHARS } from '../src/constants.js';
 import { monitorMessages } from '../src/heroScene.js';
 import { CrewBanner } from '../src/office/components/CrewBanner.js';
 import { Medal } from '../src/office/components/Medal.js';
@@ -18,9 +19,20 @@ import { crewBannerSize, crewBannerView } from '../src/office/crewBanner.js';
 import { crewLines } from '../src/office/crewLines.js';
 import { OfficeState } from '../src/office/engine/officeState.js';
 import { layoutLabels } from '../src/office/labelLayout.js';
-import { plateBoxHeight } from '../src/office/nameplate.js';
-import { type PlateFacts, plateState, stateText } from '../src/office/plateState.js';
-import { overlayContent } from '../src/office/toolUtils.js';
+import {
+  plateBoxHeight,
+  plateBoxWidth,
+  plateFit,
+  setMonitorFullPlates,
+} from '../src/office/nameplate.js';
+import {
+  type PlateFacts,
+  type PlateState,
+  plateState,
+  stateText,
+  tagStateText,
+} from '../src/office/plateState.js';
+import { type NameplateContent, overlayContent } from '../src/office/toolUtils.js';
 import type { OfficeLayout } from '../src/office/types.js';
 import { TileType } from '../src/office/types.js';
 
@@ -117,6 +129,58 @@ describe('C6.1 plate line 1: needs you > done > command > verb > asleep > idle',
 function medalHtml(tier: 1 | 2 | 3 | 4 | null, fraction: number | null): string {
   return renderToStaticMarkup(createElement(Medal, { spec: { tier, fraction }, px: 24 }));
 }
+
+describe('a monitor tag says its state whole or not at all', () => {
+  const ago = (min: number) => NOW - min * MIN;
+  it.each<[string, PlateState, string | null]>([
+    ['asleep says when it wakes', { kind: 'asleep', until: NOW + 25 * MIN }, 'wake 15:45'],
+    ['idle under an hour', { kind: 'idle', since: ago(12) }, 'idle 12m'],
+    ['idle from an hour drops the m', { kind: 'idle', since: ago(68) }, 'idle 1h08'],
+    ['idle with no start has no number', { kind: 'idle', since: null }, 'idle'],
+    ['a short verb as it is', { kind: 'verb', verb: 'thinking' }, 'thinking'],
+    ['a long verb is left out', { kind: 'verb', verb: 'compacting context' }, null],
+    ['a short command as it is', { kind: 'cmd', cmd: 'git push' }, 'git push'],
+    ['a long command gives its first word', { kind: 'cmd', cmd: 'npm run test:webview' }, 'npm'],
+    ['a long first word is left out', { kind: 'cmd', cmd: 'kubectl-argo-rollouts get' }, null],
+    ['done', { kind: 'done' }, 'done'],
+  ])('%s', (_name, state, words) => {
+    expect(tagStateText(state, NOW)).toBe(words);
+    expect([...(words ?? '')].length).toBeLessThanOrEqual(TAG_STATE_MAX_CHARS);
+  });
+
+  describe('plateFit', () => {
+    const saved = globalThis.window;
+    beforeEach(() => {
+      (globalThis as { window?: unknown }).window = { devicePixelRatio: 1 };
+    });
+    afterEach(() => {
+      setMonitorFullPlates(false);
+      (globalThis as { window?: unknown }).window = saved;
+    });
+    const plate: NameplateContent = {
+      name: 'Dennis',
+      namePv: false,
+      medal: null,
+      state: { kind: 'asleep', until: NOW + 25 * MIN },
+      loop: false,
+      sub: null,
+      helper: false,
+      rarity: null,
+      pill: null,
+    };
+
+    it('beside the rail a state that does not fit is gone, where a panel plate cuts it', () => {
+      // A few px short of the whole state: room for a stub of it, not for the words.
+      setMonitorFullPlates(false);
+      const width = plateBoxWidth(plate, false, NOW) - 6;
+      expect(plateFit(plate, false, NOW, width).state).toBe('cut');
+      setMonitorFullPlates(true);
+      const tagWidth = plateBoxWidth(plate, false, NOW) - 6;
+      expect(plateFit(plate, false, NOW, tagWidth).state).toBe('none');
+      expect(plateFit(plate, false, NOW, tagWidth + 6).state).toBe('full');
+    });
+  });
+});
 
 describe('C6.2 the medal', () => {
   it('91% context turns the ring coral', () => {

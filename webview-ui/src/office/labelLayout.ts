@@ -266,6 +266,20 @@ export interface TagSlot {
   h: number;
   below: boolean;
   anchor: Rect;
+  /** A slot on the agent's closed side: a tag there hangs from a leader wherever it lands. */
+  leader?: boolean;
+}
+
+/** A tag pinned to its lit desk's frame: on an edge of the outline, at its corner. */
+export interface TagPin {
+  /** The frame's outer edge, CSS px (the unit grown by the outline, pulled back by a neighbour). */
+  outline: Rect;
+  /** The desk unit the outline surrounds: what the tag hangs from. */
+  unit: Rect;
+  /** The edge it sits on first: `top` puts the tag over the frame, `bottom` under it. */
+  edge: 'top' | 'bottom';
+  /** The group's height over the frame's top edge: the tag and what rides on it. */
+  groupH: number;
 }
 
 /** One character's tag for the monitor's solver, CSS px. */
@@ -275,12 +289,17 @@ export interface TagItem {
   rank: number;
   col: number;
   row: number;
-  /** Its slots, preferred first: under the desk (or the feet), then above the head. */
+  /** Its slots, the agent's open side first, then the other side, which hangs from a leader. */
   slots: readonly TagSlot[];
+  /** The group's width: the widest of the tag and what rides on it above the head. */
   w: number;
+  /** The tag's own width when it is narrower than the group (`w` otherwise). */
+  tagW?: number;
   tagH: number;
   /** Where the tag may go: its room's floor and top wall. */
   bounds: Rect;
+  /** A lit desk's tag goes to its frame's corner before it looks for a slot. */
+  pin?: TagPin;
 }
 
 export interface TagPlacement {
@@ -307,6 +326,8 @@ export interface TagSolverOptions {
   pad: number;
   /** A sideways step costs this many vertical ones. */
   sideCost: number;
+  /** A leader's thickness. */
+  leaderPx: number;
 }
 
 /** An obstacle; one with an `owner` is in the way of every tag but that character's own. */
@@ -332,13 +353,28 @@ function movesWithin(step: number, reach: number, sideCost: number): Array<[numb
   );
 }
 
+/** Sideways moves along an edge, none first and then by distance, `inward` (+1 or -1) side first,
+ *  up to `width`. */
+function slidesAlong(step: number, width: number, inward: 1 | -1): number[] {
+  const out = [0];
+  for (let k = 1; k * step <= width; k++) out.push(inward * k * step, -inward * k * step);
+  return out;
+}
+
 /**
- * The monitor's tags. Each one tries its slots in order (under the desk, then above the head):
- * first at most `leaderAt` from a slot, then within `reach`, then within `farReach`, cheapest move
- * first (vertical before sideways). Free means clear of every obstacle (sprite bodies, windows,
- * plaques, banners, desk badges) and of the tags placed before it, by `pad`, and inside its room.
- * A tag moved more than `leaderAt`, or left farther than `reach` from its anchor, gets a leader. A
- * tag with no free spot gets null: it is not drawn, so no tag ever covers another or a face.
+ * The monitor's tags, in rank order. A lit desk's tag (`pin`) goes to its frame first: its left
+ * edge on the outline's outer left (its right edge on the outer right when that would cross the
+ * room's right bound), over the top edge, or under the bottom edge for one facing up. On a
+ * collision it slides along the edge, dy 0, up to its own width, then tries the other edge the
+ * same way; with no spot there it falls back to the slots below, always on a leader.
+ *
+ * Each slot (the agent's open side, then the other) is searched whole before the next: first at
+ * most `leaderAt` from the slot, then within `reach`, then within `farReach`, cheapest move first
+ * (vertical before sideways). Free means clear of every obstacle (sprite bodies, plaques, banners,
+ * other lit desks) and of the tags placed before it, by `pad`, and inside its room. A tag moved
+ * more than `leaderAt`, left farther than `reach` from its anchor, or on a slot marked `leader`
+ * gets a leader, which must reach its anchor and cross no obstacle. A tag with no free spot gets
+ * null: it is not drawn, so no tag ever covers another or a face.
  */
 export function placeTags(
   items: readonly TagItem[],
@@ -351,13 +387,15 @@ export function placeTags(
   const placed: Rect[] = [];
   const out = new Map<number, TagPlacement | null>();
   const pad = opts.pad;
-  const near = movesWithin(opts.step, opts.leaderAt, opts.sideCost);
-  const mid = movesWithin(opts.step, opts.reach, opts.sideCost).filter(
-    ([dx, dy]) => Math.hypot(dx, dy) > opts.leaderAt,
-  );
-  const far = movesWithin(opts.step, opts.farReach, opts.sideCost).filter(
-    ([dx, dy]) => Math.hypot(dx, dy) > opts.reach,
-  );
+  const tiers = [
+    movesWithin(opts.step, opts.leaderAt, opts.sideCost),
+    movesWithin(opts.step, opts.reach, opts.sideCost).filter(
+      ([dx, dy]) => Math.hypot(dx, dy) > opts.leaderAt,
+    ),
+    movesWithin(opts.step, opts.farReach, opts.sideCost).filter(
+      ([dx, dy]) => Math.hypot(dx, dy) > opts.reach,
+    ),
+  ];
   for (const it of order) {
     const b = it.bounds;
     const free = (r: Rect): boolean => {
@@ -368,22 +406,59 @@ export function placeTags(
         !placed.some((p) => intersects(grown, p))
       );
     };
+    // A leader that misses what it hangs from, or runs over something, does not keep the owner
+    // clear. Its ends meet the tag and the anchor, so they are left out of the crossing test (the
+    // leader's coordinates are rounded).
+    const leaderOk = (tag: Rect, anchor: Rect): boolean => {
+      const line = tagLeader(tag, anchor, opts.leaderPx);
+      if (!line) return true;
+      const vertical = line.h >= line.w;
+      const body = vertical
+        ? { ...line, y: line.y + 1, h: Math.max(0, line.h - 2) }
+        : { ...line, x: line.x + 1, w: Math.max(0, line.w - 2) };
+      return (
+        rectGap(line, anchor) <= 1 &&
+        !obstacles.some((o) => o.owner !== it.id && intersects(body, o))
+      );
+    };
     let hit: TagPlacement | null = null;
-    search: for (const moves of [near, mid, far]) {
-      for (const slot of it.slots) {
+    const pin = it.pin;
+    if (pin) {
+      const w = it.tagW ?? it.w;
+      const flip = pin.outline.x + w > b.x + b.w;
+      const x0 = flip ? pin.outline.x + pin.outline.w - w : pin.outline.x;
+      const edges =
+        pin.edge === 'top' ? (['top', 'bottom'] as const) : (['bottom', 'top'] as const);
+      pinned: for (const edge of edges) {
+        const above = edge === 'top';
+        const h = above ? pin.groupH : it.tagH;
+        const y = above ? pin.outline.y - h : pin.outline.y + pin.outline.h;
+        for (const dx of slidesAlong(opts.step, w, flip ? -1 : 1)) {
+          const x = x0 + dx;
+          // Still over the frame's edge, not beside it.
+          if (x >= pin.outline.x + pin.outline.w || x + w <= pin.outline.x) continue;
+          const group = { x, y, w, h };
+          if (!free(group)) continue;
+          const tag = { x, y: y + h - it.tagH, w, h: it.tagH };
+          hit = { tag, group, below: !above, shift: Math.abs(dx), anchor: pin.unit, leader: false };
+          break pinned;
+        }
+      }
+    }
+    search: for (const slot of hit ? [] : it.slots) {
+      for (const moves of tiers) {
         for (const [dx, dy] of moves) {
           const group = { x: slot.x - it.w / 2 + dx, y: slot.y + dy, w: it.w, h: slot.h };
           if (!free(group)) continue;
           const tag = { x: group.x, y: group.y + slot.h - it.tagH, w: it.w, h: it.tagH };
           const shift = Math.hypot(dx, dy);
-          hit = {
-            tag,
-            group,
-            below: slot.below,
-            shift,
-            anchor: slot.anchor,
-            leader: shift > opts.leaderAt || rectGap(tag, slot.anchor) > opts.reach,
-          };
+          const leader =
+            !!slot.leader ||
+            !!pin ||
+            shift > opts.leaderAt ||
+            rectGap(tag, slot.anchor) > opts.reach;
+          if (leader && !leaderOk(tag, slot.anchor)) continue;
+          hit = { tag, group, below: slot.below, shift, anchor: slot.anchor, leader };
           break search;
         }
       }

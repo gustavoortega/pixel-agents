@@ -53,12 +53,13 @@ import {
   TAG_BORDER_PX,
   TAG_LARGE,
   TAG_PAD_Y_PX,
+  TAG_QUIET_TEXT,
   TAG_SHADOW_PX,
   TAG_SMALL,
   TILE_SIZE,
 } from '../constants.js';
 import { ANCHORS } from './flair/accessories.js';
-import { alertText, stateText } from './plateState.js';
+import { alertText, stateText, tagStateText } from './plateState.js';
 import type { NameplateContent, PlatePart } from './toolUtils.js';
 import type { Direction } from './types.js';
 import { Direction as Dir } from './types.js';
@@ -158,7 +159,7 @@ export function isMonitorTag(compact: boolean): boolean {
   return monitorFullPlates && !fullPlates && !compact;
 }
 
-/** The type sizes of the monitor's office text (tags, the desk badge, plaques), CSS px. */
+/** The type sizes of the monitor's office text (tags, helper tags, plaques), CSS px. */
 export type MonitorType = { readonly [K in keyof typeof TAG_LARGE]: number };
 
 /** The large set where the map is drawn at 3 CSS px per world px or more (1920 beside the rail),
@@ -249,11 +250,17 @@ export function pixelTextWidth(text: string, fontPx: number): number {
   return Math.ceil(em * fontPx);
 }
 
+/** The state words a plate prints: a monitor tag's are whole words of a few characters or none. */
+export function plateStateWords(c: Pick<NameplateContent, 'state'>, compact: boolean, now: number) {
+  if (!c.state) return null;
+  return isMonitorTag(compact) ? tagStateText(c.state, now) : stateText(c.state, now);
+}
+
 /** Widths of a plate's line-1 pieces at scale 1, CSS px. */
 function line1Pieces(c: NameplateContent, compact: boolean, now: number) {
   const m = plateMetrics(c, compact);
   const alert = c.state?.kind === 'alert' ? c.state.alert : null;
-  const words = c.state ? stateText(c.state, now) : null;
+  const words = plateStateWords(c, compact, now);
   const cmd = c.state?.kind === 'cmd';
   return {
     m,
@@ -304,7 +311,8 @@ export function plateBoxWidth(
 }
 
 /** What a plate of a given width shows: its state words whole, cut, or not at all, and the
- *  parts of line 2 that fit (the branch cut to a stub before a later part is dropped). */
+ *  parts of line 2 that fit (the branch cut to a stub before a later part is dropped). A monitor
+ *  tag never cuts: its state is whole or gone. */
 export interface PlateFit {
   state: 'full' | 'cut' | 'none';
   sub: readonly PlatePart[] | null;
@@ -327,7 +335,8 @@ export function plateFit(
     } else {
       const base = row([p.tab, p.medal, p.name, p.loop]);
       const left = room - base - PLATE_ITEM_GAP_PX;
-      state = left >= p.state ? 'full' : left >= stub(p.m.stateFont) ? 'cut' : 'none';
+      const cutOk = !isMonitorTag(compact) && left >= stub(p.m.stateFont);
+      state = left >= p.state ? 'full' : cutOk ? 'cut' : 'none';
     }
   }
   let sub: PlatePart[] | null = null;
@@ -376,9 +385,10 @@ export interface NameplateStyle {
 }
 
 /** Plate colors: the selected agent's plate is paper (the inspector holds its details), an idle
- *  one goes quiet, a compact one is a little see-through. The tier shows on the medal. */
+ *  one goes quiet, a compact one is a little see-through. A quiet monitor tag (`tag`) keeps the
+ *  ink, opaque, and sets its words in TAG_QUIET_TEXT. The tier shows on the medal. */
 export function nameplateStyle(
-  look: { compact?: boolean; quiet?: boolean; selected?: boolean } = {},
+  look: { compact?: boolean; quiet?: boolean; selected?: boolean; tag?: boolean } = {},
 ): NameplateStyle {
   if (look.selected)
     return {
@@ -388,6 +398,15 @@ export function nameplateStyle(
       border: NAMEPLATE_BORDER_COLOR,
       quiet: false,
       paper: true,
+    };
+  if (look.quiet && look.tag)
+    return {
+      bg: NAMEPLATE_BG,
+      text: TAG_QUIET_TEXT,
+      state: TAG_QUIET_TEXT,
+      border: NAMEPLATE_BORDER_COLOR,
+      quiet: true,
+      paper: false,
     };
   return {
     bg: look.quiet ? PLATE_QUIET_BG : look.compact ? NAMEPLATE_COMPACT_BG : NAMEPLATE_BG,

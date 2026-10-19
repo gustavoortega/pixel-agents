@@ -105,15 +105,18 @@ declare global {
         helperId: number;
         kind: 'crew' | 'sub';
       }>;
-      /** The lit desks the last drawn frame drew (canvas only): world px, tone, blink frame. */
+      /** The lit desks the last drawn frame drew (canvas only): world px, tone, blink frame, and
+       *  the desk unit as the canvas drew it in page CSS px (what a DOM tag is measured against). */
       getDeskHighlights?: () => ReadonlyArray<{
         id: number;
         tone: 'wait' | 'stuck';
         rect: { x: number; y: number; w: number; h: number };
         frame: 0 | 1;
+        page: { x: number; y: number; w: number; h: number } | null;
       }>;
       /** Beside the rail, what the last overlay render placed (page CSS px): the tags, every face
-       *  (canvas, so no DOM), the crew banners with their wall band, the room plaques. */
+       *  (canvas, so no DOM), the rooms a tag may fill, the crew banners with their wall band, the
+       *  room plaques. */
       getTagLayout?: () => TagLayoutSnapshot;
       /** Open or close the inspector sheet the way the keys do (sheetControl.ts). */
       openSheet?: () => void;
@@ -183,13 +186,28 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
   hooks.getCrewLines = () =>
     lastDrawnCrewLines().map((l) => ({ leadId: l.leadId, helperId: l.helperId, kind: l.kind }));
 
-  hooks.getDeskHighlights = () =>
-    lastDrawnDeskHighlights().map((h) => ({
+  hooks.getDeskHighlights = () => {
+    // The office canvas is the page's biggest: device px over the ratio, from its page corner.
+    const canvas = Array.from(document.querySelectorAll('canvas')).sort(
+      (a, b) => b.width * b.height - a.width * a.height,
+    )[0];
+    const at = canvas?.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    return lastDrawnDeskHighlights().map((h) => ({
       id: h.id,
       tone: h.tone,
       rect: h.rect,
       frame: h.frame,
+      page: at
+        ? {
+            x: at.left + h.dev.x / dpr,
+            y: at.top + h.dev.y / dpr,
+            w: h.dev.w / dpr,
+            h: h.dev.h / dpr,
+          }
+        : null,
     }));
+  };
 
   hooks.getTagLayout = () => lastMonitorTagLayout();
 

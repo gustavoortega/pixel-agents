@@ -25,8 +25,8 @@ import {
   CREW_BANNER_WALL_INSET_PX,
   CREW_BANNER_WALL_MIN_SCALE,
   CREW_BANNER_WALL_SCALE_STEP,
+  DESK_HIGHLIGHT_GAP_PX,
   DESK_HIGHLIGHT_OUTLINE_PX,
-  HELPER_TAG_OPACITY,
   HELPER_TAG_PAD_X_PX,
   LABEL_LAYOUT_DIM_OPACITY,
   NAMEPLATE_PILL_GAP_PX,
@@ -52,7 +52,6 @@ import {
   PLATE_WAIT_INK,
   RARITY_SHIMMER_SEC,
   STAGE_CHROME_SELECTORS,
-  TAG_BORDER_PX,
   TAG_PAD_Y_PX,
   TEAM_LEAD_COLOR,
   TEAM_ROLE_COLOR,
@@ -70,6 +69,7 @@ import {
   crewRunId,
   placeCrewBanner,
 } from '../crewBanner.js';
+import { separateFrames } from '../deskHighlight.js';
 import type { OfficeState } from '../engine/officeState.js';
 import { isShowModelFlairEnabled } from '../engine/renderer.js';
 import { characterFlair, Rarity } from '../flair/modelFlair.js';
@@ -125,17 +125,12 @@ import {
   plateScale,
   type PlateSide,
   plateSide,
+  plateStateWords,
   setMonitorTagZoom,
   spriteHeadTopY,
 } from '../nameplate.js';
 import { stackAbove, weatherAnchorY } from '../overlayStack.js';
-import {
-  alertText,
-  type PlateAlert,
-  type PlateFacts,
-  plateState,
-  stateText,
-} from '../plateState.js';
+import { alertText, type PlateFacts, plateState, stateText } from '../plateState.js';
 import { type OverlayProjection, overlayProjection } from '../projection.js';
 import { seatedBubbleOffsetPx, seatedDrawOffsetPx } from '../seatDraw.js';
 import { BUBBLE_WAITING_SPRITE } from '../sprites/spriteData.js';
@@ -249,7 +244,7 @@ function PlateBox({
 }) {
   const m = plateMetrics(plate, compact);
   const alert = plate.state?.kind === 'alert' ? plate.state.alert : null;
-  const words = plate.state ? stateText(plate.state, now) : null;
+  const words = plateStateWords(plate, compact, now);
   const kind = plate.state?.kind;
   const stateColor =
     kind === 'done'
@@ -416,6 +411,7 @@ function CompactLabel({
     compact,
     selected,
     quiet: plate?.state?.kind === 'idle',
+    tag: isMonitorTag(compact),
   });
   // The chip sits over the plate on an above-head label and under it on a below-feet one.
   const pillMargin = side === 'above' ? 'marginBottom' : 'marginTop';
@@ -738,52 +734,14 @@ function HelperTag({
             ? PLATE_STUCK_INK
             : PLATE_WAIT_INK
           : 'var(--mon-ink-2)',
-        opacity: HELPER_TAG_OPACITY,
       }}
       data-form="helper"
       data-plate-state={plate.state?.kind ?? 'none'}
     >
-      {helperTagWord(plate, now)}
-    </div>
-  );
-}
-
-/** A lit desk's alert (`! 12m`, `× 9m`) on the top edge of its outline. */
-function DeskBadge({
-  id,
-  tone,
-  text,
-  rect,
-  type,
-}: {
-  id: number;
-  tone: PlateAlert['tone'];
-  text: string;
-  rect: Rect;
-  type: MonitorType;
-}) {
-  return (
-    <div
-      className="absolute flex items-center whitespace-nowrap leading-none"
-      style={{
-        left: rect.x,
-        top: rect.y,
-        width: rect.w,
-        height: rect.h,
-        boxSizing: 'border-box',
-        padding: `0 ${PLATE_PAD_X_PX}px`,
-        fontSize: type.badge,
-        background: tone === 'stuck' ? PLATE_STUCK_BG : PLATE_WAIT_BG,
-        color: tone === 'stuck' ? PLATE_STUCK_INK : PLATE_WAIT_INK,
-        border: `${TAG_BORDER_PX}px solid var(--brand-ink)`,
-        pointerEvents: 'none',
-        zIndex: COMPACT_LABEL_Z_INDEX,
-      }}
-      data-testid="desk-badge"
-      data-agent-id={id}
-      data-tone={tone}
-    >
-      {text}
+      {/* The word of a command is session text: privacy masks it. */}
+      <span className={plate.state?.kind === 'cmd' ? 'pv' : undefined}>
+        {helperTagWord(plate, now)}
+      </span>
     </div>
   );
 }
@@ -894,6 +852,8 @@ export function ToolOverlay({
   // Beside the rail every character carries a one-line tag, its type set by the map's CSS zoom.
   const tags = isMonitorTag(compact);
   setMonitorTagZoom(zoom / dpr);
+  // A lit desk's frame and its tag's alert tab say it needs you: the canvas adds no bubble over it.
+  officeState.hideLitBubbles = tags;
   const type = currentMonitorType();
   const fitScale = plateScale(
     zoom,
@@ -933,11 +893,9 @@ export function ToolOverlay({
     | { kind: 'compact'; content: Extract<OverlayContent, { mode: 'compact' | 'marker' }> }
   >();
   const labelItems: LabelItem[] = [];
-  // Beside the rail: the tags for the solver, the lit desks and the alerts their badges carry.
+  // Beside the rail: the tags for the solver, and the lit desks their owners' tags are pinned to.
   const tagInputs: MonitorTagInput[] = [];
   const lit = tags ? officeState.deskHighlights() : [];
-  const litTones = new Map(lit.map((h) => [h.id, h.tone] as const));
-  const badgeAlerts = new Map<number, PlateAlert>();
   const officeLayout = officeState.getLayout();
   const roomSpan = (ch: Character): { x0: number; x1: number } => {
     const world = roomFloorRect(
@@ -996,21 +954,12 @@ export function ToolOverlay({
       if (content.mode === 'compact' && content.plate && tags) {
         const plate = content.plate;
         const alert = plate.state?.kind === 'alert' ? plate.state.alert : null;
-        // A lit desk carries the alert on its outline: the tag keeps the medal and the name.
-        const litTone = litTones.get(id);
-        if (alert && litTone) {
-          badgeAlerts.set(id, alert);
-          plans.set(id, {
-            kind: 'compact',
-            content: { ...content, plate: { ...plate, state: null } },
-          });
-        }
-        const shownPlate = alert && litTone ? { ...plate, state: null } : plate;
+        // A lit agent's tag keeps its alert tab: it sits on its desk's frame, tab, medal and name.
         const box = ch.isSubagent
           ? helperTagBox(helperTagWord(plate, nowMs), type)
           : {
-              w: Math.min(maxWidth, plateBoxWidth(shownPlate, compact, nowMs)),
-              h: plateBoxHeight(shownPlate, compact),
+              w: Math.min(maxWidth, plateBoxWidth(plate, compact, nowMs)),
+              h: plateBoxHeight(plate, compact),
             };
         tagInputs.push({
           id,
@@ -1054,23 +1003,15 @@ export function ToolOverlay({
   const obstacles: TagObstacle[] = [];
   // Beside the rail every room has its plaque on the wall; elsewhere the canvas signs show when on.
   const plaques = tags ? roomPlaques(officeState, project, type) : [];
-  // A lit desk is its agent's: no other tag sits inside its frame.
-  for (const h of lit) {
-    const r = screenRect(project, h.rect);
-    const o = DESK_HIGHLIGHT_OUTLINE_PX;
-    obstacles.push({ owner: h.id, x: r.x - o, y: r.y - o, w: r.w + 2 * o, h: r.h + 2 * o });
-  }
-  // Each lit desk's badge sits on the top edge of its outline, at its left corner, clear of the face.
-  const badges = lit.flatMap((h) => {
-    const alert = badgeAlerts.get(h.id);
-    if (!alert) return [];
-    const r = screenRect(project, h.rect);
-    const text = alertText(alert, nowMs);
-    const w = pixelTextWidth(text, type.badge) + 2 * PLATE_PAD_X_PX + 2 * TAG_BORDER_PX;
-    const hgt = type.badgeLine + 2 * TAG_BORDER_PX;
-    const x = Math.round(r.x - DESK_HIGHLIGHT_OUTLINE_PX);
-    return [{ id: h.id, tone: alert.tone, text, rect: { x, y: Math.round(r.y) - hgt, w, h: hgt } }];
-  });
+  // The lit desks' frames as the canvas draws them, in CSS px: neighbours keep their air, and each
+  // owner's tag goes to its own.
+  const litUnits = lit.map((h) => screenRect(project, h.rect));
+  const litOutlines = separateFrames(litUnits, DESK_HIGHLIGHT_OUTLINE_PX, DESK_HIGHLIGHT_GAP_PX);
+  const frames = lit.map((h, i) => ({
+    id: h.id,
+    unit: litUnits[i],
+    outline: litOutlines[i].outline,
+  }));
   for (const p of plaques) obstacles.push(p.rect);
   // The stage's own chrome over the map (the clock at its top right): no tag or banner under it.
   const chrome = tags ? stageChromeRects(el, containerRect) : [];
@@ -1191,6 +1132,7 @@ export function ToolOverlay({
           ch,
           officeState.tripwires.has(it.id),
           officeState.health.get(it.id),
+          officeState,
         );
         const stack = stackAbove({
           x: it.x,
@@ -1299,7 +1241,7 @@ export function ToolOverlay({
           container: containerRect,
           items: tagInputs,
           obstacles,
-          badges,
+          frames,
           placeBanners,
           plaques,
           fxScale: fitScale,
@@ -1333,9 +1275,6 @@ export function ToolOverlay({
       ))}
       {plaques.map((p) => (
         <RoomPlaque key={p.label} plaque={p} />
-      ))}
-      {badges.map((b) => (
-        <DeskBadge key={b.id} id={b.id} tone={b.tone} text={b.text} rect={b.rect} type={type} />
       ))}
       {[...leaders].map(([id, r]) => (
         <div

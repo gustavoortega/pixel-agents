@@ -1,7 +1,8 @@
 /**
  * The desk of an agent that needs you, lit on the canvas: gold while it waits on a permission or
  * a question, red while it is stuck. Pure: the office hands in plain facts and the desk lookup,
- * the renderer draws the rects this returns.
+ * the renderer draws the rects this returns. Neighbouring frames keep air between them
+ * (`separateFrames`), and the overlay pins a tag to the same outlines.
  */
 
 import {
@@ -125,33 +126,141 @@ function ring(r: Rect, t: number, color: string): PaintOp[] {
   ];
 }
 
+/** Which sides of an outline carry the blinking halo. */
+export interface HaloSides {
+  top: boolean;
+  right: boolean;
+  bottom: boolean;
+  left: boolean;
+}
+
+/** A lit desk's outline (its unit grown by the outline's thickness, then pulled back where a
+ *  neighbour is too near) and the sides that still draw a halo. */
+export interface LitFrame {
+  outline: Rect;
+  halo: HaloSides;
+}
+
+/**
+ * The outlines of the lit desks, in one unit (device px for the canvas, CSS px for the tag
+ * overlay): each unit grown by `outlinePx`, and where two outlines meet or come within `gapPx` of
+ * each other across the axis the units sit apart on, the facing sides pulled back to the midline
+ * `gapPx` apart. Those sides draw no halo. A neighbour is the pair whose outlines also overlap on
+ * the other axis (stacked pods, pods side by side); the axis is the one the units are farther
+ * apart on (or overlap least on). Sides only ever move inward, so a desk with no neighbour keeps
+ * its whole outline and all four halo sides.
+ */
+export function separateFrames(
+  units: readonly Rect[],
+  outlinePx: number,
+  gapPx: number,
+): LitFrame[] {
+  const frames: LitFrame[] = units.map((u) => ({
+    outline: {
+      x: u.x - outlinePx,
+      y: u.y - outlinePx,
+      w: u.w + 2 * outlinePx,
+      h: u.h + 2 * outlinePx,
+    },
+    halo: { top: true, right: true, bottom: true, left: true },
+  }));
+  for (let i = 0; i < units.length; i++) {
+    for (let j = i + 1; j < units.length; j++) {
+      const a = units[i];
+      const b = units[j];
+      const gapX = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w));
+      const gapY = Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h));
+      const alongX = gapX > gapY;
+      const along = alongX ? gapX : gapY;
+      const across = alongX ? gapY : gapX;
+      if (across >= 2 * outlinePx || along - 2 * outlinePx >= gapPx) continue;
+      const aFirst = alongX ? a.x <= b.x : a.y <= b.y;
+      const [lo, hi] = aFirst ? [i, j] : [j, i];
+      const end = alongX ? units[lo].x + units[lo].w : units[lo].y + units[lo].h;
+      const start = alongX ? units[hi].x : units[hi].y;
+      const loEnd = Math.floor((end + start) / 2 - gapPx / 2);
+      const hiStart = loEnd + gapPx;
+      const first = frames[lo];
+      const second = frames[hi];
+      if (alongX) {
+        first.outline.w = Math.min(first.outline.x + first.outline.w, loEnd) - first.outline.x;
+        const left = Math.max(second.outline.x, hiStart);
+        second.outline.w -= left - second.outline.x;
+        second.outline.x = left;
+        first.halo.right = false;
+        second.halo.left = false;
+      } else {
+        first.outline.h = Math.min(first.outline.y + first.outline.h, loEnd) - first.outline.y;
+        const top = Math.max(second.outline.y, hiStart);
+        second.outline.h -= top - second.outline.y;
+        second.outline.y = top;
+        first.halo.bottom = false;
+        second.halo.top = false;
+      }
+    }
+  }
+  return frames;
+}
+
+/** The faint wash of a lit desk on the carpet, under its furniture and people: its unit cut to its
+ *  outline, so a wash never crosses into a neighbour's frame. Both device px. */
+export function washRect(unit: Rect, outline: Rect): Rect {
+  const x = Math.max(unit.x, outline.x);
+  const y = Math.max(unit.y, outline.y);
+  return {
+    x,
+    y,
+    w: Math.max(0, Math.min(unit.x + unit.w, outline.x + outline.w) - x),
+    h: Math.max(0, Math.min(unit.y + unit.h, outline.y + outline.h) - y),
+  };
+}
+
 /** The faint wash of a lit desk on the carpet, under its furniture and people: `r` device px. */
 export function deskHighlightFill(r: Rect, tone: AttentionTone): PaintOp {
   return { color: tone === 'stuck' ? DESK_HIGHLIGHT_STUCK_FILL : DESK_HIGHLIGHT_WAIT_FILL, ...r };
 }
 
 /**
- * A lit desk's frame over the scene, device px: the outline in the rail tile's color around `r`,
- * an ink line just inside it, and on frame 0 a hard halo outside the outline. Thicknesses are CSS
- * px times `dpr`, whole device px.
+ * A lit desk's frame over the scene, device px: the outline in the rail tile's color along the
+ * edge of `frame.outline` (inside it), an ink line just inside that, and on blink frame 0 a hard
+ * halo outside the outline on the sides that keep one. Thicknesses are CSS px times `dpr`, whole
+ * device px.
  */
 export function deskHighlightFrame(
-  r: Rect,
+  frame: LitFrame,
   tone: AttentionTone,
-  frame: 0 | 1,
+  blink: 0 | 1,
   dpr: number,
 ): PaintOp[] {
   const line = Math.max(1, Math.round(DESK_HIGHLIGHT_OUTLINE_PX * dpr));
   const inset = Math.max(1, Math.round(DESK_HIGHLIGHT_INSET_PX * dpr));
   const halo = Math.max(1, Math.round(DESK_HIGHLIGHT_HALO_PX * dpr));
   const stuck = tone === 'stuck';
-  const inner = { x: r.x + inset, y: r.y + inset, w: r.w - 2 * inset, h: r.h - 2 * inset };
-  const outline = { x: r.x - line, y: r.y - line, w: r.w + 2 * line, h: r.h + 2 * line };
-  return [
-    ...(frame === 0
-      ? ring(outline, halo, stuck ? DESK_HIGHLIGHT_STUCK_HALO : DESK_HIGHLIGHT_WAIT_HALO)
+  const o = frame.outline;
+  // The colored band runs along the outline's edge, inside it; `core` is what it surrounds.
+  const core = { x: o.x + line, y: o.y + line, w: o.w - 2 * line, h: o.h - 2 * line };
+  const inner = {
+    x: core.x + inset,
+    y: core.y + inset,
+    w: core.w - 2 * inset,
+    h: core.h - 2 * inset,
+  };
+  const haloColor = stuck ? DESK_HIGHLIGHT_STUCK_HALO : DESK_HIGHLIGHT_WAIT_HALO;
+  const sides = frame.halo;
+  // A bar reaches past a corner only where the side that meets it draws a halo too.
+  const left = o.x - (sides.left ? halo : 0);
+  const right = o.x + o.w + (sides.right ? halo : 0);
+  const halos: PaintOp[] = [
+    ...(sides.top ? [{ color: haloColor, x: left, y: o.y - halo, w: right - left, h: halo }] : []),
+    ...(sides.bottom
+      ? [{ color: haloColor, x: left, y: o.y + o.h, w: right - left, h: halo }]
       : []),
-    ...ring(r, line, stuck ? DESK_HIGHLIGHT_STUCK_COLOR : DESK_HIGHLIGHT_WAIT_COLOR),
+    ...(sides.left ? [{ color: haloColor, x: o.x - halo, y: o.y, w: halo, h: o.h }] : []),
+    ...(sides.right ? [{ color: haloColor, x: o.x + o.w, y: o.y, w: halo, h: o.h }] : []),
+  ];
+  return [
+    ...(blink === 0 ? halos : []),
+    ...ring(core, line, stuck ? DESK_HIGHLIGHT_STUCK_COLOR : DESK_HIGHLIGHT_WAIT_COLOR),
     ...ring(inner, inset, DESK_HIGHLIGHT_INK),
   ];
 }

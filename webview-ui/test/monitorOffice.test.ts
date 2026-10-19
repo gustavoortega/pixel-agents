@@ -7,11 +7,23 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DESK_HIGHLIGHT_BLINK_MS,
+  DESK_HIGHLIGHT_GAP_PX,
   DESK_HIGHLIGHT_INK,
+  DESK_HIGHLIGHT_OUTLINE_PX,
   DESK_HIGHLIGHT_STUCK_COLOR,
   DESK_HIGHLIGHT_STUCK_FILL,
   DESK_HIGHLIGHT_WAIT_COLOR,
   DESK_HIGHLIGHT_WAIT_FILL,
+  TAG_DESK_GAP_PX,
+  TAG_FAR_REACH_PX,
+  TAG_HEAD_GAP_PX,
+  TAG_LEADER_AT_PX,
+  TAG_LEADER_PX,
+  TAG_PAD_PX,
+  TAG_REACH_PX,
+  TAG_SIDE_COST,
+  TAG_STEP_PX,
 } from '../src/constants.js';
 import { crewBannerSize, crewBannerView, placeCrewBanner } from '../src/office/crewBanner.js';
 import {
@@ -19,9 +31,15 @@ import {
   deskHighlightFill,
   deskHighlightFrame,
   deskHighlights,
+  highlightFrame,
   type HighlightSeat,
+  separateFrames,
 } from '../src/office/deskHighlight.js';
+import { OfficeState } from '../src/office/engine/officeState.js';
 import { placeTags, type Rect, type TagItem } from '../src/office/labelLayout.js';
+import { openSideSlots, type SlotGeometry, tagRoom } from '../src/office/monitorTags.js';
+import { type OfficeLayout, TileType } from '../src/office/types.js';
+import { Direction } from '../src/office/types.js';
 
 const T = 16;
 const hit = (a: Rect, b: Rect): boolean =>
@@ -90,23 +108,31 @@ describe('Q3.1 the desk that lights', () => {
 });
 
 /**
- * A top room as the bundled office has it, scaled to a zoom: a wall band of two tiles with
- * windows, four face-on agents one pod (4 tiles) apart at desks two tiles deep, their tags as wide
- * as a long state reads. Each tag's slots: under its desk, then above its head.
+ * A top room as the bundled office has it, scaled to a zoom: a wall band of two tiles, four
+ * face-on agents one pod (4 tiles) apart at desks two tiles deep, their tags as wide as a long
+ * state reads. Each tag hangs from its open side (a face-on agent: above its head).
  */
 function topRow(zoom: number, tagW = 120) {
   const z = (v: number) => v * zoom;
   const room: Rect = { x: 0, y: 0, w: z(17 * T), h: z(8 * T) };
-  const windows: Rect[] = [7, 13].map((c) => ({ x: z(c * T), y: 0, w: z(2 * T), h: z(2 * T) }));
   const agents = [2, 6, 10, 14].map((col, i) => {
     const headTop = z(2 * T) + 13;
     const body = { x: z(col * T), y: headTop, w: z(T), h: z(T + 5) };
     const desk = { x: z((col - 1) * T), y: headTop, w: z(3 * T), h: z(3 * T) - 13 };
     const tagH = 26;
+    const geometry: SlotGeometry = {
+      x: z(col * T + T / 2),
+      unit: desk,
+      body,
+      headTop,
+      tagH,
+      groupH: tagH,
+    };
     return {
       id: i + 1,
       body,
       desk,
+      geometry,
       item: {
         id: i + 1,
         rank: 1,
@@ -114,59 +140,122 @@ function topRow(zoom: number, tagW = 120) {
         row: 3,
         w: tagW,
         tagH,
-        slots: [
-          { x: z(col * T + T / 2), y: desk.y + desk.h + 4, h: tagH, below: true, anchor: desk },
-          { x: z(col * T + T / 2), y: headTop - 6 - tagH, h: tagH, below: false, anchor: body },
-        ],
+        slots: openSideSlots(Direction.DOWN, geometry),
         bounds: room,
       } satisfies TagItem,
     };
   });
-  return { room, windows, agents };
+  return { room, agents };
 }
 
-const SOLVER = { step: 8, leaderAt: 8, reach: 24, farReach: 64, pad: 3, sideCost: 1.5 };
+const SOLVER = {
+  step: TAG_STEP_PX,
+  leaderAt: TAG_LEADER_AT_PX,
+  reach: TAG_REACH_PX,
+  farReach: TAG_FAR_REACH_PX,
+  pad: TAG_PAD_PX,
+  sideCost: TAG_SIDE_COST,
+  leaderPx: TAG_LEADER_PX,
+};
+
+describe('the open side', () => {
+  const g: SlotGeometry = {
+    x: 100,
+    unit: { x: 70, y: 60, w: 60, h: 50 },
+    body: { x: 92, y: 70, w: 16, h: 21 },
+    headTop: 70,
+    tagH: 20,
+    groupH: 44,
+  };
+
+  it('an agent seated facing up hangs its tag under the desk unit, the others above the head', () => {
+    const [under] = openSideSlots(Direction.UP, g);
+    expect(under).toMatchObject({ below: true, y: 110 + TAG_DESK_GAP_PX, h: 20, anchor: g.unit });
+    for (const facing of [Direction.DOWN, Direction.LEFT, Direction.RIGHT, null]) {
+      const slots = openSideSlots(facing, g);
+      expect(slots).toHaveLength(1);
+      // The whole group (tag and riders) ends TAG_HEAD_GAP_PX over the head.
+      expect(slots[0]).toMatchObject({
+        below: false,
+        y: 70 - TAG_HEAD_GAP_PX - 44,
+        h: 44,
+        anchor: g.body,
+      });
+    }
+  });
+});
 
 describe('the tag solver', () => {
   it.each([2, 3, 4])(
-    'at zoom %i every tag goes under its own desk, none on another, a body or a window',
+    'at zoom %i every face-on tag goes above its own head, none on another or a body',
     (zoom) => {
-      const { windows, agents } = topRow(zoom, zoom * 40);
+      const { agents } = topRow(zoom, zoom * 40);
       const bodies = agents.map((a) => a.body);
       const placed = placeTags(
         agents.map((a) => a.item),
-        [...bodies, ...windows],
+        bodies,
         SOLVER,
       );
       const hits = agents.map((a) => placed.get(a.id));
-      expect(hits.every((h) => h?.below && !h.leader)).toBe(true);
+      expect(hits.every((h) => h && !h.below && !h.leader)).toBe(true);
       const rects = hits.map((h) => h!.tag);
       for (const [i, t] of rects.entries()) {
-        for (const o of [...rects.slice(i + 1), ...bodies, ...windows])
-          expect(hit(t, o)).toBe(false);
-        // Under its own desk, still over its own character.
-        const { desk, item } = agents[i];
-        expect(t.y).toBeGreaterThanOrEqual(desk.y + desk.h);
+        for (const o of [...rects.slice(i + 1), ...bodies]) expect(hit(t, o)).toBe(false);
+        // Over its own head.
+        const { item, body } = agents[i];
+        expect(t.y + t.h).toBeLessThanOrEqual(body.y);
         expect(t.x < item.slots[0].x && item.slots[0].x < t.x + t.w).toBe(true);
       }
     },
   );
 
-  it('a tag whose desk slot is taken goes above the head; one moved past 8 px hangs from a leader', () => {
-    const { windows, agents } = topRow(3);
+  it('a tag whose open side is full goes to the other side, always on a leader', () => {
+    const { agents } = topRow(3);
     const [a] = agents;
-    const blocked = { ...a.desk, y: a.desk.y + a.desk.h, h: 60 };
-    const above = placeTags([a.item], [a.body, ...windows, blocked], SOLVER).get(a.id);
-    expect(above?.below).toBe(false);
-    expect(above?.leader).toBe(false);
-    expect(above!.tag.y + above!.tag.h).toBeLessThanOrEqual(a.body.y);
-    // Both slots taken where they stand: the nearest free spot, 16 px down past the block.
-    const lower = { ...blocked, h: 12 + 4 + 26 };
-    const head = { x: a.body.x - 60, y: 0, w: a.body.w + 120, h: a.body.y };
-    const moved = placeTags([a.item], [a.body, lower, head], SOLVER).get(a.id);
-    expect(moved?.shift).toBeGreaterThan(8);
+    // Everything over the head is taken, as far as the solver looks.
+    const crowd = { x: a.body.x - 200, y: 0, w: a.body.w + 400, h: a.body.y };
+    const other = { ...openSideSlots(Direction.UP, a.geometry)[0], leader: true };
+    const item = { ...a.item, slots: [...a.item.slots, other] };
+    const p = placeTags([item], [a.body, crowd], SOLVER).get(a.id);
+    expect(p?.below).toBe(true);
+    // It sits right under the desk (no shift) yet hangs from a leader: the owner stays explicit.
+    expect(p?.shift).toBe(0);
+    expect(p?.leader).toBe(true);
+  });
+
+  it('a tag moved past the leader distance hangs from a leader', () => {
+    const { agents } = topRow(3, 40);
+    const [a] = agents;
+    const slot = a.item.slots[0];
+    // A post on the slot's spot: the tag steps aside, clear of it, and the leader reaches the head.
+    const post = { x: slot.x - 8, y: slot.y, w: 16, h: slot.h + TAG_HEAD_GAP_PX };
+    const moved = placeTags([a.item], [a.body, post], SOLVER).get(a.id);
+    expect(moved?.shift).toBeGreaterThan(TAG_LEADER_AT_PX);
     expect(moved?.leader).toBe(true);
   });
+
+  it.each([
+    ['within the reach', 10, false],
+    ['past the reach', TAG_REACH_PX + 16, true],
+  ])(
+    'a tag left %s of what it hangs from, without moving, gets a leader only past it',
+    (_n, gap, leader) => {
+      const anchor = { x: 100, y: 200, w: 48, h: 48 };
+      const item: TagItem = {
+        id: 1,
+        rank: 1,
+        col: 0,
+        row: 0,
+        w: 40,
+        tagH: 20,
+        slots: [{ x: 124, y: 200 - gap - 20, h: 20, below: false, anchor }],
+        bounds: { x: 0, y: 0, w: 400, h: 400 },
+      };
+      const p = placeTags([item], [], SOLVER).get(1);
+      expect(p?.shift).toBe(0);
+      expect(p?.leader).toBe(leader);
+    },
+  );
 
   it('a tag never leaves its room, even when its slot hangs past the room edge', () => {
     const room = { x: 0, y: 0, w: 200, h: 100 };
@@ -206,8 +295,126 @@ describe('the tag solver', () => {
   });
 });
 
+describe('the room a tag may fill', () => {
+  // Two rooms side by side under a two-row wall, and a lobby tile (no area) at the top left.
+  const cols = 10;
+  const rows = 8;
+  const areaTiles = Array.from({ length: cols * rows }, (_, i) => {
+    const row = Math.floor(i / cols);
+    if (row < 3) return null;
+    return i % cols < 5 ? 'Den' : 'Studio';
+  });
+  const layout = { cols, rows, areaTiles };
+
+  it('is the room of the tile the agent stands on, with its wall face, not its seat room', () => {
+    // Seated in the Den, but standing on a Studio tile: the Studio's rect.
+    expect(tagRoom(layout, { tileCol: 7, tileRow: 5 })).toEqual({
+      x: 5 * T,
+      y: 3 * T - 2 * T,
+      w: 5 * T,
+      h: 5 * T + 2 * T,
+    });
+    expect(tagRoom(layout, { tileCol: 1, tileRow: 4 }).x).toBe(0);
+  });
+
+  it('is the whole map on a tile with no area', () => {
+    expect(tagRoom(layout, { tileCol: 2, tileRow: 0 })).toEqual({
+      x: 0,
+      y: 0,
+      w: cols * T,
+      h: rows * T,
+    });
+  });
+});
+
+describe('the speech bubble over a lit agent', () => {
+  function litAgent(): { os: OfficeState; ch: ReturnType<OfficeState['characters']['get']> } {
+    const layout = {
+      version: 1,
+      cols: 6,
+      rows: 6,
+      tiles: new Array<TileType>(36).fill(TileType.FLOOR_1),
+      furniture: [],
+    } as OfficeLayout;
+    const os = new OfficeState(layout);
+    os.addAgent(1);
+    const ch = os.characters.get(1)!;
+    ch.bubbleType = 'permission';
+    return { os, ch };
+  }
+
+  it('is drawn in the panel, and left to the tag beside the rail', () => {
+    const { os, ch } = litAgent();
+    // The permission lights the desk: the frame and the tag's tab say it.
+    expect(os.litDeskCount()).toBe(1);
+    expect(os.bubbleShown(ch!)).toBe(true);
+    os.hideLitBubbles = true;
+    expect(os.bubbleShown(ch!)).toBe(false);
+  });
+
+  it('stays for an agent whose desk is not lit', () => {
+    const { os, ch } = litAgent();
+    ch!.isSubagent = true;
+    os.hideLitBubbles = true;
+    expect(os.bubbleShown(ch!)).toBe(true);
+  });
+});
+
+describe('separateFrames: lit desks keep air between them', () => {
+  const O = DESK_HIGHLIGHT_OUTLINE_PX;
+  const G = DESK_HIGHLIGHT_GAP_PX;
+  const all = { top: true, right: true, bottom: true, left: true };
+
+  it('a lone desk keeps its whole outline and every halo side', () => {
+    const unit = { x: 100, y: 100, w: 48, h: 64 };
+    expect(separateFrames([unit], O, G)).toEqual([
+      { outline: { x: 100 - O, y: 100 - O, w: 48 + 2 * O, h: 64 + 2 * O }, halo: all },
+    ]);
+  });
+
+  it('two stacked desks 2 px apart end up at least the gap apart, with no halo between them', () => {
+    const upper = { x: 100, y: 100, w: 48, h: 64 };
+    const lower = { x: 100, y: 166, w: 48, h: 64 };
+    const [a, b] = separateFrames([upper, lower], O, G);
+    expect(b.outline.y - (a.outline.y + a.outline.h)).toBeGreaterThanOrEqual(G);
+    expect(a.halo).toEqual({ ...all, bottom: false });
+    expect(b.halo).toEqual({ ...all, top: false });
+    // The sides meet at the midline between the desks, half the gap each.
+    expect(a.outline.y + a.outline.h).toBe(165 - G / 2);
+  });
+
+  it('desks side by side meet on their left and right sides', () => {
+    const [a, b] = separateFrames(
+      [
+        { x: 100, y: 100, w: 48, h: 64 },
+        { x: 150, y: 100, w: 48, h: 64 },
+      ],
+      O,
+      G,
+    );
+    expect(b.outline.x - (a.outline.x + a.outline.w)).toBeGreaterThanOrEqual(G);
+    expect(a.halo.right).toBe(false);
+    expect(b.halo.left).toBe(false);
+  });
+
+  it('desks far apart are left alone', () => {
+    const frames = separateFrames(
+      [
+        { x: 0, y: 0, w: 48, h: 48 },
+        { x: 300, y: 300, w: 48, h: 48 },
+      ],
+      O,
+      G,
+    );
+    expect(frames.every((f) => Object.values(f.halo).every(Boolean))).toBe(true);
+  });
+});
+
 describe('R1.3 the lit desk is the loudest thing in the room', () => {
   const r = { x: 100, y: 50, w: 96, h: 120 };
+  /** The frame of a lone desk at `dpr`, as the canvas builds it (outline and gap in device px). */
+  const frameAt = (dpr: number) =>
+    separateFrames([r], DESK_HIGHLIGHT_OUTLINE_PX * dpr, DESK_HIGHLIGHT_GAP_PX * dpr)[0];
   it.each([1, 2])(
     'at dpr %i a 4 px outline in the tile color, a 1 px ink inset and a wash',
     (dpr) => {
@@ -215,7 +422,7 @@ describe('R1.3 the lit desk is the loudest thing in the room', () => {
         ['wait', DESK_HIGHLIGHT_WAIT_COLOR, DESK_HIGHLIGHT_WAIT_FILL],
         ['stuck', DESK_HIGHLIGHT_STUCK_COLOR, DESK_HIGHLIGHT_STUCK_FILL],
       ] as const) {
-        const ops = deskHighlightFrame(r, tone, 1, dpr);
+        const ops = deskHighlightFrame(frameAt(dpr), tone, 1, dpr);
         const outline = ops.filter((o) => o.color === color);
         expect(outline).toHaveLength(4);
         // Top and bottom bars are the outline's thickness tall, the sides as wide.
@@ -233,8 +440,25 @@ describe('R1.3 the lit desk is the loudest thing in the room', () => {
 
   it('pulses: the halo shows on one frame and not the other', () => {
     const halo = (frame: 0 | 1) =>
-      deskHighlightFrame(r, 'wait', frame, 1).filter((o) => o.color.startsWith('rgba')).length;
+      deskHighlightFrame(frameAt(1), 'wait', frame, 1).filter((o) => o.color.startsWith('rgba'))
+        .length;
     expect([halo(0), halo(1)]).toEqual([4, 0]);
+  });
+
+  it('the blink alternates every half second of the office clock', () => {
+    const at = (ms: number) => highlightFrame(ms);
+    expect([
+      at(0),
+      at(DESK_HIGHLIGHT_BLINK_MS - 1),
+      at(DESK_HIGHLIGHT_BLINK_MS),
+      at(2 * DESK_HIGHLIGHT_BLINK_MS),
+    ]).toEqual([0, 0, 1, 0]);
+  });
+
+  it('a side that meets a neighbour draws no halo bar', () => {
+    const [a] = separateFrames([r, { ...r, y: r.y + r.h + 2 }], 4, 8);
+    const bars = deskHighlightFrame(a, 'wait', 0, 1).filter((o) => o.color.startsWith('rgba'));
+    expect(bars).toHaveLength(3);
   });
 });
 

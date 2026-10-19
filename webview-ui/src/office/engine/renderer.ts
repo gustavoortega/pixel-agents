@@ -37,6 +37,8 @@ import {
   DEAD_CHARACTER_ALPHA,
   DEAD_CHARACTER_FILTER,
   DELETE_BUTTON_BG,
+  DESK_HIGHLIGHT_GAP_PX,
+  DESK_HIGHLIGHT_OUTLINE_PX,
   DESK_PROP_FEET_INSET_PX,
   DESK_PROP_Z_OFFSET,
   FALLBACK_FLOOR_COLOR,
@@ -84,7 +86,10 @@ import {
   deskHighlightFill,
   deskHighlightFrame,
   highlightFrame,
+  type LitFrame,
   type PaintOp,
+  separateFrames,
+  washRect,
 } from '../deskHighlight.js';
 import {
   accessoryPlacement,
@@ -108,7 +113,7 @@ import { characterFlair, characterOutline } from '../flair/modelFlair.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
 import { type FxRenderState, renderFx } from '../fx/fxRender.js';
 import { healthMark } from '../health.js';
-import { areaSignRect } from '../labelLayout.js';
+import { areaSignRect, type Rect } from '../labelLayout.js';
 import type { FixturePoint, GlowDraw, GlowFixtures, GlowSource, Lighting } from '../lighting.js';
 import { glowDraws, nightLightDraws } from '../lighting.js';
 import { monitorLook, monitorTick } from '../monitor.js';
@@ -136,7 +141,7 @@ import {
   BUBBLE_WAITING_SPRITE,
   getCharacterSprites,
 } from '../sprites/spriteData.js';
-import { statusGlyph, tripwireColor, type TripwireSeverity } from '../toolUtils.js';
+import { drawsBubble, statusGlyph, tripwireColor, type TripwireSeverity } from '../toolUtils.js';
 import type {
   AreaDefinition,
   CarpetTile,
@@ -1254,15 +1259,18 @@ function renderNapZz(
   ctx.restore();
 }
 
-/** The desk highlights the last frame drew, with the frame of the blink (the e2e hook reads them). */
-let drawnDeskHighlights: ReadonlyArray<DeskHighlight & { frame: 0 | 1 }> = [];
+/** The desk highlights the last frame drew, with the frame of the blink and each unit's rect in
+ *  device px (the e2e hook reads them). */
+let drawnDeskHighlights: ReadonlyArray<DeskHighlight & { frame: 0 | 1; dev: Rect }> = [];
 
-export function lastDrawnDeskHighlights(): ReadonlyArray<DeskHighlight & { frame: 0 | 1 }> {
+export function lastDrawnDeskHighlights(): ReadonlyArray<
+  DeskHighlight & { frame: 0 | 1; dev: Rect }
+> {
   return drawnDeskHighlights;
 }
 
 /** A lit desk's rect in device px, rounded once. */
-function deskRectDev(h: DeskHighlight, offsetX: number, offsetY: number, zoom: number) {
+function deskRectDev(h: DeskHighlight, offsetX: number, offsetY: number, zoom: number): Rect {
   const x = Math.round(offsetX + h.rect.x * zoom);
   const y = Math.round(offsetY + h.rect.y * zoom);
   return {
@@ -1280,19 +1288,41 @@ function paint(ctx: CanvasRenderingContext2D, ops: readonly PaintOp[]): void {
   }
 }
 
-/** The lit desks' wash on the carpet, under the furniture and the people. */
-function renderDeskHighlightFills(
-  ctx: CanvasRenderingContext2D,
+/** The page's device pixel ratio (1 where there is no window). */
+function deviceRatio(): number {
+  return (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+}
+
+/** One lit desk as drawn: its unit, and its outline and halo sides once neighbours keep their air. */
+interface LitDesk extends LitFrame {
+  desk: DeskHighlight;
+  unit: Rect;
+}
+
+/** The lit desks in device px, outlines separated (see separateFrames). */
+function litDesks(
   highlights: readonly DeskHighlight[],
   offsetX: number,
   offsetY: number,
   zoom: number,
-): void {
-  if (highlights.length === 0) return;
+): LitDesk[] {
+  const dpr = deviceRatio();
+  const units = highlights.map((h) => deskRectDev(h, offsetX, offsetY, zoom));
+  const frames = separateFrames(
+    units,
+    Math.max(1, Math.round(DESK_HIGHLIGHT_OUTLINE_PX * dpr)),
+    Math.max(1, Math.round(DESK_HIGHLIGHT_GAP_PX * dpr)),
+  );
+  return highlights.map((desk, i) => ({ desk, unit: units[i], ...frames[i] }));
+}
+
+/** The lit desks' wash on the carpet, under the furniture and the people. */
+function renderDeskHighlightFills(ctx: CanvasRenderingContext2D, lit: readonly LitDesk[]): void {
+  if (lit.length === 0) return;
   ctx.save();
   paint(
     ctx,
-    highlights.map((h) => deskHighlightFill(deskRectDev(h, offsetX, offsetY, zoom), h.tone)),
+    lit.map((l) => deskHighlightFill(washRect(l.unit, l.outline), l.desk.tone)),
   );
   ctx.restore();
 }
@@ -1305,20 +1335,15 @@ function renderDeskHighlightFills(
  */
 export function renderDeskHighlights(
   ctx: CanvasRenderingContext2D,
-  highlights: readonly DeskHighlight[],
-  offsetX: number,
-  offsetY: number,
-  zoom: number,
+  lit: readonly LitDesk[],
   nowMs = Date.now(),
 ): void {
   const frame = highlightFrame(nowMs);
-  drawnDeskHighlights = highlights.map((h) => ({ ...h, frame }));
-  if (highlights.length === 0) return;
-  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+  drawnDeskHighlights = lit.map((l) => ({ ...l.desk, frame, dev: l.unit }));
+  if (lit.length === 0) return;
+  const dpr = deviceRatio();
   ctx.save();
-  for (const h of highlights) {
-    paint(ctx, deskHighlightFrame(deskRectDev(h, offsetX, offsetY, zoom), h.tone, frame, dpr));
-  }
+  for (const l of lit) paint(ctx, deskHighlightFrame(l, l.desk.tone, frame, dpr));
   ctx.restore();
 }
 
@@ -1368,6 +1393,13 @@ function renderCrewLines(
   ctx.restore();
 }
 
+/** What the office decides about the marks over a head (OfficeState): whether the speech bubble
+ *  is drawn, and whether the character's tag already carries its alert (so no idle glyph either). */
+export interface HeadRules {
+  bubbleShown(ch: Character): boolean;
+  alertOnTag(ch: Character): boolean;
+}
+
 function renderBubbles(
   ctx: CanvasRenderingContext2D,
   characters: Character[],
@@ -1379,6 +1411,7 @@ function renderBubbles(
   /** World px each character's bubble stack rises, to clear its plate and tripwire chip. */
   lifts?: ReadonlyMap<number, number>,
   health?: ReadonlyMap<number, { state: HealthState }>,
+  heads?: HeadRules,
 ): void {
   for (const ch of characters) {
     // Character is anchored bottom-center at (ch.x, ch.y), sprite is 16x24.
@@ -1393,7 +1426,7 @@ function renderBubbles(
     // The green checkmark bubble only represents "done" (turn finished). The
     // idle "Waiting for input" state communicates via its overlay label, not a
     // bubble, so skip the bubble for it.
-    const hasBubble = ch.bubbleType && !(ch.bubbleType === 'waiting' && ch.waitingAwaitingInput);
+    const hasBubble = heads ? heads.bubbleShown(ch) : drawsBubble(ch);
     if (hasBubble) {
       const sprite =
         ch.bubbleType === 'permission' ? BUBBLE_PERMISSION_SPRITE : BUBBLE_WAITING_SPRITE;
@@ -1431,8 +1464,8 @@ function renderBubbles(
     }
 
     // Shares the above-head slot with bubbles, the beacon and the health mark; statusGlyph
-    // yields to all of them, and to a dead agent, which draws no mark.
-    if (statusGlyph(ch, !!tripwire || healthState !== undefined)) {
+    // yields to all of them, to a dead agent (no mark) and to a tag that carries the alert.
+    if (statusGlyph(ch, !!tripwire || healthState !== undefined || !!heads?.alertOnTag(ch))) {
       if (ch.pose === IdlePose.NAPPING && ch.state === CharacterState.TYPE) {
         renderNapZz(ctx, ch, offsetX, offsetY, zoom, nowMs);
       } else {
@@ -1671,6 +1704,7 @@ export function renderFrame(
   health?: ReadonlyMap<number, { state: HealthState }>,
   crewLines?: readonly CrewLine[],
   deskHighlights?: readonly DeskHighlight[],
+  heads?: HeadRules,
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -1735,7 +1769,8 @@ export function renderFrame(
   const allFurniture = wallInstances.length > 0 ? [...wallInstances, ...furniture] : furniture;
 
   // The lit desks' wash and the crew lines on the floor: under the furniture and the people
-  renderDeskHighlightFills(ctx, deskHighlights ?? [], offsetX, offsetY, zoom);
+  const lit = litDesks(deskHighlights ?? [], offsetX, offsetY, zoom);
+  renderDeskHighlightFills(ctx, lit);
   renderCrewLines(ctx, crewLines ?? [], offsetX, offsetY, zoom);
 
   // Draw walls + furniture + characters (z-sorted)
@@ -1769,7 +1804,7 @@ export function renderFrame(
   }
 
   // The desks that need you: over the night and the glows, so they stay the brightest thing.
-  renderDeskHighlights(ctx, deskHighlights ?? [], offsetX, offsetY, zoom, lightingState?.nowMs);
+  renderDeskHighlights(ctx, lit, lightingState?.nowMs);
 
   // Speech bubbles (always on top of characters)
   renderBubbles(
@@ -1782,6 +1817,7 @@ export function renderFrame(
     look?.nowMs,
     bubbleLifts,
     health,
+    heads,
   );
   // XP pops, level-ups and mood weather ride above the bubbles
   if (fx) renderFx(ctx, fx, characters, offsetX, offsetY, zoom);
