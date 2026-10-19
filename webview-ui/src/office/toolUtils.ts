@@ -85,6 +85,14 @@ export function agentStatus(ch: {
   return ch.isActive ? 'active' : 'idle';
 }
 
+/** The speech bubble rule: a bubble type, except the idle "waiting for input", which its plate says. */
+export function drawsBubble(ch: {
+  bubbleType: 'permission' | 'waiting' | null;
+  waitingAwaitingInput?: boolean;
+}): boolean {
+  return !!ch.bubbleType && !(ch.bubbleType === 'waiting' && ch.waitingAwaitingInput);
+}
+
 /**
  * Glyph drawn above an agent's head. Only an idle agent with nothing else in
  * the above-head slot gets one: a speech bubble, a tripwire beacon or a health
@@ -100,7 +108,7 @@ export function statusGlyph(
     state?: string;
     pose?: string;
   },
-  /** A tripwire beacon or a health state holds the slot. */
+  /** A tripwire beacon or a health state holds the slot, or the tag carries the agent's alert. */
   slotTaken = false,
 ): 'z' | null {
   if (ch.isActive || slotTaken) return null;
@@ -111,8 +119,7 @@ export function statusGlyph(
     (ch.pose === IdlePose.READING || ch.pose === IdlePose.COFFEE)
   )
     return null;
-  const drawsBubble = ch.bubbleType && !(ch.bubbleType === 'waiting' && ch.waitingAwaitingInput);
-  return drawsBubble ? null : 'z';
+  return drawsBubble(ch) ? null : 'z';
 }
 
 /** Max CSS width of a compact label: one seat's slot minus a gap. `/ dpr` matches overlayProjection. */

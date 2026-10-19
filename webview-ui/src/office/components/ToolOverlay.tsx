@@ -20,21 +20,22 @@ import {
   CONTEXT_GAUGE_HEIGHT_PX,
   CONTEXT_GAUGE_WIDTH_PX,
   CONTEXT_WARN_THRESHOLD,
+  CREW_BANNER_ROW_MIN_SCALE,
   CREW_BANNER_SHADOW_PX,
   CREW_BANNER_WALL_INSET_PX,
   CREW_BANNER_WALL_MIN_SCALE,
   CREW_BANNER_WALL_SCALE_STEP,
+  DESK_HIGHLIGHT_GAP_PX,
+  DESK_HIGHLIGHT_OUTLINE_PX,
+  HELPER_TAG_PAD_X_PX,
   LABEL_LAYOUT_DIM_OPACITY,
   NAMEPLATE_PILL_GAP_PX,
   NAMEPLATE_PILL_HEIGHT_PX,
   OVERLAY_STACK_GAP_PX,
   PLAQUE_BORDER_PX,
-  PLAQUE_FOLDER_FONT_PX,
-  PLAQUE_FOLDER_LINE_PX,
+  PLAQUE_LINE_GAP_PX,
   PLAQUE_PAD_X_PX,
   PLAQUE_PAD_Y_PX,
-  PLAQUE_TITLE_FONT_PX,
-  PLAQUE_TITLE_LINE_PX,
   PLAQUE_Z_INDEX,
   PLATE_CMD_COLOR,
   PLATE_DONE_COLOR,
@@ -51,8 +52,7 @@ import {
   PLATE_WAIT_INK,
   RARITY_SHIMMER_SEC,
   STAGE_CHROME_SELECTORS,
-  TAG_HEAD_GAP_PX,
-  TAG_MAX_WIDTH_PX,
+  TAG_PAD_Y_PX,
   TEAM_LEAD_COLOR,
   TEAM_ROLE_COLOR,
   TILE_SIZE,
@@ -62,7 +62,14 @@ import type { SubagentCharacter } from '../../hooks/subagentMessages.js';
 import { useFrame } from '../../hooks/useFrame.js';
 import { fitZoomWholeMap } from '../camera.js';
 import { officeNow } from '../clock.js';
-import { crewBannerSize, crewBannerView, crewRunId, placeCrewBanner } from '../crewBanner.js';
+import {
+  type CrewBannerForm,
+  crewBannerSize,
+  crewBannerView,
+  crewRunId,
+  placeCrewBanner,
+} from '../crewBanner.js';
+import { separateFrames } from '../deskHighlight.js';
 import type { OfficeState } from '../engine/officeState.js';
 import { isShowModelFlairEnabled } from '../engine/renderer.js';
 import { characterFlair, Rarity } from '../flair/modelFlair.js';
@@ -78,6 +85,7 @@ import {
   layoutLabels,
   type Rect,
   roomFloorRect,
+  type TagObstacle,
   type TagPlacement,
   withTopWallFace,
 } from '../labelLayout.js';
@@ -87,21 +95,26 @@ import {
   headSlotTaken,
   HELPER_RANK,
   layoutMonitorTags,
+  type MonitorTagInput,
   napHeadBobPx,
   type PlacedBanner,
   type PlacedPlaque,
+  PLAQUE_TITLE_TRACKING_EM,
   roomPlaques,
   screenRect,
   wallBand,
 } from '../monitorTags.js';
 import {
   chipBoxHeight,
+  currentMonitorType,
   fullPlateMaxWidth,
   isMonitorFullPlates,
   isMonitorTag,
   monitorPlateScale,
+  type MonitorType,
   type NameplateStyle,
   nameplateStyle,
+  pixelTextWidth,
   plateAnchorAboveY,
   plateBoxHeight,
   plateBoxWidth,
@@ -112,6 +125,8 @@ import {
   plateScale,
   type PlateSide,
   plateSide,
+  plateStateWords,
+  setMonitorTagZoom,
   spriteHeadTopY,
 } from '../nameplate.js';
 import { stackAbove, weatherAnchorY } from '../overlayStack.js';
@@ -229,7 +244,7 @@ function PlateBox({
 }) {
   const m = plateMetrics(plate, compact);
   const alert = plate.state?.kind === 'alert' ? plate.state.alert : null;
-  const words = plate.state ? stateText(plate.state, now) : null;
+  const words = plateStateWords(plate, compact, now);
   const kind = plate.state?.kind;
   const stateColor =
     kind === 'done'
@@ -294,6 +309,7 @@ function PlateBox({
           <span
             className={`overflow-hidden text-ellipsis${plate.namePv ? ' pv' : ''}`}
             style={{ fontSize: m.nameFont, flexShrink: plate.helper ? 1 : 0, minWidth: 0 }}
+            data-testid="plate-name"
           >
             {plate.name}
           </span>
@@ -395,6 +411,7 @@ function CompactLabel({
     compact,
     selected,
     quiet: plate?.state?.kind === 'idle',
+    tag: isMonitorTag(compact),
   });
   // The chip sits over the plate on an above-head label and under it on a below-feet one.
   const pillMargin = side === 'above' ? 'marginBottom' : 'marginTop';
@@ -613,31 +630,43 @@ function crewBanners(
         officeState.roomOf(drawn[0]),
       );
       const bounds = screenRect(project, withTopWallFace(floor));
-      const bandWorld = opts.wall ? wallBand(floor) : null;
-      // On a wall the banner takes the largest scale that fits the band, never under the minimum.
+      // Its helpers' room's top wall, else its lead's (helpers in the lobby have none).
+      const leadFloor = roomFloorRect(
+        layout.areaTiles,
+        layout.cols,
+        layout.rows,
+        officeState.roomOf(lead),
+      );
+      const bandWorld = opts.wall ? (wallBand(floor) ?? wallBand(leadFloor)) : null;
       const band = bandWorld ? screenRect(project, bandWorld) : null;
-      const wallScales: number[] = [];
-      let wall: { sizes: Array<{ w: number; h: number }>; band: Rect } | null = null;
+      // On a wall: two rows at the largest scale the band takes, never under the minimum; then one
+      // row, shrinking to fit down to its own minimum.
+      const wallTries: Array<{ form: CrewBannerForm; scale: number; w: number; h: number }> = [];
       if (band) {
-        const size = crewBannerSize(view, true);
-        const fit = Math.min(
-          scale,
-          (band.h - 2 * CREW_BANNER_WALL_INSET_PX) / (size.h + CREW_BANNER_SHADOW_PX),
-        );
-        for (let k = fit; k >= CREW_BANNER_WALL_MIN_SCALE; k -= CREW_BANNER_WALL_SCALE_STEP) {
-          wallScales.push(k);
+        const forms: Array<[CrewBannerForm, number]> = [
+          ['wall', CREW_BANNER_WALL_MIN_SCALE],
+          ['row', CREW_BANNER_ROW_MIN_SCALE],
+        ];
+        for (const [form, min] of forms) {
+          const size = crewBannerSize(view, form);
+          const fit = Math.min(
+            scale,
+            (band.h - 2 * CREW_BANNER_WALL_INSET_PX) / (size.h + CREW_BANNER_SHADOW_PX),
+            (band.w - 2 * CREW_BANNER_WALL_INSET_PX) / size.w,
+          );
+          for (let k = fit; k >= min; k -= CREW_BANNER_WALL_SCALE_STEP) {
+            wallTries.push({
+              form,
+              scale: k,
+              w: size.w * k,
+              h: (size.h + CREW_BANNER_SHADOW_PX) * k,
+            });
+          }
         }
-        wall = {
-          band,
-          sizes: wallScales.map((k) => ({
-            w: size.w * k,
-            h: (size.h + CREW_BANNER_SHADOW_PX) * k,
-          })),
-        };
       }
       const size = crewBannerSize(view);
       const placed = placeCrewBanner({
-        wall,
+        wall: band ? { band, sizes: wallTries } : null,
         free: { w: size.w * scale, h: (size.h + CREW_BANNER_SHADOW_PX) * scale },
         heads,
         room: bounds,
@@ -652,7 +681,8 @@ function crewBanners(
           view,
           rect: placed.rect,
           onWall: placed.onWall,
-          scale: placed.onWall ? wallScales[placed.size] : scale,
+          scale: placed.onWall ? wallTries[placed.size].scale : scale,
+          form: placed.onWall ? wallTries[placed.size].form : 'free',
           band,
         });
       }
@@ -661,16 +691,76 @@ function crewBanners(
   return out;
 }
 
-function RoomPlaque({ plaque }: { plaque: PlacedPlaque }) {
+/** A helper's tag beside the rail: one word on paper, no ink box, so the agents' tags lead. */
+function helperTagWord(plate: NameplateContent, now: number): string {
+  const s = plate.state;
+  if (s?.kind === 'alert') return alertText(s.alert, now);
+  return (s ? stateText(s, now) : null)?.split(' ')[0] ?? 'helper';
+}
+
+function helperTagBox(word: string, type: MonitorType): { w: number; h: number } {
+  return {
+    w: pixelTextWidth(word, type.helper) + 2 * HELPER_TAG_PAD_X_PX,
+    h: type.helperLine + 2 * TAG_PAD_Y_PX,
+  };
+}
+
+function HelperTag({
+  plate,
+  rect,
+  type,
+  now,
+}: {
+  plate: NameplateContent;
+  rect: Rect;
+  type: MonitorType;
+  now: number;
+}) {
+  const alert = plate.state?.kind === 'alert' ? plate.state.alert : null;
   return (
     <div
-      className="absolute flex flex-col justify-center whitespace-nowrap leading-none"
+      className="nameplate-tag helper-tag flex items-center justify-center whitespace-nowrap leading-none"
+      style={{
+        width: rect.w,
+        height: rect.h,
+        fontSize: type.helper,
+        background: alert
+          ? alert.tone === 'stuck'
+            ? PLATE_STUCK_BG
+            : PLATE_WAIT_BG
+          : 'var(--brand-paper-2)',
+        color: alert
+          ? alert.tone === 'stuck'
+            ? PLATE_STUCK_INK
+            : PLATE_WAIT_INK
+          : 'var(--mon-ink-2)',
+      }}
+      data-form="helper"
+      data-plate-state={plate.state?.kind ?? 'none'}
+    >
+      {/* The word of a command is session text: privacy masks it. */}
+      <span className={plate.state?.kind === 'cmd' ? 'pv' : undefined}>
+        {helperTagWord(plate, now)}
+      </span>
+    </div>
+  );
+}
+
+/** A room's plaque: its title in gold caps, the mapped folder under it, each line trimmed to the
+ *  caps (FS Pixel Sans draws them 7/16 em tall) so the box hugs its type. */
+function RoomPlaque({ plaque }: { plaque: PlacedPlaque }) {
+  const trim = { textBoxTrim: 'trim-both', textBoxEdge: 'cap alphabetic' } as React.CSSProperties;
+  return (
+    <div
+      className="absolute flex flex-col whitespace-nowrap leading-none"
       style={{
         left: plaque.rect.x,
         top: plaque.rect.y,
         width: plaque.rect.w,
         height: plaque.rect.h,
+        boxSizing: 'border-box',
         padding: `${PLAQUE_PAD_Y_PX}px ${PLAQUE_PAD_X_PX}px`,
+        gap: PLAQUE_LINE_GAP_PX,
         background: 'var(--brand-ink)',
         border: `${PLAQUE_BORDER_PX}px solid var(--mon-night)`,
         boxShadow: '2px 2px 0px var(--mon-night)',
@@ -682,19 +772,26 @@ function RoomPlaque({ plaque }: { plaque: PlacedPlaque }) {
     >
       <span
         style={{
-          fontSize: PLAQUE_TITLE_FONT_PX,
-          lineHeight: `${PLAQUE_TITLE_LINE_PX}px`,
+          ...trim,
+          display: 'block',
+          height: plaque.title.line,
+          fontSize: plaque.title.font,
+          letterSpacing: `${PLAQUE_TITLE_TRACKING_EM}em`,
+          textTransform: 'uppercase',
           color: 'var(--brand-gold)',
         }}
+        data-testid="room-plaque-title"
       >
         {plaque.label}
       </span>
-      {plaque.folder && (
+      {plaque.folder && plaque.sub && (
         <span
           className="pv"
           style={{
-            fontSize: PLAQUE_FOLDER_FONT_PX,
-            lineHeight: `${PLAQUE_FOLDER_LINE_PX}px`,
+            display: 'block',
+            height: plaque.sub.line,
+            lineHeight: `${plaque.sub.line}px`,
+            fontSize: plaque.sub.font,
             color: 'var(--brand-paper-2)',
             ['--pv-mask' as string]: 'var(--mon-mask-on-ink)',
           }}
@@ -752,8 +849,12 @@ export function ToolOverlay({
   // The shell sets the rule from monitorLayout (setMonitorFullPlates).
   const monitorFull = isMonitorFullPlates();
   const compact = plateIsCompact(zoom);
-  // Beside the rail every character carries a one-line tag at a fixed size.
+  // Beside the rail every character carries a one-line tag, its type set by the map's CSS zoom.
   const tags = isMonitorTag(compact);
+  setMonitorTagZoom(zoom / dpr);
+  // A lit desk's frame and its tag's alert tab say it needs you: the canvas adds no bubble over it.
+  officeState.hideLitBubbles = tags;
+  const type = currentMonitorType();
   const fitScale = plateScale(
     zoom,
     fitZoomWholeMap(
@@ -782,7 +883,7 @@ export function ToolOverlay({
   // together so they can avoid each other and the room signs; full boxes are
   // not part of that pass.
   const maxWidth = tags
-    ? TAG_MAX_WIDTH_PX
+    ? type.maxWidth
     : monitorFull
       ? fullPlateMaxWidth(zoom, dpr)
       : compactLabelMaxWidth(zoom, dpr);
@@ -792,6 +893,9 @@ export function ToolOverlay({
     | { kind: 'compact'; content: Extract<OverlayContent, { mode: 'compact' | 'marker' }> }
   >();
   const labelItems: LabelItem[] = [];
+  // Beside the rail: the tags for the solver, and the lit desks their owners' tags are pinned to.
+  const tagInputs: MonitorTagInput[] = [];
+  const lit = tags ? officeState.deskHighlights() : [];
   const officeLayout = officeState.getLayout();
   const roomSpan = (ch: Character): { x0: number; x1: number } => {
     const world = roomFloorRect(
@@ -815,14 +919,9 @@ export function ToolOverlay({
       parentSelected: parentId !== null && boxSelectedId === parentId,
       parentHovered: parentId !== null && boxHoveredId === parentId,
     });
-    // A helper's tag shows only while its lead is selected or hovered, or it is hovered itself:
-    // the crew lines and the banner say who works for whom.
-    const helperQuiet =
-      tags &&
-      ch.isSubagent &&
-      parentId !== selectedId &&
-      parentId !== hoveredId &&
-      id !== hoveredId;
+    // A helper's tag shows only while its lead is selected or it is hovered itself: the crew lines
+    // and the banner say who works for whom.
+    const helperQuiet = tags && ch.isSubagent && parentId !== selectedId && id !== hoveredId;
     if (shown === 'compact' && helperQuiet) {
       plans.set(id, { kind: 'compact', content: { mode: 'compact', plate: null } });
     } else if (shown === 'full') {
@@ -853,26 +952,21 @@ export function ToolOverlay({
       if (content.mode === 'full') continue;
       plans.set(id, { kind: 'compact', content });
       if (content.mode === 'compact' && content.plate && tags) {
-        // A tag hangs a gap above the head where the sprite is drawn now; the solver moves it.
-        const plateH = plateBoxHeight(content.plate, compact);
-        labelItems.push({
+        const plate = content.plate;
+        const alert = plate.state?.kind === 'alert' ? plate.state.alert : null;
+        // A lit agent's tag keeps its alert tab: it sits on its desk's frame, tab, medal and name.
+        const box = ch.isSubagent
+          ? helperTagBox(helperTagWord(plate, nowMs), type)
+          : {
+              w: Math.min(maxWidth, plateBoxWidth(plate, compact, nowMs)),
+              h: plateBoxHeight(plate, compact),
+            };
+        tagInputs.push({
           id,
-          col: ch.tileCol,
-          row: ch.tileRow,
-          x: project.toScreenX(ch.x),
-          y:
-            project.toScreenY(spriteHeadTopY(ch.y, seatedDrawOffsetPx(ch), napHeadBobPx(ch))) -
-            TAG_HEAD_GAP_PX -
-            plateH,
-          w: Math.min(maxWidth, plateBoxWidth(content.plate, compact, nowMs)),
-          minW: Math.min(maxWidth, plateBoxWidth(content.plate, compact, nowMs, true)),
-          span: roomSpan(ch),
           // Who needs you is placed first, then the agents, then the helpers.
-          rank: content.plate.state?.kind === 'alert' ? 0 : ch.isSubagent ? HELPER_RANK : 1,
-          h: plateH,
-          plateH,
-          chipH: 0,
-          grow: 'up',
+          rank: alert ? 0 : ch.isSubagent ? HELPER_RANK : 1,
+          w: box.w,
+          h: box.h,
         });
       } else if (content.mode === 'compact' && content.plate) {
         // Anchor on the tile centre, not the sprite, so plates do not reshuffle while agents walk.
@@ -906,9 +1000,18 @@ export function ToolOverlay({
   }
 
   const layout = officeState.getLayout();
-  const obstacles: Rect[] = [];
+  const obstacles: TagObstacle[] = [];
   // Beside the rail every room has its plaque on the wall; elsewhere the canvas signs show when on.
-  const plaques = tags ? roomPlaques(officeState, project) : [];
+  const plaques = tags ? roomPlaques(officeState, project, type) : [];
+  // The lit desks' frames as the canvas draws them, in CSS px: neighbours keep their air, and each
+  // owner's tag goes to its own.
+  const litUnits = lit.map((h) => screenRect(project, h.rect));
+  const litOutlines = separateFrames(litUnits, DESK_HIGHLIGHT_OUTLINE_PX, DESK_HIGHLIGHT_GAP_PX);
+  const frames = lit.map((h, i) => ({
+    id: h.id,
+    unit: litUnits[i],
+    outline: litOutlines[i].outline,
+  }));
   for (const p of plaques) obstacles.push(p.rect);
   // The stage's own chrome over the map (the clock at its top right): no tag or banner under it.
   const chrome = tags ? stageChromeRects(el, containerRect) : [];
@@ -1029,6 +1132,7 @@ export function ToolOverlay({
           ch,
           officeState.tripwires.has(it.id),
           officeState.health.get(it.id),
+          officeState,
         );
         const stack = stackAbove({
           x: it.x,
@@ -1125,7 +1229,7 @@ export function ToolOverlay({
     }
     return { placements, clamps, faint, hidden, fxSlots };
   };
-  const { placements, clamps, faint, hidden, fxSlots, tagPlacements, banners } = tags
+  const { placements, clamps, faint, hidden, fxSlots, tagPlacements, leaders, banners } = tags
     ? {
         placements: new Map<number, LabelPlacement>(),
         clamps: new Map<number, { dx: number; dy: number }>(),
@@ -1135,8 +1239,9 @@ export function ToolOverlay({
           officeState,
           project,
           container: containerRect,
-          items: labelItems,
+          items: tagInputs,
           obstacles,
+          frames,
           placeBanners,
           plaques,
           fxScale: fitScale,
@@ -1145,6 +1250,7 @@ export function ToolOverlay({
     : {
         ...classic(),
         tagPlacements: new Map<number, TagPlacement | null>(),
+        leaders: new Map<number, Rect>(),
         banners: classicBanners,
       };
 
@@ -1164,11 +1270,28 @@ export function ToolOverlay({
           rect={b.rect}
           scale={b.scale}
           leadId={b.leadId}
-          wall={b.onWall}
+          form={b.form}
         />
       ))}
       {plaques.map((p) => (
         <RoomPlaque key={p.label} plaque={p} />
+      ))}
+      {[...leaders].map(([id, r]) => (
+        <div
+          key={id}
+          className="absolute"
+          style={{
+            left: r.x,
+            top: r.y,
+            width: r.w,
+            height: r.h,
+            background: 'var(--brand-ink)',
+            pointerEvents: 'none',
+            zIndex: COMPACT_LABEL_Z_INDEX - 3,
+          }}
+          data-testid="tag-leader"
+          data-agent-id={id}
+        />
       ))}
       {allIds.map((id) => {
         const ch = officeState.characters.get(id);
@@ -1182,6 +1305,25 @@ export function ToolOverlay({
         if (plan.kind === 'compact' && tags) {
           const tag = tagPlacements.get(id)?.tag;
           const plate = plan.content.mode === 'compact' ? plan.content.plate : null;
+          if (isSub && plate && tag) {
+            return (
+              <div
+                key={id}
+                className="absolute"
+                style={{
+                  left: tag.x,
+                  top: tag.y,
+                  pointerEvents: 'none',
+                  zIndex: COMPACT_LABEL_Z_INDEX - 1,
+                }}
+                data-testid="agent-overlay"
+                data-agent-id={id}
+                data-status={status}
+              >
+                <HelperTag plate={plate} rect={tag} type={type} now={nowMs} />
+              </div>
+            );
+          }
           return (
             <CompactLabel
               key={id}

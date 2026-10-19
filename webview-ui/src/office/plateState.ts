@@ -5,6 +5,7 @@
  * overlay reads the office and passes plain facts, the tests pass a table.
  */
 
+import { TAG_STATE_MAX_CHARS } from '../constants.js';
 import { extractToolName, isReadingToolName, isSubagentToolName } from './toolUtils.js';
 
 const MIN_MS = 60_000;
@@ -114,6 +115,47 @@ export function stateText(s: PlateState, now: number): string | null {
       return `asleep until ${clockLabel(s.until)}`;
     case 'idle':
       return s.since === null ? 'idle' : `idle ${formatSpan(now - s.since)}`;
+  }
+}
+
+/** `text` when it fits a monitor tag's state (whole words, TAG_STATE_MAX_CHARS characters), else null. */
+function whole(text: string): string | null {
+  return [...text].length <= TAG_STATE_MAX_CHARS ? text : null;
+}
+
+/** An idle span in a tag's few characters: `12m`, `1h08` (the `m` dropped), `2d3h`, `12d` past that. */
+function tagSpan(ms: number): string {
+  const min = Math.max(0, Math.floor(ms / MIN_MS));
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h${String(min % 60).padStart(2, '0')}`;
+  const d = Math.floor(h / 24);
+  const withHours = `${d}d${h % 24}h`;
+  return withHours.length <= 5 ? withHours : `${d}d`;
+}
+
+/**
+ * The state words of a monitor tag: whole words of at most TAG_STATE_MAX_CHARS characters, or
+ * null (a cut word looks broken, so the tag drops the state instead). Asleep says `wake 15:45`,
+ * idle `idle 12m` or `idle 1h08`, a command itself or its first word, a verb as it is. Never for an
+ * alert: the tab says it.
+ */
+export function tagStateText(s: PlateState, now: number): string | null {
+  switch (s.kind) {
+    case 'alert':
+      return null;
+    case 'done':
+      return 'done';
+    case 'cmd': {
+      const cmd = s.cmd.trim();
+      return whole(cmd) ?? whole(cmd.split(/\s+/)[0]);
+    }
+    case 'verb':
+      return whole(s.verb);
+    case 'asleep':
+      return whole(`wake ${clockLabel(s.until)}`);
+    case 'idle':
+      return whole(s.since === null ? 'idle' : `idle ${tagSpan(now - s.since)}`);
   }
 }
 

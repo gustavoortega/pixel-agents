@@ -861,9 +861,11 @@ export const PLATE_STATE_COLOR = '#e9d2a8';
 export const PLATE_CMD_COLOR = '#f2dcae';
 export const PLATE_SUB_COLOR = '#d9c29b';
 export const PLATE_DONE_COLOR = '#8fb09a';
-/** An idle plate goes quiet: see-through, a fainter edge, no shadow. */
+/** An idle plate goes quiet: see-through, a fainter edge, no shadow. A monitor tag never dims by
+ *  alpha (the office shows through it): it keeps the ink and says quiet in TAG_QUIET_TEXT. */
 export const PLATE_QUIET_BG = 'rgba(59, 36, 18, 0.56)';
 export const PLATE_QUIET_BORDER = 'rgba(30, 18, 10, 0.5)';
+export const TAG_QUIET_TEXT = 'var(--mon-cream-3)';
 /** The selected agent's plate while the inspector holds its details: paper and ink. */
 export const PLATE_SELECTED_BG = '#f6e3bd';
 export const PLATE_SELECTED_TEXT = '#3b2412';
@@ -931,47 +933,94 @@ export const SHEET_MIN_ZOOM = 2;
 export const INSPECTOR_RING_WARM_FRACTION = 0.7;
 
 // ── Monitor office: desk highlight, tags, plaques, wall banner ───
-/** The desk of an agent that needs you: an outline and a hard halo outside it, CSS px (times the
- *  device pixel ratio, whole device px). Gold waits on you, red is stuck. */
-export const DESK_HIGHLIGHT_OUTLINE_PX = 2;
+/** The desk of an agent that needs you: an outline in the rail tile's color with an ink line inside
+ *  it, a faint fill of the same color on the carpet, and a hard halo outside the outline on every
+ *  other half second. CSS px (times the device pixel ratio, whole device px). */
+export const DESK_HIGHLIGHT_OUTLINE_PX = 4;
+export const DESK_HIGHLIGHT_INSET_PX = 1;
 export const DESK_HIGHLIGHT_HALO_PX = 4;
+export const DESK_HIGHLIGHT_INK = '#3b2412';
 export const DESK_HIGHLIGHT_WAIT_COLOR = '#f6c64a';
+export const DESK_HIGHLIGHT_WAIT_FILL = 'rgba(246, 198, 74, 0.12)';
 export const DESK_HIGHLIGHT_WAIT_HALO = 'rgba(246, 198, 74, 0.45)';
-export const DESK_HIGHLIGHT_STUCK_COLOR = '#ef5a3c';
-export const DESK_HIGHLIGHT_STUCK_HALO = 'rgba(239, 90, 60, 0.45)';
+export const DESK_HIGHLIGHT_STUCK_COLOR = '#c0563f';
+export const DESK_HIGHLIGHT_STUCK_FILL = 'rgba(192, 86, 63, 0.12)';
+export const DESK_HIGHLIGHT_STUCK_HALO = 'rgba(192, 86, 63, 0.45)';
 /** Two frames a second apart from each other: the halo shows on one, the outline alone on the other. */
 export const DESK_HIGHLIGHT_BLINK_MS = 500;
-/** Beside the rail every character carries one tag: one line, fixed CSS size. */
-export const TAG_FONT_PX = 14;
-export const TAG_LINE_PX = 18;
-export const TAG_MEDAL_PX = 12;
-export const TAG_MAX_WIDTH_PX = 160;
-/** Clear space between the head (or the bubble over it) and the tag's bottom edge, CSS px. */
+/** Two lit desks keep at least this much air between their outlines, CSS px (times the device
+ *  pixel ratio): the facing sides move to the midline and draw no halo. */
+export const DESK_HIGHLIGHT_GAP_PX = 8;
+/**
+ * Beside the rail every character carries one tag: one line, sized by how tall the type reads.
+ * FS Pixel Sans draws caps 7/16 em tall, about 0.6 of what a common font shows at the same size,
+ * so a CSS size is the size the eye should read times 1.6 (as the rail's type). At 1920 (the map
+ * at 3 CSS px per world px) the name reads 14 px and the state 12; a smaller map (1280, zoom 2)
+ * takes the small set, or the tags would be wider than a desk.
+ */
+export const MONITOR_TYPE_LARGE_MIN_CSS_ZOOM = 3;
+export const TAG_LARGE = {
+  name: 24,
+  state: 20,
+  line: 26,
+  medal: 24,
+  maxWidth: 184,
+  helper: 18,
+  helperLine: 20,
+  plaqueTitle: 24,
+  plaqueFolder: 18,
+} as const;
+export const TAG_SMALL = {
+  name: 16,
+  state: 14,
+  line: 18,
+  medal: 12,
+  maxWidth: 124,
+  helper: 13,
+  helperLine: 15,
+  plaqueTitle: 16,
+  plaqueFolder: 13,
+} as const;
+/** Clear space between the head (or the bubble over it) and a tag above it, and between a desk
+ *  and a tag under it, CSS px. */
 export const TAG_HEAD_GAP_PX = 6;
-/** The tag solver moves a tag this far per step, up, then below the feet. */
+export const TAG_DESK_GAP_PX = 6;
+/** The tag solver moves a tag this far per step, at most TAG_REACH_PX from its slot (under the
+ *  desk, else above the head); one moved more than TAG_LEADER_AT_PX, or farther than
+ *  TAG_REACH_PX from its desk or sprite, hangs from a TAG_LEADER_PX ink leader. Past the reach
+ *  the solver looks as far as TAG_FAR_REACH_PX before it leaves a tag out. */
 export const TAG_STEP_PX = 8;
-export const TAG_MAX_STEPS = 12;
-/** Air a tag keeps from what it avoids: covers the alert tab's 2 px bob. */
+export const TAG_REACH_PX = 24;
+export const TAG_FAR_REACH_PX = 64;
+export const TAG_LEADER_AT_PX = 8;
+export const TAG_LEADER_PX = 2;
+/** A helper's tag: one word on paper, no ink box, so the agents' tags lead. */
+export const HELPER_TAG_PAD_X_PX = 5;
+/** A monitor tag's state is a whole word of at most this many characters, or it is left out. */
+export const TAG_STATE_MAX_CHARS = 10;
+/** Air a tag keeps from what it avoids. */
 export const TAG_PAD_PX = 3;
 /** A room plaque on the top wall: ink box, gold title, the mapped folder under it. */
-export const PLAQUE_TITLE_FONT_PX = 14;
-export const PLAQUE_FOLDER_FONT_PX = 11;
-export const PLAQUE_TITLE_LINE_PX = 16;
-export const PLAQUE_FOLDER_LINE_PX = 13;
 export const PLAQUE_PAD_X_PX = 8;
-export const PLAQUE_PAD_Y_PX = 4;
+export const PLAQUE_PAD_Y_PX = 1;
+export const PLAQUE_LINE_GAP_PX = 3;
+/** FS Pixel Sans caps and descenders, in em: a plaque's lines are trimmed to the caps (as the
+ *  rail's numerals), the folder's descenders kept inside the box. */
+export const PIXEL_FONT_CAP_EM = 7 / 16;
+export const PIXEL_FONT_DESCENT_EM = 3 / 16;
 export const PLAQUE_BORDER_PX = 2;
 export const PLAQUE_Z_INDEX = 35;
-/** The crew banner on a wall keeps this inset from the band's edges, CSS px, and is never drawn
- *  smaller than this scale there (below it goes to the free-spot search). */
+/** The crew banner on a wall keeps this inset from the band's edges, CSS px. Its two rows are never
+ *  drawn smaller than CREW_BANNER_WALL_MIN_SCALE; below that it folds into one row, which shrinks
+ *  to fit down to CREW_BANNER_ROW_MIN_SCALE before the banner leaves the wall. */
 export const CREW_BANNER_WALL_INSET_PX = 2;
 export const CREW_BANNER_WALL_MIN_SCALE = 0.75;
+export const CREW_BANNER_ROW_MIN_SCALE = 0.5;
 export const TAG_BORDER_PX = 2;
 export const TAG_PAD_Y_PX = 1;
 export const TAG_SHADOW_PX = 2;
-/** A tag slid sideways keeps this much of itself past its character's centre on either side. */
-export const TAG_ATTACH_PX = 14;
-/** The solver's price of one sideways step, in vertical steps: a tag rises before it slides. */
+/** The solver's price of one sideways step, in vertical steps: a tag moves up or down before it
+ *  slides. */
 export const TAG_SIDE_COST = 1.5;
 /** Stage chrome drawn over the map (the clock) that no tag or banner goes under. */
 export const STAGE_CHROME_SELECTORS: readonly string[] = ['[data-testid="stage-clock"]'];

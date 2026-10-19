@@ -426,6 +426,7 @@ export function OfficeCanvas({
           officeState.health,
           crewLines(officeState),
           officeState.deskHighlights(),
+          officeState,
         );
         offsetRef.current = { x: offsetX, y: offsetY };
 

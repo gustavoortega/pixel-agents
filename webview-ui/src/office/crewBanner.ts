@@ -90,9 +90,16 @@ export function crewChipWidth(p: CrewBannerPhase): number {
   );
 }
 
-/** The banner's box at scale 1, CSS px (the hard shadow below it excluded). On a wall (`wall`) the
- *  counts share the chips' row, so the banner fits the wall band in two rows. */
-export function crewBannerSize(v: CrewBannerView, wall = false): { w: number; h: number } {
+/** How a banner is set: three rows over its helpers, two on a wall (the counts beside the chips),
+ *  or one on a wall too small for two (name, lead and the phase running now; the rest is in the
+ *  sheet). */
+export type CrewBannerForm = 'free' | 'wall' | 'row';
+
+/** The banner's box at scale 1, CSS px (the hard shadow below it excluded). */
+export function crewBannerSize(
+  v: CrewBannerView,
+  form: CrewBannerForm = 'free',
+): { w: number; h: number } {
   const label = v.named
     ? Math.ceil(
         pixelTextWidth(CREW_BANNER_LABEL, CREW_BANNER_LABEL_FONT_PX) +
@@ -111,7 +118,16 @@ export function crewBannerSize(v: CrewBannerView, wall = false): { w: number; h:
     w: w + 2 * (CREW_BANNER_PAD_X_PX + CREW_BANNER_BORDER_PX),
     h: h + 2 * (CREW_BANNER_PAD_Y_PX + CREW_BANNER_BORDER_PX),
   });
-  if (wall) {
+  if (form === 'row') {
+    // The name, the lead and the phase running now: what a small room's wall has room for.
+    const newest = v.phases.find((p) => p.newest);
+    const name =
+      pixelTextWidth(v.title, CREW_BANNER_NAME_FONT_PX) +
+      ITEM_GAP +
+      pixelTextWidth(`· ${v.lead}`, CREW_BANNER_COUNT_FONT_PX);
+    return frame(newest ? name + 2 * ITEM_GAP + crewChipWidth(newest) : name, CREW_BANNER_ROW1_PX);
+  }
+  if (form === 'wall') {
     const both = row2 > 0 && row3 > 0 ? row2 + 2 * ITEM_GAP + row3 : row2 + row3;
     return frame(Math.max(row1, both), CREW_BANNER_ROW1_PX + (both > 0 ? CREW_BANNER_ROW2_PX : 0));
   }
@@ -243,6 +259,7 @@ export function wallBannerRect(
  * free size). `size` is the index of the wall size used.
  */
 export function placeCrewBanner(input: {
+  /** The sizes to try on the wall band, in order (each form's scales, largest first). */
   wall: { sizes: ReadonlyArray<{ w: number; h: number }>; band: Rect } | null;
   free: { w: number; h: number };
   heads: ReadonlyArray<{ x: number; y: number }>;

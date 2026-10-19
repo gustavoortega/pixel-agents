@@ -469,6 +469,11 @@ export function monitorMessages(baseMs: number): ServerMessage[] {
     },
     // The status line wrapper is on, so the official limits are live.
     { type: 'hooksStatus', providerId: 'claude-statusline', installed: true },
+    // Each room's plaque names the folder it maps; none is an agent's, so the seating is unchanged.
+    {
+      type: 'areaMappingsLoaded',
+      mappings: { 'web-shop': ['Studio'], 'billing-ui': ['Lab'], 'docs-site': ['Den'] },
+    },
     {
       type: 'usageLimits',
       receivedAt: ago(1),

@@ -80,7 +80,12 @@ import { seatedDrawOffsetPx } from '../seatDraw.js';
 import { brightestShaftCell, shaftsAt, shaftsOff } from '../shafts.js';
 import { getPetCount, getPetName } from '../sprites/petSpriteData.js';
 import { getLoadedCharacterCount } from '../sprites/spriteData.js';
-import type { AgentRosterInfo, RosterEventInfo, TripwireAlarm } from '../toolUtils.js';
+import {
+  type AgentRosterInfo,
+  drawsBubble,
+  type RosterEventInfo,
+  type TripwireAlarm,
+} from '../toolUtils.js';
 import type {
   Character,
   FurnitureInstance,
@@ -190,6 +195,10 @@ export class OfficeState {
   monitorVersion = 0;
   /** The inspector sheet is open: the canvas overlay skips the selected agent's full box. */
   monitorSheetOpen = false;
+  /** Beside the rail a lit agent's desk frame and the alert tab on its tag already say it needs
+   *  you, so the canvas draws no bubble or idle glyph over its head. The overlay sets it on every
+   *  render (a tag layout exists); a VS Code panel keeps its bubble. */
+  hideLitBubbles = false;
   /** The follower of each agent whose tier brings a companion, by agent id. */
   companions: Map<number, Companion> = new Map();
   /** Every furniture footprint tile, background rows included (blockedTiles skips those). */
@@ -2299,15 +2308,32 @@ export class OfficeState {
     };
   }
 
+  /** The tone a top-level session's desk lights with, or null: the test of `litAgents`, for one. */
+  private litToneOf(ch: Character): 'wait' | 'stuck' | null {
+    if (ch.id <= 0 || ch.isSubagent || ch.isGreeter || ch.matrixEffect === 'despawn') return null;
+    return attentionTone(this.attentionFacts(ch));
+  }
+
   /** The top-level sessions whose desk is lit, with the tone. */
   private litAgents(): Array<{ ch: Character; tone: 'wait' | 'stuck' }> {
     const out: Array<{ ch: Character; tone: 'wait' | 'stuck' }> = [];
     for (const ch of this.characters.values()) {
-      if (ch.id <= 0 || ch.isSubagent || ch.isGreeter || ch.matrixEffect === 'despawn') continue;
-      const tone = attentionTone(this.attentionFacts(ch));
+      const tone = this.litToneOf(ch);
       if (tone) out.push({ ch, tone });
     }
     return out;
+  }
+
+  /** The tag carries this agent's alert (its tab, on the lit desk's frame): the canvas adds no bubble
+   *  or idle glyph over the head. */
+  alertOnTag(ch: Character): boolean {
+    return this.hideLitBubbles && this.litToneOf(ch) !== null;
+  }
+
+  /** Whether the speech bubble is drawn over this head: the one rule the renderer, the tag layout
+   *  (what the slot above the head reserves) and the idle glyph share. */
+  bubbleShown(ch: Character): boolean {
+    return drawsBubble(ch) && !this.alertOnTag(ch);
   }
 
   litDeskCount(): number {
@@ -2316,9 +2342,35 @@ export class OfficeState {
 
   /** The lit desks, world px, for the renderer. */
   deskHighlights(): DeskHighlight[] {
+    return this.deskUnits(this.litAgents());
+  }
+
+  /** The seat a character sits at now: its own, standing on it and not walking; else null. */
+  private seatedAt(ch: Character): Seat | null {
+    const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
+    if (!seat || ch.state === CharacterState.WALK) return null;
+    return seat.seatCol === ch.tileCol && seat.seatRow === ch.tileRow ? seat : null;
+  }
+
+  /**
+   * An agent's desk unit, world px: its desk, its seat and its sprite while it sits there (what a lit
+   * desk frames). Null while it is not at its seat.
+   */
+  deskUnitOf(ch: Character): Rect | null {
+    if (!this.seatedAt(ch)) return null;
+    return this.deskUnits([{ ch, tone: 'wait' }])[0]?.rect ?? null;
+  }
+
+  /** The way the seat an agent sits at faces (DOWN: the head over its desk on screen, UP: the desk
+   *  over the head); null while it is not seated, like `deskUnitOf`. */
+  seatFacingOf(ch: Character): Direction | null {
+    return this.seatedAt(ch)?.facingDir ?? null;
+  }
+
+  private deskUnits(list: Array<{ ch: Character; tone: 'wait' | 'stuck' }>): DeskHighlight[] {
     const agents: HighlightAgent[] = [];
     const seats = new Map<string, HighlightSeat>();
-    for (const { ch, tone } of this.litAgents()) {
+    for (const { ch, tone } of list) {
       const seat = ch.seatId ? this.seats.get(ch.seatId) : undefined;
       if (seat && ch.seatId) {
         seats.set(ch.seatId, {
