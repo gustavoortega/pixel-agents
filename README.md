@@ -1,3 +1,5 @@
+> **This repo moved to [gustavoortega/pixelmates](https://github.com/gustavoortega/pixelmates)** (`npx pixelmates`). This copy is archived.
+
 <h1 align="center">Pixel Agents, cozy fork</h1>
 
 <p align="center">
